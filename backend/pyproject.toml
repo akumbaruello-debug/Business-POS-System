@@ -1,0 +1,129 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "business-pos-backend"
+version = "1.0.0"
+description = "Business Management & POS System — backend (Phase M1 foundation)"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+authors = [
+    { name = "Business POS Team" },
+]
+license = { text = "Proprietary" }
+
+# Runtime dependencies — locked to M1 technology stack
+# (per Backend-Architecture-V1.0.md §2 Technology Stack)
+dependencies = [
+    # Web framework
+    "fastapi>=0.115,<0.135",
+    "uvicorn[standard]>=0.30,<0.45",
+    # Validation
+    "pydantic>=2.9,<3.0",
+    "pydantic-settings>=2.5,<3.0",
+    # Database (Core, async, asyncpg)
+    "sqlalchemy[asyncio]>=2.0,<2.1",
+    "asyncpg>=0.29,<0.33",
+    # Password hashing (Argon2id)
+    "argon2-cffi>=23.1,<26.0",
+    # Structured logging
+    "structlog>=24.1,<27.0",
+    # JSON perf
+    "orjson>=3.10,<4.0",
+    # Form / multipart (for OpenAPI form params)
+    "python-multipart>=0.0.9,<0.1",
+    # Rate limiting
+    "slowapi>=0.1.9,<0.2",
+    # Server-sent events (used in M2+)
+    "sse-starlette>=2.1,<3.0",
+    # Async helpers
+    "anyio>=4.4,<5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9.0",
+    "pytest-asyncio>=0.23,<0.25",
+    "pytest-cov>=5.0,<7.0",
+    "httpx>=0.27,<0.30",            # ASGI test client
+    "ruff>=0.6,<0.8",                # Linter + formatter
+    "mypy>=1.10,<2.0",               # Static type checking
+    "types-argon2-cffi>=1.0",
+    "types-orjson>=3.6",
+]
+
+[project.scripts]
+# Phase M1: a thin wrapper for the FastAPI app
+pos-backend = "app.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+exclude = ["tests*", "scripts*", "docs*"]
+
+# -----------------------------------------------------------------------------
+# Tool configuration
+# -----------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["**/pg-tmp/**", "**/__pycache__/**", "**/.venv/**"]
+
+[tool.ruff.lint]
+# Strict-ish rule set; we widen as we go.
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "UP",     # pyupgrade
+    "ASYNC",  # flake8-async
+    "S",      # flake8-bandit (security)
+    "RUF",    # ruff-specific
+]
+ignore = [
+    "S101",  # Use of assert — fine in tests, not enabled here
+    "B008",  # Function call in default argument — FastAPI Depends() pattern
+    "E501",  # Line too long — handled by formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S", "B011"]   # Tests can use asserts, raise inside mocks, etc.
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = true
+warn_return_any = true
+disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]
+ignore_missing_imports = false
+exclude = ["pg-tmp/", ".venv/", "build/", "dist/"]
+
+[[tool.mypy.overrides]]
+module = "slowapi.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "sse_starlette.*"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--tb=short",
+    "--disable-warnings",
+]
+markers = [
+    "integration: marks tests as integration tests (require PostgreSQL)",
+    "unit: marks tests as pure unit tests (no DB)",
+    "api: marks tests as API contract tests",
+]

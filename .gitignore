@@ -1,0 +1,35 @@
+# Build / tooling caches
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets / credentials / temp artifacts
+.test_token.tmp
+*.tmp
+*.token
+
+# Hermes workspace state (not project source)
+.hermes-skills/
+
+# pgAdmin / scratch validation directory
+pg-tmp/
+
+# Superseded scratch script (real one is build_openapi.py)
+build_openapi_undone.py
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
