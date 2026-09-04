@@ -30,6 +30,11 @@ os.environ.setdefault(
     "POS_DATABASE_URL",
     "postgresql+asyncpg://postgres@127.0.0.1:5433/pos_test",
 )
+# Tests must not inherit the .env CORS allow-list (http://localhost:3000):
+# the httpx test client sends no browser Origin, and OriginCheckMiddleware
+# would reject every state-changing request with 403. Set the allow-list to
+# the test base_url origin and have the client send a matching Origin.
+os.environ.setdefault("POS_CORS_ALLOWED_ORIGINS", "http://test")
 
 import pytest
 from httpx import AsyncClient
@@ -44,6 +49,7 @@ from app.db import _engine as _db_engine
 from app.db import close_db, get_session_factory, init_db
 from app.errors.codes import ErrorCode
 from app.main import create_app
+from app.middleware.rate_limit import get_limiter
 
 # Reload settings after env override so Settings() picks up env changes.
 load_env(force_reload=True)
@@ -161,6 +167,15 @@ def _bootstrap_db_sync() -> None:
     if _bootstrap_done:
         return
     _ensure_schema()
+    # Eagerly initialise the async DB engine + session factory on a
+    # fresh event loop so the module-level globals in ``app.db`` are
+    # populated before any test fixture (including class-scope
+    # autouse ones) tries to use ``get_session_factory()``. NullPool
+    # is used for the test DB URL, so the engine handles cross-loop
+    # use safely — see ``create_engine`` in ``app.db``.
+    import asyncio
+
+    asyncio.run(init_db(get_settings()))
     _bootstrap_done = True
 
 
@@ -186,6 +201,22 @@ def pytest_collection_modifyitems(items: list[pytest.Item], config: pytest.Confi
                 item.add_marker(pytest.mark.integration)
 
 
+async def _reset_rate_limits() -> None:
+    """Reset the slowapi limiter's in-memory storage between tests."""
+    limiter = get_limiter()
+    storage = limiter._storage
+    # limits >= 3.0 MemoryStorage.clear() requires a key arg; use reset() on
+    # the storage instance itself, which always works.
+    if hasattr(storage, "reset"):
+        storage.reset()
+    elif hasattr(storage, "clear"):
+        # Older signature: clear(key) — iterate known keys.
+        try:
+            storage.clear(":")  # type: ignore[call-arg]
+        except TypeError:
+            pass  # signature changed again; skip
+
+
 @pytest.fixture
 async def db() -> AsyncGenerator[None, None]:
     """Initialize the engine (once) and truncate tables per test.
@@ -197,9 +228,53 @@ async def db() -> AsyncGenerator[None, None]:
     # It's idempotent — if already set, returns the existing engine.
     # For tests, force NullPool to avoid asyncpg "another operation
     # in progress" errors from connection reuse across fixture boundaries.
-    if _db_engine is not None:
-        await close_db()
-    await init_db(get_settings())
+    # The engine is session-scoped; we just TRUNCATE on it.
+    if _db_engine is None:
+        await init_db(get_settings())
+    # Terminate any leftover "idle in transaction" backends from the
+    # previous test. Without this, a test whose final `async with
+    # factory() as session:` block ran a SELECT can leave the backend
+    # holding a lock that blocks the next test's TRUNCATE
+    # (ACCESS EXCLUSIVE on every table). With NullPool, the Python
+    # connection object is released as soon as the session closes, but
+    # the PostgreSQL backend only sees the disconnect after a tick —
+    # terminating the backend PIDs is a deterministic way to clear the
+    # lock immediately.
+    import asyncio
+    import os
+    import subprocess
+
+    settings = get_settings()
+    from urllib.parse import urlparse
+
+    parsed = urlparse(settings.database_url)
+    psql_bin = os.path.join(
+        os.path.dirname(_SCHEMA_PATH), "pg-tmp", "pg17", "pgsql", "bin", "psql.exe"
+    )
+    if os.path.isfile(psql_bin):
+        env = os.environ.copy()
+        env["PGPASSWORD"] = parsed.password or ""
+        # Run on a background thread to avoid blocking the event loop.
+        await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: subprocess.run(
+                [
+                    psql_bin,
+                    "-h", parsed.hostname or "127.0.0.1",
+                    "-p", str(parsed.port or 5432),
+                    "-U", parsed.username or "postgres",
+                    "-d", (parsed.path or "/postgres").lstrip("/"),
+                    "-c",
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                    "WHERE datname = current_database() "
+                    "AND pid != pg_backend_pid() "
+                    "AND state IN ('idle in transaction', 'idle in transaction (aborted)')",
+                ],
+                env=env,
+                capture_output=True,
+                check=False,
+            ),
+        )
     # Truncate all mutable tables for isolation.
     factory = get_session_factory()
     async with factory() as session:
@@ -208,6 +283,7 @@ async def db() -> AsyncGenerator[None, None]:
                 "TRUNCATE TABLE "
                 "idempotency_keys, sessions, "
                 "user_capability_overrides, "
+                "categories, units, products, payment_methods, financial_categories, cost_types, contacts, "
                 "stock_movements, sale_lines, sale_payments, sales, "
                 "sales_return_lines, sales_returns, refunds, "
                 "purchase_lines, purchase_payments, purchases, "
@@ -237,17 +313,103 @@ async def db() -> AsyncGenerator[None, None]:
             ),
             {"ph": PasswordHasher().hash("OwnerPass123!")},
         )
+        # Re-seed reference rows that schema.sql inserts. These tables are
+        # TRUNCATEd above for isolation, but several M2 tests depend on the
+        # canonical seed values (Rent/Capital Injection/Tax for
+        # financial_categories; cash/bank_transfer/e_wallet/other for
+        # payment_methods; labor/electricity/gas/packaging/other for
+        # cost_types). Re-insert with fixed IDs so test expectations hold
+        # across runs.
+        await session.execute(
+            text(
+                """
+                INSERT INTO payment_methods (id, code, name, is_cash, is_active) VALUES
+                  (1, 'cash',           'Cash',          TRUE,  TRUE),
+                  (2, 'bank_transfer',  'Bank Transfer', FALSE, TRUE),
+                  (3, 'e_wallet',       'E-Wallet',      FALSE, TRUE),
+                  (4, 'other',          'Other',         FALSE, TRUE)
+                ON CONFLICT (id) DO UPDATE SET
+                  code      = EXCLUDED.code,
+                  name      = EXCLUDED.name,
+                  is_cash   = EXCLUDED.is_cash,
+                  is_active = EXCLUDED.is_active
+                """
+            )
+        )
+        await session.execute(
+            text(
+                """
+                INSERT INTO financial_categories (id, code, name, entry_type, is_active) VALUES
+                  (1,  'capital_injection',   'Capital Injection',           'income',  TRUE),
+                  (2,  'other_income',        'Other Income',                'income',  TRUE),
+                  (3,  'other_income_misc',   'Other',                       'income',  TRUE),
+                  (4,  'rent',                'Rent',                        'expense', TRUE),
+                  (5,  'labour_non_prod',     'Labour (non-production)',     'expense', TRUE),
+                  (6,  'electricity_non_prod','Electricity (non-production)','expense', TRUE),
+                  (7,  'maintenance',         'Maintenance',                 'expense', TRUE),
+                  (8,  'operational',         'Operational',                 'expense', TRUE),
+                  (9,  'tax',                 'Tax',                         'expense', TRUE),
+                  (10, 'extra_shipping',      'Extra shipping',              'expense', TRUE),
+                  (11, 'other_expense',       'Other',                       'expense', TRUE)
+                ON CONFLICT (id) DO UPDATE SET
+                  code       = EXCLUDED.code,
+                  name       = EXCLUDED.name,
+                  entry_type = EXCLUDED.entry_type,
+                  is_active  = EXCLUDED.is_active
+                """
+            )
+        )
+        await session.execute(
+            text(
+                """
+                INSERT INTO cost_types (id, code, name, is_active) VALUES
+                  (1, 'labor',       'Labor',       TRUE),
+                  (2, 'electricity', 'Electricity', TRUE),
+                  (3, 'gas',         'Gas',         TRUE),
+                  (4, 'packaging',   'Packaging',   TRUE),
+                  (5, 'other',       'Other',       TRUE)
+                ON CONFLICT (id) DO UPDATE SET
+                  code      = EXCLUDED.code,
+                  name      = EXCLUDED.name,
+                  is_active = EXCLUDED.is_active
+                """
+            )
+        )
+        # Reset the SERIAL sequences so subsequent INSERTs in tests get
+        # IDs that do not collide with the canonical seed IDs.
+        await session.execute(
+            text(
+                "SELECT setval(pg_get_serial_sequence('payment_methods', 'id'), "
+                "(SELECT MAX(id) FROM payment_methods))"
+            )
+        )
+        await session.execute(
+            text(
+                "SELECT setval(pg_get_serial_sequence('financial_categories', 'id'), "
+                "(SELECT MAX(id) FROM financial_categories))"
+            )
+        )
+        await session.execute(
+            text(
+                "SELECT setval(pg_get_serial_sequence('cost_types', 'id'), "
+                "(SELECT MAX(id) FROM cost_types))"
+            )
+        )
         await session.commit()
+        await _reset_rate_limits()
     yield
 
 
 @pytest.fixture
 async def app(db: None) -> AsyncGenerator[AsyncClient, None]:
-    """Build a fresh FastAPI app + httpx client per test."""
+    # Settings are lru_cached; clear so POS_CORS_ALLOWED_ORIGINS override is
+    # picked up (create_app reads it to install OriginCheckMiddleware).
+    get_settings.cache_clear()
     fastapi_app = create_app(get_settings())
     async with AsyncClient(
         transport=__import__("httpx").ASGITransport(app=fastapi_app),
         base_url="http://test",
+        headers={"Origin": "http://test"},
     ) as client:
         yield client
 

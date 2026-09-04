@@ -1,0 +1,11 @@
+# /etc/cron.d/bpos-prune
+# Daily maintenance jobs for the Business POS backend.
+# Runs at 02:30 local time; output is discarded because scripts log via structlog.
+#
+# Adjust the user, working directory, and Python path for your deployment.
+
+SHELL=/bin/sh
+PATH=/usr/local/bin:/usr/bin:/bin
+
+30 2 * * * bpos cd /opt/bpos/backend && /opt/bpos/backend/.venv/bin/python -m app.tools.prune_idempotency >> /dev/null 2>&1
+35 2 * * * bpos cd /opt/bpos/backend && /opt/bpos/backend/.venv/bin/python -m app.tools.prune_exports >> /dev/null 2>&1

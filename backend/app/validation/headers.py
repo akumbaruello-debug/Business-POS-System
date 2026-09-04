@@ -74,10 +74,13 @@ def parse_if_match(header_value: str | None) -> IfMatchParsed | None:
     """
     if not header_value:
         return None
-    etag = parse_etag(header_value.strip())
+    stripped = header_value.strip()
+    if stripped == "*":
+        return IfMatchParsed(etag="*")
+    etag = parse_etag(stripped)
     if etag is None:
         raise InvalidHeader(
-            "If-Match header must be a quoted ETag.",
+            "If-Match header must be a quoted ETag or '*'.",
             details={"field": "If-Match"},
         )
     return IfMatchParsed(etag=etag)

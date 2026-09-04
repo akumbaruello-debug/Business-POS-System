@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from app.config import get_settings
 from app.db import close_db, init_db
 from app.logging import get_logger
+from app.notifications.worker import start_stock_change_worker, stop_stock_change_worker
 
 logger = get_logger(__name__)
 
@@ -37,8 +38,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # 503 if the connection comes up later.
         logger.error("db_init_failed", error=str(exc))
         raise
+
+    # E.10: start the low-stock notification worker.
+    # In test mode the worker is not started — tests drive
+    # notifications explicitly via the service layer or by
+    # issuing NOTIFY on the test connection.
+    if not settings.is_test:
+        await start_stock_change_worker()
+
     try:
         yield
     finally:
         logger.info("app_stopping")
+        await stop_stock_change_worker()
         await close_db()

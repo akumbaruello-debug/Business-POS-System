@@ -22,9 +22,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 
-from sqlalchemy import text
+from sqlalchemy import exc, text
 from sqlalchemy.ext.asyncio import (
     AsyncConnection,
     AsyncEngine,
@@ -91,7 +91,14 @@ def get_engine() -> AsyncEngine:
 
 
 def get_session_factory() -> async_sessionmaker[AsyncSession]:
-    """Return the bound session factory."""
+    """Return the bound session factory.
+
+    The session factory is bound by :func:`init_db`. The conftest's
+    session-scoped ``_bootstrap`` fixture calls ``init_db`` eagerly
+    before any test runs, so this rarely raises — but it remains a
+    guard against the test harness being run without that bootstrap
+    (e.g. a unit test that imports app code but skips the conftest).
+    """
     if _session_factory is None:
         raise RuntimeError("DB session factory not initialised.")
     return _session_factory
@@ -119,19 +126,28 @@ async def _raw(
 
 
 async def init_db(settings: Any = None) -> AsyncEngine:
-    """Initialise the engine + session factory + run the DB ping."""
+    """Initialise the engine + session factory + run the DB ping.
+
+    Idempotent on the engine: if ``_engine`` is already set, return
+    it without re-creating. However, we **always** ensure
+    ``_session_factory`` is bound — it can be left ``None`` if a
+    previous call to this function happened before the session
+    factory binding was added (e.g. during a test fixture that
+    initialised the engine out of band). Test code that calls
+    helpers like ``get_session_factory()`` therefore always sees a
+    usable factory once the engine exists.
+    """
     global _engine, _session_factory
     if settings is None:
         settings = get_settings()
-    if _engine is not None:
-        return _engine  # already initialised (idempotent)
-
-    _engine = create_engine(settings)
-    _session_factory = async_sessionmaker(
-        bind=_engine,
-        expire_on_commit=False,  # we read what we inserted; no lazy reload
-        class_=AsyncSession,
-    )
+    if _engine is None:
+        _engine = create_engine(settings)
+    if _session_factory is None:
+        _session_factory = async_sessionmaker(
+            bind=_engine,
+            expire_on_commit=False,  # we read what we inserted; no lazy reload
+            class_=AsyncSession,
+        )
     # Ping → confirm the connection works before serving traffic.
     async with _engine.connect() as conn:
         version = await conn.execute(text("SELECT version()"))
@@ -184,7 +200,7 @@ class UnitOfWork:
         self._session = self._factory()
         return self
 
-    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> Literal[False]:
         if self._session is None:
             return False
         if exc_type is None:
@@ -243,9 +259,19 @@ class UnitOfWork:
         return await self._session.execute(text(sql), params or {})
 
     async def scalar(self, sql: str, params: dict[str, Any] | None = None) -> Any:
-        """Execute and return a single scalar."""
+        """Execute and return a single scalar.
+
+        For non-SELECT statements (DELETE/INSERT/UPDATE without
+        RETURNING), asyncpg's result is rowcount-based and
+        ``result.scalar()`` raises ``ResourceClosedError``. We fall
+        back to ``result.rowcount`` in that case so callers can use
+        a single helper for "did this affect a row?" queries.
+        """
         result = await self.execute(sql, params)
-        return result.scalar()
+        try:
+            return result.scalar()
+        except exc.ResourceClosedError:
+            return result.rowcount
 
     async def scalars(self, sql: str, params: dict[str, Any] | None = None) -> Any:
         """Execute and return a Scalars list."""

@@ -22,6 +22,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.logging import get_logger
+from app.middleware.origin_check import OriginCheckMiddleware
 
 logger = get_logger(__name__)
 
@@ -38,11 +39,14 @@ class SecureHeadersMiddleware:
       * ``X-Content-Type-Options: nosniff``
       * ``X-Frame-Options: DENY``
       * ``Referrer-Policy: no-referrer``
+      * ``X-XSS-Protection: 0`` (modern; CSP is the defense)
       * ``Cache-Control: no-store`` (on error responses only — see below)
       * ``Permissions-Policy: ...`` (disabled common browser features)
 
-    We do NOT add ``Content-Security-Policy`` here; that is the front-
-    end's responsibility (the API is JSON-only, not HTML).
+    Per ``Backend-Architecture-V1.0.md`` §23.2 we do NOT set
+    ``Content-Security-Policy`` or ``Strict-Transport-Security`` here;
+    those are the reverse proxy's responsibility (the API serves JSON,
+    no UI).
     """
 
     def __init__(self, app) -> None:  # type: ignore[no-untyped-def]
@@ -65,6 +69,7 @@ class SecureHeadersMiddleware:
                         b"x-content-type-options",
                         b"x-frame-options",
                         b"referrer-policy",
+                        b"x-xss-protection",
                         b"permissions-policy",
                     )
                 ]
@@ -73,6 +78,7 @@ class SecureHeadersMiddleware:
                         (b"x-content-type-options", b"nosniff"),
                         (b"x-frame-options", b"DENY"),
                         (b"referrer-policy", b"no-referrer"),
+                        (b"x-xss-protection", b"0"),
                         (b"permissions-policy", b"geolocation=(), microphone=(), camera=()"),
                     ]
                 )
@@ -113,9 +119,15 @@ def install_security_middleware(
             allow_headers=["*"],
             max_age=600,
         )
+        # Origin enforcement sits just inside CORS: preflight/OPTIONS
+        # are handled by CORS above; every state-changing request that
+        # reaches us must carry an allow-listed Origin.
+        app.add_middleware(OriginCheckMiddleware, allowed_origins=cors_origins)
         logger.info("cors_middleware_enabled", origins=cors_origins)
+        logger.info("origin_check_middleware_enabled", origins=cors_origins)
     else:
         logger.info("cors_middleware_disabled")
+        logger.info("origin_check_middleware_disabled")
 
 
 __all__ = ["SecureHeadersMiddleware", "install_security_middleware"]

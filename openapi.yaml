@@ -5172,13 +5172,41 @@ paths:
       - $ref: '#/components/parameters/From'
       - $ref: '#/components/parameters/To'
       - $ref: '#/components/parameters/CompareTo'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - $ref: '#/components/parameters/Sort'
+      - $ref: '#/components/parameters/Q'
+      - name: filter_supplier_id
+        in: query
+        required: false
+        schema:
+          oneOf:
+          - type: string
+          - type: integer
+        description: 'Filter parameter (alias: `filter[supplier_id]`).'
+      - name: filter_lifecycle_status
+        in: query
+        required: false
+        schema:
+          oneOf:
+          - type: string
+          - type: integer
+        description: 'Filter parameter (alias: `filter[lifecycle_status]`).'
+      - name: filter_posted_by
+        in: query
+        required: false
+        schema:
+          oneOf:
+          - type: string
+          - type: integer
+        description: 'Filter parameter (alias: `filter[posted_by]`).'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PagedResponse'
+                $ref: '#/components/schemas/PurchasesReportResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -5224,6 +5252,42 @@ paths:
       - $ref: '#/components/parameters/From'
       - $ref: '#/components/parameters/To'
       - $ref: '#/components/parameters/CompareTo'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - $ref: '#/components/parameters/Sort'
+      - $ref: '#/components/parameters/Q'
+      - name: filter_product_id
+        in: query
+        required: false
+        schema:
+          oneOf:
+          - type: string
+          - type: integer
+        description: 'Filter parameter (alias: `filter[product_id]`).'
+      - name: filter_trigger
+        in: query
+        required: false
+        schema:
+          oneOf:
+          - type: string
+          - type: integer
+        description: 'Filter parameter (alias: `filter[trigger]`).'
+      - name: filter_reference_type
+        in: query
+        required: false
+        schema:
+          oneOf:
+          - type: string
+          - type: integer
+        description: 'Filter parameter (alias: `filter[reference_type]`).'
+      - name: filter_reference_id
+        in: query
+        required: false
+        schema:
+          oneOf:
+          - type: string
+          - type: integer
+        description: 'Filter parameter (alias: `filter[reference_id]`).'
       responses:
         '200':
           description: OK
@@ -7396,6 +7460,53 @@ components:
           type: integer
         version:
           type: integer
+        warning:
+          $ref: '#/components/schemas/SalePostWarning'
+    SalePostWarningLine:
+      type: object
+      description: Per-line detail for a below-cost sale warning (F.10).
+      required:
+      - line_id
+      - line_number
+      - unit_price
+      - unit_cost_snapshot
+      - gap
+      properties:
+        line_id:
+          type: integer
+          format: int64
+        line_number:
+          type: integer
+          minimum: 1
+        unit_price:
+          type: number
+          minimum: 0
+          description: Server-computed line unit price (post any discount).
+        unit_cost_snapshot:
+          type: number
+          minimum: 0
+          description: Server-computed moving-average unit cost snapshot at post time.
+        gap:
+          type: number
+          description: 'unit_cost_snapshot − unit_price (cost > price).'
+    SalePostWarning:
+      type: object
+      description: 'Below-cost warning returned in the 200 response of POST /sales/{id}/post when a line sells below its unit_cost_snapshot (F.10). The sale is still posted; all financials are server-computed and not affected.'
+      required:
+      - code
+      - message
+      - lines
+      properties:
+        code:
+          type: string
+          enum:
+          - below_cost
+        message:
+          type: string
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/SalePostWarningLine'
     SaleLineInput:
       type: object
       required:
@@ -9043,6 +9154,25 @@ components:
               type: integer
             out_of_stock_count:
               type: integer
+    PurchasesReportResponse:
+      type: object
+      required:
+      - data
+      - pagination
+      description: F.1 purchases report response. Extends the standard PagedResponse with an optional ``comparison`` block
+        per D-7 (architecture §12.1 line 1092 lists purchases among the reports that support period comparison).
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+        comparison:
+          allOf:
+          - $ref: '#/components/schemas/PeriodComparison'
+          nullable: true
     DashboardResponse:
       type: object
       required:

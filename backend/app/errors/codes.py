@@ -33,6 +33,13 @@ class ErrorCode(StrEnum):
     MISSING_HEADER = "missing_header"
     INVALID_HEADER = "invalid_header"
     ENUM_VALUE_INVALID = "enum_value_invalid"
+    DERIVED_FIELD_NOT_ALLOWED = "derived_field_not_allowed"
+    MANUAL_ENTRY_DUPLICATE_OF_DERIVED = "manual_entry_duplicate_of_derived"
+    TENDERED_NOT_ALLOWED_FOR_NON_CASH = "tendered_not_allowed_for_non_cash"
+    REFUND_EXCEEDS_CRL = "refund_exceeds_crl"
+    REPAYMENT_EXCEEDS_SREC = "repayment_exceeds_srec"
+    ALLOCATION_EXCEEDS_PAYABLE = "allocation_exceeds_payable"
+    PURCHASE_RETURN_QUANTITY_EXCEEDS_ORIGINAL = "purchase_return_quantity_exceeds_original"
 
     # ---- 401 Unauthorized --------------------------------------------
     UNAUTHENTICATED = "unauthenticated"
@@ -43,6 +50,7 @@ class ErrorCode(StrEnum):
 
     # ---- 403 Forbidden ------------------------------------------------
     PERMISSION_DENIED = "permission_denied"
+    ORIGIN_NOT_ALLOWED = "origin_not_allowed"
 
     # ---- 404 Not Found -----------------------------------------------
     NOT_FOUND = "not_found"
@@ -55,6 +63,8 @@ class ErrorCode(StrEnum):
     IDEMPOTENCY_VIOLATION = "idempotency_violation"
     REFERENCED_BY_HISTORY = "referenced_by_history"
     IN_USE = "in_use"
+    DELETE_NOT_PERMITTED = "delete_not_permitted"
+    LIFECYCLE_STATE_INVALID = "lifecycle_state_invalid"
 
     # ---- 412 Precondition Failed -------------------------------------
     VERSION_MISMATCH = "version_mismatch"
@@ -67,6 +77,9 @@ class ErrorCode(StrEnum):
     INSUFFICIENT_CASH = "insufficient_cash"
     INSUFFICIENT_BALANCE = "insufficient_balance"
     BELOW_COST = "below_cost"
+    PRODUCTION_INPUTS_EXCEED_STOCK = "production_inputs_exceed_stock"
+    PRODUCTION_FINISHED_COST_INVALID = "production_finished_cost_invalid"
+    NEGATIVE_STOCK_DISALLOWED = "negative_stock_disallowed"
 
     # ---- 423 Locked ---------------------------------------------------
     ACCOUNT_LOCKED = "account_locked"
@@ -74,7 +87,7 @@ class ErrorCode(StrEnum):
     # ---- 429 Too Many Requests ---------------------------------------
     RATE_LIMITED = "rate_limited"
 
-    # ---- 5xx Server Error -------------------------------------------
+    # ---- 5xx Server Error --------------------------------------------
     INTERNAL_ERROR = "internal_error"
     DATABASE_ERROR = "database_error"
     SERVICE_UNAVAILABLE = "service_unavailable"

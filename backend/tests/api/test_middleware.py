@@ -6,6 +6,7 @@ Covers:
 * Request ID bound to context
 * Security response headers
 * CORS behavior
+* Origin header check on state-changing requests
 * Rate limit handler (canonical 429 envelope)
 """
 
@@ -68,6 +69,7 @@ class TestSecurityHeaders:
         assert r.headers.get("X-Content-Type-Options") == "nosniff"
         assert r.headers.get("X-Frame-Options") == "DENY"
         assert r.headers.get("Referrer-Policy") == "no-referrer"
+        assert r.headers.get("X-XSS-Protection") == "0"
         assert "geolocation" in r.headers.get("Permissions-Policy", "")
         assert "microphone" in r.headers.get("Permissions-Policy", "")
         assert "camera" in r.headers.get("Permissions-Policy", "")
@@ -78,6 +80,18 @@ class TestSecurityHeaders:
         assert r.headers.get("X-Content-Type-Options") == "nosniff"
         assert r.headers.get("X-Frame-Options") == "DENY"
         assert r.headers.get("Referrer-Policy") == "no-referrer"
+        assert r.headers.get("X-XSS-Protection") == "0"
+
+
+    async def test_proxy_owned_headers_absent(self, app: AsyncClient) -> None:
+        """CSP and HSTS are reverse-proxy responsibilities; the app must not set them.
+
+        Per Backend-Architecture-V1.0.md §23.2, the API serves JSON and
+        those headers would conflict with the proxy's configuration.
+        """
+        r = await app.get("/livez")
+        assert "content-security-policy" not in r.headers
+        assert "strict-transport-security" not in r.headers
 
 
 class TestCORS:
@@ -149,6 +163,109 @@ class TestCORS:
         finally:
             del os.environ["POS_CORS_ALLOWED_ORIGINS"]
             load_env(force_reload=True)
+
+
+class TestOriginCheck:
+    """Tests for OriginCheckMiddleware: rejects missing/unlisted origins on state-changing requests."""
+
+    async def test_origin_check_allows_configured_origin(self):
+        """With cors_origins set, a state-changing request with allowed Origin passes."""
+        from app.config import get_settings
+        from app.config.env import load_env
+        from app.main import create_app
+
+        os.environ["POS_CORS_ALLOWED_ORIGINS"] = "https://app.example.com"
+        try:
+            load_env(force_reload=True)
+            fresh_app = create_app(get_settings())
+            async with AsyncClient(
+                transport=ASGITransport(app=fresh_app),
+                base_url="http://test",
+            ) as client:
+                r = await client.post(
+                    "/api/v1/auth/login",
+                    json={"username": "owner", "password": "password"},
+                    headers={"Origin": "https://app.example.com"},
+                )
+                # Should not get 403; auth will fail with 400/401 because credentials are invalid.
+                assert r.status_code != 403
+        finally:
+            del os.environ["POS_CORS_ALLOWED_ORIGINS"]
+            load_env(force_reload=True)
+
+    async def test_origin_check_rejects_unconfigured_origin(self):
+        """Unlisted origin -> 403 origin_not_allowed."""
+        from app.config import get_settings
+        from app.config.env import load_env
+        from app.main import create_app
+
+        os.environ["POS_CORS_ALLOWED_ORIGINS"] = "https://app.example.com"
+        try:
+            load_env(force_reload=True)
+            fresh_app = create_app(get_settings())
+            async with AsyncClient(
+                transport=ASGITransport(app=fresh_app),
+                base_url="http://test",
+            ) as client:
+                r = await client.post(
+                    "/api/v1/auth/login",
+                    json={"username": "owner", "password": "password"},
+                    headers={"Origin": "https://evil.com"},
+                )
+                assert r.status_code == 403
+                body = r.json()
+                assert body["error"]["code"] == "origin_not_allowed"
+                assert "request_id" in body["error"]
+        finally:
+            del os.environ["POS_CORS_ALLOWED_ORIGINS"]
+            load_env(force_reload=True)
+
+    async def test_origin_check_rejects_missing_origin(self):
+        """No Origin header -> 403 origin_not_allowed."""
+        from app.config import get_settings
+        from app.config.env import load_env
+        from app.main import create_app
+
+        os.environ["POS_CORS_ALLOWED_ORIGINS"] = "https://app.example.com"
+        try:
+            load_env(force_reload=True)
+            fresh_app = create_app(get_settings())
+            async with AsyncClient(
+                transport=ASGITransport(app=fresh_app),
+                base_url="http://test",
+            ) as client:
+                r = await client.post(
+                    "/api/v1/auth/login",
+                    json={"username": "owner", "password": "password"},
+                )
+                assert r.status_code == 403
+                body = r.json()
+                assert body["error"]["code"] == "origin_not_allowed"
+        finally:
+            del os.environ["POS_CORS_ALLOWED_ORIGINS"]
+            load_env(force_reload=True)
+
+    async def test_origin_check_skipped_when_no_cors_configured(self):
+        """When cors_origins empty, no origin check; request proceeds."""
+        from app.config import get_settings
+        from app.config.env import load_env
+        from app.main import create_app
+
+        if "POS_CORS_ALLOWED_ORIGINS" in os.environ:
+            del os.environ["POS_CORS_ALLOWED_ORIGINS"]
+        load_env(force_reload=True)
+        fresh_app = create_app(get_settings())
+        async with AsyncClient(
+            transport=ASGITransport(app=fresh_app),
+            base_url="http://test",
+        ) as client:
+            r = await client.post(
+                "/api/v1/auth/login",
+                json={"username": "owner", "password": "password"},
+                headers={"Origin": "https://evil.com"},
+            )
+            # Should not be 403; likely 400/401 due to invalid creds
+            assert r.status_code != 403
 
 
 class TestRateLimiting:

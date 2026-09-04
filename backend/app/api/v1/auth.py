@@ -23,6 +23,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, Request, status
 from pydantic import BaseModel, ConfigDict, Field
+from slowapi.util import get_remote_address
 
 from app.auth.principal import Principal
 from app.auth.service import AuthService
@@ -30,6 +31,7 @@ from app.authz.deps import current_principal, require_capability
 from app.db import UnitOfWork
 from app.errors import AppError, IdempotencyViolation
 from app.logging import get_logger
+from app.middleware.rate_limit import check_limit
 from app.services.idempotency import (
     IdempotencyStore,
     IdempotencyViolationConflict,
@@ -143,6 +145,11 @@ async def login(
 
     # Validate body shape (LoginRequest).
     parsed_body = LoginRequest.model_validate(body_dict)
+    # IP rate limit: 5 per 15 minutes
+    ip = get_remote_address(request)
+    await check_limit("5/15minute", ip, request)
+    # Login-user rate limit: 10 per hour
+    await check_limit("10/hour", parsed_body.username, request)
     body = parsed_body.model_dump()
 
     # Idempotency fingerprint.
@@ -238,6 +245,8 @@ async def refresh(request: Request) -> dict[str, Any]:
             user_agent=_ua(request),
             uow=uow,
         )
+        # Refresh rate limit: 60 per hour per user
+        await check_limit("60/hour", f"user:{result.principal.user_id}", request)
         await uow.commit()
     return _login_response(result)
 

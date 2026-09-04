@@ -407,11 +407,14 @@ CREATE TABLE contacts (
     CONSTRAINT ck_contacts_type
         CHECK (type IN ('customer', 'supplier', 'both')),
     CONSTRAINT ck_contacts_email_format
-        CHECK (email IS NULL OR email ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$')
+        CHECK (email IS NULL OR email ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$'),
+    -- A contact is identified by (name, type): customers and suppliers are
+    -- distinct records even when they share a display name, but two records
+    -- with the same name AND the same type are duplicates.
+    CONSTRAINT ux_contacts_name UNIQUE (name, type)
 );
 
 CREATE INDEX ix_contacts_type ON contacts (type);
-CREATE INDEX ix_contacts_name ON contacts (name);
 CREATE INDEX ix_contacts_active ON contacts (is_active);
 
 COMMENT ON TABLE contacts IS 'Customers and suppliers. Both types in a single table; type=customer|supplier|both. Per BR-DATA-003 hard-delete is blocked by ON DELETE RESTRICT from transaction tables.';
@@ -1610,6 +1613,32 @@ FOR EACH ROW EXECUTE FUNCTION fn_stock_movements_reversal_unique();
 
 
 -- -----------------------------------------------------------------------------
+-- 18.3b stock_movements NOTIFY trigger (E.10 low-stock worker)
+-- Per Backend-Architecture §21.2: emit pg_notify('stock_change') on every
+-- committed INSERT so the asyncio worker can evaluate threshold crossings.
+-- PostgreSQL delivers NOTIFY only after the emitting transaction commits.
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fn_stock_change_notify() RETURNS TRIGGER AS $$
+BEGIN
+    PERFORM pg_notify(
+        'stock_change',
+        json_build_object(
+            'product_id', NEW.product_id,
+            'movement_id', NEW.id
+        )::text
+    );
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_stock_change_notify
+AFTER INSERT ON stock_movements
+FOR EACH ROW EXECUTE FUNCTION fn_stock_change_notify();
+
+COMMENT ON FUNCTION fn_stock_change_notify() IS 'E.10: emit pg_notify on stock_change channel after every stock_movements INSERT. Payload: {"product_id": N, "movement_id": N}.';
+
+
+-- -----------------------------------------------------------------------------
 -- 18.4 cash_movements immutability trigger
 -- Per DB spec §2.10.1: append-only.
 -- -----------------------------------------------------------------------------
@@ -2121,8 +2150,17 @@ FOR EACH ROW EXECUTE FUNCTION fn_system_settings_readonly_keys();
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fn_bump_version_and_updated_at() RETURNS TRIGGER AS $$
 BEGIN
-    NEW.version   := COALESCE(OLD.version, 0) + 1;
+    NEW.version    := COALESCE(OLD.version, 0) + 1;
     NEW.updated_at := NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- sales_returns has no updated_at column (cancellation_date + version
+-- track lifecycle), so its trigger only bumps version.
+CREATE OR REPLACE FUNCTION fn_bump_version_only() RETURNS TRIGGER AS $$
+BEGIN
+    NEW.version := COALESCE(OLD.version, 0) + 1;
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -2141,11 +2179,11 @@ FOR EACH ROW EXECUTE FUNCTION fn_bump_version_and_updated_at();
 
 CREATE TRIGGER trg_mfe_bump_version
 BEFORE UPDATE ON manual_finance_entries
-FOR EACH ROW EXECUTE FUNCTION fn_bump_version_and_updated_at();
+FOR EACH ROW EXECUTE FUNCTION fn_bump_version_only();
 
 CREATE TRIGGER trg_sales_returns_bump_version
 BEFORE UPDATE ON sales_returns
-FOR EACH ROW EXECUTE FUNCTION fn_bump_version_and_updated_at();
+FOR EACH ROW EXECUTE FUNCTION fn_bump_version_only();
 
 CREATE TRIGGER trg_purchase_returns_bump_version
 BEFORE UPDATE ON purchase_returns
@@ -2234,6 +2272,7 @@ INSERT INTO capabilities (code, description) VALUES
   ('contact.view', 'View contacts.'),
   ('contact.create', 'Create contacts.'),
   ('contact.edit', 'Edit contacts.'),
+  ('contact.manage', 'Manage contacts (delete/deactivate).'),
   ('payment_method.view', 'View payment methods.'),
   ('payment_method.manage', 'Manage payment methods.'),
   ('cost_type.view', 'View cost types.'),

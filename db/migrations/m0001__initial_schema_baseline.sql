@@ -440,11 +440,14 @@ CREATE TABLE contacts (
     CONSTRAINT ck_contacts_type
         CHECK (type IN ('customer', 'supplier', 'both')),
     CONSTRAINT ck_contacts_email_format
-        CHECK (email IS NULL OR email ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$')
+        CHECK (email IS NULL OR email ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$'),
+    -- A contact is identified by (name, type): customers and suppliers are
+    -- distinct records even when they share a display name, but two records
+    -- with the same name AND the same type are duplicates.
+    CONSTRAINT ux_contacts_name UNIQUE (name, type)
 );
 
 CREATE INDEX ix_contacts_type ON contacts (type);
-CREATE INDEX ix_contacts_name ON contacts (name);
 CREATE INDEX ix_contacts_active ON contacts (is_active);
 
 COMMENT ON TABLE contacts IS 'Customers and suppliers. Both types in a single table; type=customer|supplier|both. Per BR-DATA-003 hard-delete is blocked by ON DELETE RESTRICT from transaction tables.';
@@ -2267,6 +2270,7 @@ INSERT INTO capabilities (code, description) VALUES
   ('contact.view', 'View contacts.'),
   ('contact.create', 'Create contacts.'),
   ('contact.edit', 'Edit contacts.'),
+  ('contact.manage', 'Manage contacts (delete/deactivate).'),
   ('payment_method.view', 'View payment methods.'),
   ('payment_method.manage', 'Manage payment methods.'),
   ('cost_type.view', 'View cost types.'),

@@ -71,6 +71,7 @@ _CANONICAL: Final[OrderedDict[str, tuple[CapabilityCategory, str]]] = OrderedDic
         "contact.view": (CapabilityCategory.MASTER, "View contacts."),
         "contact.create": (CapabilityCategory.MASTER, "Create contacts."),
         "contact.edit": (CapabilityCategory.MASTER, "Edit contacts."),
+        "contact.manage": (CapabilityCategory.MASTER, "Manage contacts (delete/deactivate)."),
         "payment_method.view": (CapabilityCategory.MASTER, "View payment methods."),
         "payment_method.manage": (CapabilityCategory.MASTER, "Manage payment methods."),
         "cost_type.view": (CapabilityCategory.MASTER, "View cost types."),

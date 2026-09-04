@@ -31,6 +31,7 @@ from app.errors import (
     Unauthenticated,
 )
 from app.logging import get_logger
+from app.middleware.rate_limit import check_rate_limits
 
 logger = get_logger(__name__)
 
@@ -109,6 +110,10 @@ async def current_principal(
 
     # Commit so the last_seen_at write persists.
     await uow.commit()
+
+    # Apply authenticated rate limits after principal resolution.
+    await check_rate_limits(request, principal.user_id)
+
     return principal
 
 

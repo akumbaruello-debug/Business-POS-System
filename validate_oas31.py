@@ -1,4 +1,5 @@
 """Validate the OpenAPI 3.1 spec with openapi_spec_validator."""
+
 import sys
 from openapi_spec_validator import validate, OpenAPIV31SpecValidator
 import yaml
@@ -15,6 +16,6 @@ try:
         print(f"FAIL: {len(errs)} validation error(s)")
         for i, e in enumerate(errs[:40]):
             path = "/".join(str(x) for x in e.absolute_path) if e.absolute_path else ""
-            print(f"  [{i+1}] {path}: {e.message}")
+            print(f"  [{i + 1}] {path}: {e.message}")
 except Exception as ex:
     print("EXCEPTION:", ex)

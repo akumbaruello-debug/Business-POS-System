@@ -5,58 +5,45 @@ Implements ``Backend-Architecture-V1.0.md`` §12 / §17:
 * The resource ETag is the **quoted ISO 8601 ``updated_at``**.
 * Clients send ``If-Match: "<ISO 8601>"`` on mutating endpoints.
 * The server compares the provided ETag against the resource's
-  current ``updated_at``; mismatch → 412 ``version_mismatch``.
-* The DB also has a `version` column on the 6 mutable entities that
-  increments on every UPDATE via ``trg_*_bump_version``. That column
-  is the **server-side defense-in-depth** — the ETag is the
-  client-facing contract.
+  current ``updated_at``; mismatch -> 412 ``version_mismatch``.
 
-M1 provides the helpers; M2+ uses them inside PUT/PATCH/POST flows.
+For the 6 transactional document tables (sales, purchases, ...) the DB
+also carries a ``version`` column bumped by ``trg_*_bump_version`` as a
+defense-in-depth counter.
+
+For M2 master-data tables without a ``version`` column, see
+:mod:`app.concurrency.etag` for the derived version integer.
+
+This package keeps the M1 ``make_etag`` / ``check_if_match`` shims for
+backwards compatibility and re-exports the M2 helpers from
+:mod:`app.concurrency.etag`.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 
-from app.errors import VersionMismatch
+from app.concurrency.etag import (
+    check_if_match,
+    derive_version,
+    make_etag_from_updated_at,
+    parse_if_match_optional,
+    parse_if_match_required,
+)
 from app.logging import get_logger
 
 logger = get_logger(__name__)
 
 
 def make_etag(updated_at: datetime) -> str:
-    """Render the canonical strong ETag for a resource.
+    """Backwards-compatible alias to ``make_etag_from_updated_at``.
 
-    The ETag value is the resource's ``updated_at`` serialised in
-    ISO 8601 with microseconds + UTC offset, surrounded by double
-    quotes (per RFC 7232 strong-validator syntax).
+    Retained because the prior version of this module exposed
+    ``make_etag``; existing callers must continue to work. The M1
+    implementation omitted tzinfo normalization; we still accept naive
+    datetimes and treat them as UTC for ISO-format serialization.
     """
-    return f'"{updated_at.isoformat()}"'
-
-
-def check_if_match(
-    *,
-    provided: str | None,
-    current_etag: str,
-) -> None:
-    """Compare an ``If-Match`` header value to the current ETag.
-
-    Behaviour:
-
-    * ``provided is None`` → no concurrency check (caller decides
-      whether it's required).
-    * Provided value matches current → pass.
-    * Mismatch → raise :class:`VersionMismatch` (412).
-    """
-    if provided is None:
-        return
-    # Both should be the same quoted ISO 8601 string. Direct string
-    # comparison is correct — the format is deterministic.
-    if provided != current_etag:
-        logger.info("version_mismatch", provided=provided, current=current_etag)
-        raise VersionMismatch(
-            "Resource has been updated since you last read it.",
-        )
+    return make_etag_from_updated_at(updated_at)
 
 
 def strip_quotes(etag: str) -> str:
@@ -66,4 +53,12 @@ def strip_quotes(etag: str) -> str:
     return etag
 
 
-__all__ = ["check_if_match", "make_etag", "strip_quotes"]
+__all__ = [
+    "check_if_match",
+    "derive_version",
+    "make_etag",
+    "make_etag_from_updated_at",
+    "parse_if_match_optional",
+    "parse_if_match_required",
+    "strip_quotes",
+]

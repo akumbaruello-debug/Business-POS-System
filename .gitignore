@@ -15,11 +15,15 @@ venv/
 env/
 
 # Secrets / credentials / temp artifacts
+.env
+.env.*
+!.env.example
 .test_token.tmp
 *.tmp
 *.token
 
 # Hermes workspace state (not project source)
+.hermes/
 .hermes-skills/
 
 # pgAdmin / scratch validation directory
@@ -28,8 +32,37 @@ pg-tmp/
 # Superseded scratch script (real one is build_openapi.py)
 build_openapi_undone.py
 
+# Scratch / experimental directories
+_inspect/
+_inspect-*/
+_wip_m2_baseline/
+V0-design-zip-file/
+
+# One-off seed/fix scripts (not part of M1 deliverable)
+backend/fix_*.py
+fix_*.py
+verify_*.py
+
+# Log files and Windows artifacts
+backend/*.log
+backend/nul
+
 # Editor / OS
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Node / Next.js (frontend)
+node_modules/
+frontend/node_modules/
+frontend/.next/
+*.tsbuildinfo
+
+# Next.js specific
+/.next/
+/.pnp
+.pnp.js
+/coverage
+.vercel
+next-env.d.ts
