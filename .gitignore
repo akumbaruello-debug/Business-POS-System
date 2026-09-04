@@ -59,8 +59,7 @@ frontend/node_modules/
 frontend/.next/
 *.tsbuildinfo
 
-# Next.js specific
-/.next/
+# Next.js specific (from GitHub template, merged in)
 /.pnp
 .pnp.js
 /coverage
