@@ -65,3 +65,6 @@ frontend/.next/
 /coverage
 .vercel
 next-env.d.ts
+
+# Supabase CLI local metadata (not source)
+supabase/.temp/

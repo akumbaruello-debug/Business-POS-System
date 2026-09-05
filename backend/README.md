@@ -151,7 +151,7 @@ backend/
 
 ```bash
 psql -h 127.0.0.1 -p 5433 -U postgres -d pos_dev \
-  -f ../db/migrations/m0001__initial_schema_baseline.sql
+  -f ../supabase/migrations/20260826000001_initial_schema_baseline.sql
 ```
 
 ### 2. Configure environment

@@ -17,7 +17,8 @@
 # The runner:
 #   1. Connects to the target database
 #   2. Creates a `schema_migrations` table if not present
-#   3. Lists all m*.sql files in db/migrations/ in lexical order
+#   3. Lists all *.sql files in supabase/migrations/ in lexical order
+#      (Supabase CLI convention: <14-digit-timestamp>_<name>.sql)
 #   4. For each migration that has not yet been applied:
 #      a. Runs it inside an explicit transaction (BEGIN; ... COMMIT;)
 #      b. Records the migration name + checksum + applied_at in
@@ -28,6 +29,11 @@
 #
 # All migrations must be safe to run exactly once. The runner does NOT
 # re-apply or roll back applied migrations.
+#
+# Note: supabase/migrations/ is the canonical migration directory. The
+# Supabase CLI is the primary tool for deploying migrations to the remote
+# Supabase project; this script is kept for local validation runs against
+# a local PostgreSQL instance.
 # =============================================================================
 
 set -euo pipefail
@@ -40,7 +46,9 @@ PG_PORT="${3:-5433}"
 PG_USER="${4:-postgres}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MIGRATIONS_DIR="${SCRIPT_DIR}/migrations"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Canonical migration directory (Supabase CLI convention)
+MIGRATIONS_DIR="${MIGRATIONS_DIR:-${PROJECT_ROOT}/supabase/migrations}"
 
 # Locate psql in the project's portable PostgreSQL distribution
 PSQL_BIN_DEFAULT="C:/Users/ratus/Desktop/ello/projects/Business-POS-System/pg-tmp/pg17/pgsql/bin/psql.exe"
@@ -104,7 +112,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 SQL
 
 # Step 2: list migrations
-MIGRATION_FILES=$(find "$MIGRATIONS_DIR" -maxdepth 1 -type f -name 'm*.sql' | sort)
+MIGRATION_FILES=$(find "$MIGRATIONS_DIR" -maxdepth 1 -type f -name '*.sql' | sort)
 
 if [[ -z "$MIGRATION_FILES" ]]; then
     echo "No migrations found in $MIGRATIONS_DIR"

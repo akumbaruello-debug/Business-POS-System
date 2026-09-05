@@ -14,7 +14,7 @@ PG_PSQL="$PROJECT_ROOT/../pg-tmp/pg17/pgsql/bin/psql.exe"
 echo "[reset_dev_db] Re-applying canonical migration to $DB_NAME..."
 PGPASSWORD= "$PG_PSQL" -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" \
   -v ON_ERROR_STOP=1 \
-  -f "$PROJECT_ROOT/db/migrations/m0001__initial_schema_baseline.sql" \
+  -f "$PROJECT_ROOT/supabase/migrations/20260826000001_initial_schema_baseline.sql" \
   | tail -5
 
 echo "[reset_dev_db] Done. DB: $DB_NAME"
