@@ -41,6 +41,7 @@ _REPORT_DISPLAY = {
     "sales": "Sales Report",
     "purchases": "Purchases Report",
     "inventory": "Inventory Report",
+    "products": "Products Catalog",
     "inventory-movements": "Inventory Movements",
     "sales-returns": "Sales Returns",
     "purchase-returns": "Purchase Returns",
@@ -345,7 +346,7 @@ class ExportService:
         headers, rows = self._normalize_rows(data)
         if rows:
             table_data = [headers] + rows
-            table = Table(table_data, repeat_rows=1)
+            table = Table(table_data, repeatRows=1)
             table.setStyle(
                 TableStyle(
                     [
@@ -376,6 +377,7 @@ class ExportService:
         """Render report data as a valid XLSX workbook via openpyxl."""
         from openpyxl import Workbook
         from openpyxl.styles import Font, PatternFill
+        from openpyxl.utils import get_column_letter
 
         wb = Workbook()
         ws = wb.active
@@ -401,7 +403,7 @@ class ExportService:
 
         ws.column_dimensions["A"].width = 20
         for col_idx in range(2, len(headers) + 1):
-            col_letter = openpyxl.utils.get_column_letter(col_idx)
+            col_letter = get_column_letter(col_idx)
             ws.column_dimensions[col_letter].width = 20
 
         buffer = io.BytesIO()
@@ -422,7 +424,7 @@ class ExportService:
         from app.reports import dashboard_repo, inventory_repo, sales_repo
         from app.reports.period import resolve_period as _resolve_period
 
-        # resolve_period is SYNC (not async) and keyword-only args.
+        # Period aliases accepted by the report layer.
         try:
             from_iso, to_iso = _resolve_period(
                 period=filters.get("period", "this_month"),
@@ -431,6 +433,28 @@ class ExportService:
             )
         except Exception:
             from_iso, to_iso = None, None
+
+        # Products report — flat row list, filters: period (default 'all'),
+        # from_iso/to_iso (custom), is_active, category_id, unit_id.
+        if report == "products":
+            from app.reports.products_repo import fetch_products_report
+
+            product_filters: dict[str, Any] = {
+                "is_active": filters.get("filter[is_active]", filters.get("is_active")),
+                "category_id": filters.get(
+                    "filter[category_id]", filters.get("category_id")
+                ),
+                "unit_id": filters.get("filter[unit_id]", filters.get("unit_id")),
+            }
+            # ``all`` is a products-only alias — bypass the period resolver
+            # and skip the created_at predicate.
+            period_alias = filters.get("period", "all")
+            if period_alias != "all":
+                product_filters["from_iso"] = (
+                    from_iso.isoformat() if from_iso else None
+                )
+                product_filters["to_iso"] = to_iso.isoformat() if to_iso else None
+            return await fetch_products_report(uow, product_filters)
 
         if report == "sales" and from_iso and to_iso:
             agg = await sales_repo.fetch_sales_aggregates(

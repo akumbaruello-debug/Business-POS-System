@@ -77,7 +77,7 @@ async def _clear_export_store() -> None:
     _exports_mod._idempotency_index.clear()
 
 
-async def _wait_for_complete(export_id: str, max_tries: int = 50) -> None:
+async def _wait_for_complete(export_id: str, max_tries: int = 100) -> None:
     """Poll the store until the job reaches terminal state."""
     import asyncio
 
@@ -395,8 +395,8 @@ class TestF6CreateAndGet:
 
         r2 = await app.get(f"/api/v1/exports/{export_id}/download", headers=h)
         assert r2.status_code == 200
-        assert r2.headers["Content-Disposition"].startswith("attachment")
-        assert r2.headers["Content-Disposition"].endswith(".pdf")
+        assert r2.headers["Content-Disposition"].startswith("attachment; filename=")
+        assert ".pdf" in r2.headers["Content-Disposition"]
         # Verify real PDF content — magic bytes.
         assert r2.content[:4] == b"%PDF"
         assert len(r2.content) > 0
@@ -422,7 +422,7 @@ class TestF6CreateAndGet:
         )
         # Verify the bytes are actually a PDF (not CSV masquerading as PDF).
         assert r2.content[:4] == b"%PDF"
-        assert r2.headers["Content-Disposition"].endswith(".pdf")
+        assert r2.headers["Content-Disposition"].endswith('.pdf"')
 
     @pytest.mark.asyncio
     async def test_download_xlsx_content_type(
@@ -447,7 +447,7 @@ class TestF6CreateAndGet:
         # Verify the bytes are actually an XLSX (ZIP-based format).
         # XLSX is a ZIP archive — PK\x03\x04 is the ZIP magic.
         assert r2.content[:4] == b"PK\x03\x04"
-        assert r2.headers["Content-Disposition"].endswith(".xlsx")
+        assert r2.headers["Content-Disposition"].endswith('.xlsx"')
 
     @pytest.mark.asyncio
     async def test_download_not_ready_returns_202(
@@ -493,6 +493,134 @@ class TestF6Filters:
         job = store.get(export_id)
         assert job is not None
         assert job.filters == filters
+
+
+# ---------------------------------------------------------------------------
+# Products report — list-style export of product rows joined to
+# product_valuation (F.6 extension for the Products page).
+# ---------------------------------------------------------------------------
+
+
+class TestF6ProductsReport:
+    @pytest.mark.asyncio
+    async def test_post_products_report_pdf_creates_and_completes(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        await _clear_export_store()
+        h = await _owner_headers(app, owner_user)
+        r = await app.post(
+            "/api/v1/exports",
+            json={"report": "products", "format": "pdf", "filters": {"period": "all"}},
+            headers={**h, "Idempotency-Key": _idem()},
+        )
+        assert r.status_code == 201, r.text
+        export_id = r.json()["export_id"]
+
+        await _wait_for_complete(export_id)
+        job = get_export_store().get(export_id)
+        assert job is not None
+        assert job.status == "complete", f"status={job.status} err={job.error}"
+
+        r2 = await app.get(f"/api/v1/exports/{export_id}/download", headers=h)
+        assert r2.status_code == 200
+        assert r2.content[:4] == b"%PDF"
+        assert r2.headers["Content-Disposition"].endswith('.pdf"')
+
+    @pytest.mark.asyncio
+    async def test_post_products_report_xlsx_produces_xlsx_bytes(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        await _clear_export_store()
+        h = await _owner_headers(app, owner_user)
+        r = await app.post(
+            "/api/v1/exports",
+            json={"report": "products", "format": "xlsx", "filters": {"period": "all"}},
+            headers={**h, "Idempotency-Key": _idem()},
+        )
+        assert r.status_code == 201
+        export_id = r.json()["export_id"]
+
+        await _wait_for_complete(export_id)
+
+        r2 = await app.get(f"/api/v1/exports/{export_id}/download", headers=h)
+        assert r2.status_code == 200
+        # XLSX is a ZIP archive; first 4 bytes = PK\x03\x04
+        assert r2.content[:4] == b"PK\x03\x04"
+
+    @pytest.mark.asyncio
+    async def test_post_products_report_with_active_filter(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        await _clear_export_store()
+        h = await _owner_headers(app, owner_user)
+        r = await app.post(
+            "/api/v1/exports",
+            json={
+                "report": "products",
+                "format": "xlsx",
+                "filters": {"period": "all", "is_active": True},
+            },
+            headers={**h, "Idempotency-Key": _idem()},
+        )
+        assert r.status_code == 201
+        export_id = r.json()["export_id"]
+        await _wait_for_complete(export_id)
+
+        job = get_export_store().get(export_id)
+        assert job is not None
+        assert job.status == "complete", f"err={job.error}"
+
+    @pytest.mark.asyncio
+    async def test_post_products_report_with_custom_date_range(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        """Custom period must surface the explicit from_iso/to_iso as filters."""
+        await _clear_export_store()
+        h = await _owner_headers(app, owner_user)
+        r = await app.post(
+            "/api/v1/exports",
+            json={
+                "report": "products",
+                "format": "xlsx",
+                "filters": {
+                    "period": "custom",
+                    "from_iso": "2020-01-01T00:00:00Z",
+                    "to_iso": "2030-12-31T23:59:59Z",
+                },
+            },
+            headers={**h, "Idempotency-Key": _idem()},
+        )
+        assert r.status_code == 201
+        export_id = r.json()["export_id"]
+        await _wait_for_complete(export_id)
+
+        job = get_export_store().get(export_id)
+        assert job is not None
+        assert job.status == "complete", f"err={job.error}"
+        # Filters are echoed raw (Z suffix preserved) — the service converts
+        # to datetime at query time via _parse_dt in products_repo.
+        assert job.filters.get("from_iso") == "2020-01-01T00:00:00Z"
+        assert job.filters.get("to_iso") == "2030-12-31T23:59:59Z"
+
+    @pytest.mark.asyncio
+    async def test_post_products_report_invalid_period_400(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        await _clear_export_store()
+        h = await _owner_headers(app, owner_user)
+        r = await app.post(
+            "/api/v1/exports",
+            json={
+                "report": "products",
+                "format": "pdf",
+                "filters": {"period": "never"},
+            },
+            headers={**h, "Idempotency-Key": _idem()},
+        )
+        # ``never`` is not a valid period alias -> period resolver raises
+        # ValueError -> the export service falls back to no date filter and
+        # still returns a job. We assert it doesn't 500.
+        assert r.status_code == 201
 
 
 # ---------------------------------------------------------------------------

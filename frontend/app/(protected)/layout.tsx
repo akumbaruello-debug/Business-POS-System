@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { AppShell } from '@/components/layout/app-shell'
 import { isAuthenticated, getCurrentUser, type SessionUser } from '@/lib/auth'
+import { SessionContext } from '@/lib/session'
 
 export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -18,6 +19,10 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       }
       try {
         const u = await getCurrentUser()
+        if (!u) {
+          router.replace('/login')
+          return
+        }
         setUser(u)
       } catch {
         router.replace('/login')
@@ -36,6 +41,11 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     )
   }
 
-  // We could pass user context via React context but for now just render shell
-  return <AppShell>{children}</AppShell>
+  if (!user) return null
+
+  return (
+    <SessionContext.Provider value={{ user }}>
+      <AppShell>{children}</AppShell>
+    </SessionContext.Provider>
+  )
 }

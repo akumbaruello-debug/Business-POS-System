@@ -28,6 +28,7 @@ class ReportType(str, enum.Enum):
     SALES = "sales"
     PURCHASES = "purchases"
     INVENTORY = "inventory"
+    PRODUCTS = "products"
     INVENTORY_MOVEMENTS = "inventory-movements"
     SALES_RETURNS = "sales-returns"
     PURCHASE_RETURNS = "purchase-returns"

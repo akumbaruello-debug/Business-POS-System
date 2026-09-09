@@ -184,6 +184,37 @@ class TestListProducts:
         for row in r2.json()["data"]:
             assert row["is_active"] is True
 
+    async def test_list_filter_is_inactive(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        """Regression: filter[is_active]=false must return inactive products.
+
+        Reproduces the reported bug where selecting "Inactive" returned an
+        unchanged list — the repository previously ignored ``active_only=False``.
+        """
+        headers = await _owner_headers(app, owner_user)
+        # Create and deactivate one product so there is at least one inactive.
+        r = await app.post(
+            "/api/v1/products",
+            json=_valid_product(),
+            headers={**headers, "Idempotency-Key": _idem()},
+        )
+        pid = r.json()["id"]
+        await app.post(
+            f"/api/v1/products/{pid}/deactivate",
+            json={"reason": "test"},
+            headers={**headers, "Idempotency-Key": _idem()},
+        )
+        # Inactive filter must contain the deactivated product (is_active false).
+        r2 = await app.get("/api/v1/products?filter[is_active]=false", headers=headers)
+        assert r2.status_code == 200
+        data = r2.json()["data"]
+        assert any(row["id"] == pid for row in data), (
+            "Deactivated product missing from filter[is_active]=false result"
+        )
+        for row in data:
+            assert row["is_active"] is False
+
     async def test_list_search_by_q(self, app: AsyncClient, owner_user: dict[str, Any]) -> None:
         headers = await _owner_headers(app, owner_user)
         unique = f"searchterm{uuid.uuid4().hex[:6]}"

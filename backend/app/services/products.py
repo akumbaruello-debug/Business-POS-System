@@ -686,3 +686,400 @@ class ProductService:
 
 
 __all__ = ["ProductService"]
+
+
+# ----------------------------------------------------------------------------
+# Bulk import (POST /products/import)
+# ----------------------------------------------------------------------------
+#
+# Two-phase design so the DB is never partially mutated by a bad file.
+#
+# Phase 1 — validation only. Every row is checked against the
+#   ProductCreateRequest schema + the parent category/unit + existing
+#   SKU uniqueness. Rows that fail are reported with their row number
+#   and a list of error strings. Rows that pass are returned in
+#   ``valid_rows`` with no DB writes.
+#
+# Phase 2 — commit (when ``commit=True`` is passed). The same valid
+#   rows are inserted via ``ProductService.create`` so the canonical
+#   business rules (uniqueness, FK, audit, idempotency fingerprint)
+#   are enforced.
+#
+# The frontend contract is:
+#   - POST /products/import  body: { rows: [...], commit: false }
+#       -> returns { total_rows, valid_count, invalid_count, errors[] }
+#       -> user reviews, decides to commit
+#   - POST /products/import  body: { rows: [...], commit: true }
+#       -> returns { total_rows, created, skipped, failed, results[] }
+# ----------------------------------------------------------------------------
+
+_MAX_IMPORT_ROWS = 1000
+
+
+async def _existing_codes(uow: UnitOfWork, codes: list[str]) -> set[str]:
+    if not codes:
+        return set()
+    rows = await uow.fetch_all(
+        "SELECT code FROM products WHERE code = ANY(:codes)",
+        {"codes": list(codes)},
+    )
+    return {row["code"] for row in rows if row.get("code")}
+
+
+async def _existing_category_ids(
+    uow: UnitOfWork, ids: list[int]
+) -> set[int]:
+    if not ids:
+        return set()
+    rows = await uow.fetch_all(
+        "SELECT id FROM categories WHERE id = ANY(:ids)",
+        {"ids": list(ids)},
+    )
+    return {int(row["id"]) for row in rows}
+
+
+async def _existing_unit_ids(uow: UnitOfWork, ids: list[int]) -> set[int]:
+    if not ids:
+        return set()
+    rows = await uow.fetch_all(
+        "SELECT id FROM units WHERE id = ANY(:ids)",
+        {"ids": list(ids)},
+    )
+    return {int(row["id"]) for row in rows}
+
+
+async def validate_import_rows(
+    uow: UnitOfWork,
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Validate import rows in one pass. Return (valid_rows, errors).
+
+    ``valid_rows`` are sanitized dicts ready to feed to
+    ``ProductService.create`` (only the fields the service accepts).
+    ``errors`` is a list of ``{row, errors}`` for the rows that failed.
+    """
+    if len(rows) > _MAX_IMPORT_ROWS:
+        raise ValueError(
+            f"Too many rows: {len(rows)} (max {_MAX_IMPORT_ROWS})"
+        )
+
+    errors: list[dict[str, Any]] = []
+    valid: list[dict[str, Any]] = []
+
+    # 1. Batch-fetch existing codes / category ids / unit ids.
+    candidate_codes = [
+        str(r.get("code")).strip()
+        for r in rows
+        if r.get("code") is not None and str(r.get("code")).strip()
+    ]
+    candidate_category_ids = [
+        int(r["category_id"])
+        for r in rows
+        if r.get("category_id") is not None
+    ]
+    candidate_unit_ids = [
+        int(r["unit_id"])
+        for r in rows
+        if r.get("unit_id") is not None
+    ]
+
+    existing_codes = await _existing_codes(uow, candidate_codes)
+    existing_categories = await _existing_category_ids(
+        uow, candidate_category_ids
+    )
+    existing_units = await _existing_unit_ids(uow, candidate_unit_ids)
+
+    # In-file duplicate codes (two rows with the same code).
+    seen_codes: set[str] = set()
+    file_dup_codes: set[str] = set()
+    for code in candidate_codes:
+        if code in seen_codes:
+            file_dup_codes.add(code)
+        else:
+            seen_codes.add(code)
+
+    # 2. Per-row checks.
+    for idx, raw in enumerate(rows, start=1):
+        row_errors: list[str] = []
+
+        # name required
+        name = raw.get("name")
+        if name is None or not str(name).strip():
+            row_errors.append("name is required")
+        elif len(str(name)) > 200:
+            row_errors.append("name too long (max 200 chars)")
+
+        # code optional; must match pattern if present
+        code = raw.get("code")
+        if code is not None and code != "":
+            code = str(code).strip()
+            if not code:
+                code = None
+            else:
+                if len(code) > 64:
+                    row_errors.append("code too long (max 64 chars)")
+                import re as _re
+
+                if not _re.match(r"^[A-Za-z0-9._-]+$", code):
+                    row_errors.append(
+                        "code must match [A-Za-z0-9._-]+ pattern"
+                    )
+                if code in existing_codes:
+                    row_errors.append(
+                        f"code '{code}' already exists"
+                    )
+                if code in file_dup_codes:
+                    row_errors.append(
+                        f"code '{code}' appears more than once in file"
+                    )
+        else:
+            code = None
+
+        # category_id optional; if present must be an int that exists
+        category_id = raw.get("category_id")
+        if category_id is not None:
+            try:
+                category_id = int(category_id)
+                if category_id < 1:
+                    raise ValueError
+            except (TypeError, ValueError):
+                row_errors.append(
+                    f"category_id must be a positive integer "
+                    f"(got {category_id!r})"
+                )
+                category_id = None
+            else:
+                if category_id not in existing_categories:
+                    row_errors.append(
+                        f"category_id {category_id} not found"
+                    )
+
+        # unit_id optional; if present must be an int that exists
+        unit_id = raw.get("unit_id")
+        if unit_id is not None:
+            try:
+                unit_id = int(unit_id)
+                if unit_id < 1:
+                    raise ValueError
+            except (TypeError, ValueError):
+                row_errors.append(
+                    f"unit_id must be a positive integer "
+                    f"(got {unit_id!r})"
+                )
+                unit_id = None
+            else:
+                if unit_id not in existing_units:
+                    row_errors.append(
+                        f"unit_id {unit_id} not found"
+                    )
+
+        # prices — optional, must be >= 0 numbers if present
+        for price_field in ("purchase_price", "selling_price"):
+            v = raw.get(price_field)
+            if v is not None and v != "":
+                try:
+                    v_float = float(v)
+                    if v_float < 0:
+                        row_errors.append(
+                            f"{price_field} must be >= 0"
+                        )
+                except (TypeError, ValueError):
+                    row_errors.append(
+                        f"{price_field} must be a number (got {v!r})"
+                    )
+
+        # low_stock_threshold
+        threshold = raw.get("low_stock_threshold")
+        if threshold is not None and threshold != "":
+            try:
+                t_float = float(threshold)
+                if t_float < 0:
+                    row_errors.append(
+                        "low_stock_threshold must be >= 0"
+                    )
+            except (TypeError, ValueError):
+                row_errors.append(
+                    f"low_stock_threshold must be a number (got {threshold!r})"
+                )
+
+        # flags
+        for bool_field in (
+            "is_sellable",
+            "is_purchasable",
+            "is_producible",
+            "is_active",
+            "allow_negative_stock",
+        ):
+            v = raw.get(bool_field)
+            if v is not None and not isinstance(v, bool):
+                # Coerce common truthy strings; otherwise flag.
+                if isinstance(v, str):
+                    lowered = v.strip().lower()
+                    if lowered in ("true", "1", "yes", "y"):
+                        continue
+                    if lowered in ("false", "0", "no", "n"):
+                        continue
+                row_errors.append(
+                    f"{bool_field} must be a boolean "
+                    f"(got {v!r})"
+                )
+
+        if row_errors:
+            errors.append({"row": idx, "errors": row_errors})
+            continue
+
+        # Sanitize into a ProductService.create payload.
+        valid.append(
+            {
+                "name": str(name).strip(),
+                "code": code,
+                "category_id": category_id,
+                "unit_id": unit_id,
+                "purchase_price": (
+                    float(raw["purchase_price"])
+                    if raw.get("purchase_price") not in (None, "")
+                    else 0
+                ),
+                "selling_price": (
+                    float(raw["selling_price"])
+                    if raw.get("selling_price") not in (None, "")
+                    else 0
+                ),
+                "low_stock_threshold": (
+                    float(raw["low_stock_threshold"])
+                    if raw.get("low_stock_threshold") not in (None, "")
+                    else None
+                ),
+                "allow_negative_stock": _coerce_bool(
+                    raw.get("allow_negative_stock")
+                ),
+                "is_sellable": _coerce_bool_default(
+                    raw.get("is_sellable"), True
+                ),
+                "is_purchasable": _coerce_bool_default(
+                    raw.get("is_purchasable"), True
+                ),
+                "is_producible": _coerce_bool_default(
+                    raw.get("is_producible"), False
+                ),
+                "is_active": _coerce_bool_default(
+                    raw.get("is_active"), True
+                ),
+                "notes": (
+                    str(raw["notes"])
+                    if raw.get("notes") not in (None, "")
+                    else None
+                ),
+            }
+        )
+
+    return valid, errors
+
+
+def _coerce_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ("true", "1", "yes", "y"):
+            return True
+        if lowered in ("false", "0", "no", "n"):
+            return False
+    return None
+
+
+def _coerce_bool_default(value: Any, default: bool) -> bool:
+    coerced = _coerce_bool(value)
+    return default if coerced is None else coerced
+
+
+async def commit_import(
+    uow: UnitOfWork,
+    rows: list[dict[str, Any]],
+    *,
+    actor_user_id: int,
+) -> dict[str, Any]:
+    """Insert validated rows. Returns a per-row report.
+
+    The validation phase is repeated here defensively — a client that
+    sends ``commit=true`` directly with malformed rows still gets
+    row-level errors instead of an opaque 500.
+    """
+    from app.audit.service import ENTITY_PRODUCTS, AuditContext, write_audit
+    from app.validation.enums import AuditAction
+
+    valid, errors = await validate_import_rows(uow, rows)
+
+    svc = ProductService(uow)
+    ctx = AuditContext(
+        user_id=actor_user_id,
+        ip_address=None,
+        request_id=None,
+    )
+
+    error_rows_by_index: dict[int, list[str]] = {
+        e["row"]: e["errors"] for e in errors
+    }
+
+    results: list[dict[str, Any]] = []
+    created_count = 0
+    failed_count = 0
+    valid_iter = iter(valid)
+
+    for idx in range(1, len(rows) + 1):
+        if idx in error_rows_by_index:
+            results.append(
+                {
+                    "row": idx,
+                    "action": "failed",
+                    "errors": error_rows_by_index[idx],
+                }
+            )
+            failed_count += 1
+            continue
+        row = next(valid_iter)
+        try:
+            created_row = await svc.create(
+                name=row["name"],
+                code=row["code"],
+                category_id=row["category_id"],
+                unit_id=row["unit_id"],
+                purchase_price=row["purchase_price"],
+                selling_price=row["selling_price"],
+                low_stock_threshold=row["low_stock_threshold"],
+                allow_negative_stock=row["allow_negative_stock"],
+                notes=row["notes"],
+                is_sellable=row["is_sellable"],
+                is_purchasable=row["is_purchasable"],
+                is_producible=row["is_producible"],
+                is_active=row["is_active"],
+                ctx=ctx,
+            )
+            created_count += 1
+            results.append(
+                {
+                    "row": idx,
+                    "action": "created",
+                    "product_id": int(created_row["id"]),
+                    "errors": [],
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            failed_count += 1
+            results.append(
+                {
+                    "row": idx,
+                    "action": "failed",
+                    "errors": [str(exc)],
+                }
+            )
+
+    return {
+        "total_rows": len(rows),
+        "created": created_count,
+        "skipped": 0,
+        "failed": failed_count,
+        "results": results,
+    }

@@ -78,6 +78,8 @@ class ProductRepository:
 
         if active_only is True:
             clauses.append("is_active = TRUE")
+        elif active_only is False:
+            clauses.append("is_active = FALSE")
         if category_id is not None:
             clauses.append("category_id = :category_id")
             params["category_id"] = category_id

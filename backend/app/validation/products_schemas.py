@@ -221,10 +221,35 @@ class ProductResponse(BaseModel):
     updated_by: int | None = None
 
 
+class ProductImportResult(BaseModel):
+    """Result of a single row import."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    row: int  # 1-indexed row number in the file
+    action: str  # "created" or "skipped" or "failed"
+    product_id: int | None = None
+    errors: list[str] = Field(default_factory=list)
+
+
+class ProductImportReport(BaseModel):
+    """Response for POST /products/import."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    total_rows: int
+    created: int
+    skipped: int
+    failed: int
+    results: list[ProductImportResult] = Field(default_factory=list)
+
+
 __all__ = [
     "DeactivateRequest",
     "ProductBase",
     "ProductCreateRequest",
+    "ProductImportReport",
+    "ProductImportResult",
     "ProductPatch",
     "ProductPriceHistory",
     "ProductResponse",

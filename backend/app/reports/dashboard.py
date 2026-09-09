@@ -33,11 +33,11 @@ from app.reports import dashboard_repo, inventory_repo, sales_repo
 
 __all__ = ["DashboardService"]
 
-# Bucket selection per API-Architecture 12.2 line 1109: daily for a
-# week-long window, weekly for a month/year. We use a 7-day threshold
-# (inclusive) so ``today`` (1 day) and ``this_week`` (7 days) use
-# daily buckets; anything longer switches to weekly.
-_DAILY_BUCKET_MAX_DAYS = 7
+# Bucket selection per API-Architecture 12.2 line 1109 + dashboard UX:
+# daily for windows <= 31 days (today, this_week, this_month, and
+# monthly custom ranges so the monthly chart shows a useful daily
+# trend); weekly for windows > 31 days (e.g. this_year, multi-month).
+_DAILY_BUCKET_MAX_DAYS = 31
 _BEST_SELLERS_LIMIT = 10
 _EXPENSE_BREAKDOWN_LIMIT = 10
 

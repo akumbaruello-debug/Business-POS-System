@@ -1,8 +1,8 @@
 /**
  * Display formatters for IDR currency, percentages, and counts.
  *
- * V0 baseline used "Rp 128.450.000" (period thousands separator,
- * no decimals, "Rp" prefix with non-breaking space). Preserve it.
+ * Dashboard monetary values use Indonesian thousands separators with no
+ * prefix: 12.514.000 (V0 baseline). Negative: -992.141.
  */
 
 const IDR = new Intl.NumberFormat('id-ID', {
@@ -10,10 +10,10 @@ const IDR = new Intl.NumberFormat('id-ID', {
   maximumFractionDigits: 0,
 })
 
-/** Format a numeric amount as Indonesian Rupiah. */
+/** Format a numeric amount in Indonesian Rupiah (period thousands, no prefix). */
 export function formatIDR(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '—'
-  return `Rp ${IDR.format(value)}`
+  return IDR.format(value)
 }
 
 /** Format a number as "1,248" (id-ID). */

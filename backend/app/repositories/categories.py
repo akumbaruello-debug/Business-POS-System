@@ -52,6 +52,8 @@ class CategoryRepository:
 
         if active_only is True:
             clauses.append("is_active = TRUE")
+        elif active_only is False:
+            clauses.append("is_active = FALSE")
         if q:
             clauses.append("(name ILIKE :q)")
             params["q"] = f"%{q}%"

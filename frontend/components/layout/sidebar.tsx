@@ -1,38 +1,21 @@
 'use client'
 
 import {
-  BarChart3,
   Boxes,
-  ChevronLeft,
-  ChevronRight,
-  ClipboardList,
-  FileBarChart,
   LayoutDashboard,
   Package,
-  Settings,
-  ShoppingCart,
   Store,
   Truck,
   Users,
 } from 'lucide-react'
+import { useSession, initialsFor } from '@/lib/session'
 
+// Only routes with implemented pages ship. Dead sections (Sales,
+// Purchasing, Finance, Administration) have no page yet, so their links
+// are withheld rather than 404ing. Reintroduce a group when its first
+// page lands.
 const navigation = [
   { label: 'Overview', items: [{ label: 'Dashboard', icon: LayoutDashboard, href: '/dashboard' }] },
-  {
-    label: 'Sales',
-    items: [
-      { label: 'Sales', icon: ShoppingCart, href: '/sales' },
-      { label: 'POS / New Sale', icon: Store, href: '/pos' },
-      { label: 'Returns & Refunds', icon: ClipboardList, href: '/returns' },
-    ],
-  },
-  {
-    label: 'Purchasing',
-    items: [
-      { label: 'Purchases', icon: ClipboardList, href: '/purchases' },
-      { label: 'Suppliers', icon: Truck, href: '/suppliers' },
-    ],
-  },
   {
     label: 'Inventory',
     items: [
@@ -45,18 +28,8 @@ const navigation = [
     items: [{ label: 'Customers', icon: Users, href: '/customers' }],
   },
   {
-    label: 'Finance',
-    items: [
-      { label: 'Payments', icon: BarChart3, href: '/payments' },
-      { label: 'Reports', icon: FileBarChart, href: '/reports' },
-    ],
-  },
-  {
-    label: 'Administration',
-    items: [
-      { label: 'Users & Roles', icon: Users, href: '/users' },
-      { label: 'Settings', icon: Settings, href: '/settings' },
-    ],
+    label: 'Purchasing',
+    items: [{ label: 'Suppliers', icon: Truck, href: '/suppliers' }],
   },
 ] as const
 
@@ -71,12 +44,21 @@ export function Sidebar({
   mobileOpen: boolean
   onNavigate: () => void
 }) {
+  const user = useSession()
+  const initials = initialsFor(user)
   return (
     <aside
       className={`sidebar ${collapsed ? 'sidebar-collapsed' : ''} ${mobileOpen ? 'sidebar-mobile-open' : ''}`}
       aria-label="Primary navigation"
     >
-      <div className="brand">
+      <button
+        type="button"
+        className="brand brand-toggle"
+        onClick={onCollapse}
+        aria-label={collapsed ? 'Toggle sidebar (expanded)' : 'Toggle sidebar (collapsed)'}
+        aria-expanded={!collapsed}
+        title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      >
         <span className="brand-mark">
           <Store size={19} />
         </span>
@@ -84,14 +66,6 @@ export function Sidebar({
           <strong>Perikanan</strong>
           <small>INDONESIA</small>
         </span>
-      </div>
-
-      <button
-        className="collapse-button"
-        onClick={onCollapse}
-        aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-      >
-        {collapsed ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
       </button>
 
       <nav className="nav-area">
@@ -108,8 +82,6 @@ export function Sidebar({
               >
                 <item.icon size={17} />
                 <span>{item.label}</span>
-                {/* Optional badge, e.g., for Sales count */}
-                {item.label === 'Sales' && <em>12</em>}
               </a>
             ))}
           </div>
@@ -118,10 +90,10 @@ export function Sidebar({
 
       <div className="sidebar-bottom">
         <div className="user-card">
-          <span className="avatar">AD</span>
+          <span className="avatar">{initials}</span>
           <span>
-            <strong>Andi Darmawan</strong>
-            <small>Owner</small>
+            <strong>{user.full_name || user.username}</strong>
+            <small>{user.role_name}</small>
           </span>
         </div>
       </div>

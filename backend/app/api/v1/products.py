@@ -31,19 +31,25 @@ from app.concurrency.etag import parse_if_match_optional
 from app.concurrency.master_etag import etag_and_version_from_updated_at
 from app.db import UnitOfWork
 from app.errors import MissingHeader
-from app.services.products import ProductService
+from app.services.products import (
+    ProductService,
+    commit_import,
+    validate_import_rows,
+)
 from app.util import client_ip
 from app.validation.headers import parse_idempotency_key
 from app.validation.pagination import MetaEnvelope, make_pagination
 from app.validation.products_schemas import (
     DeactivateRequest,
     ProductCreateRequest,
+    ProductImportReport,
     ProductPatch,
     ProductPriceHistory,
     ProductResponse,
     ProductValuation,
     StockMovement,
 )
+from pydantic import BaseModel, ConfigDict, Field
 
 # Capability gates.
 #
@@ -567,6 +573,38 @@ async def get_product_valuation(
         moving_average_unit_cost=snap["moving_average_unit_cost"],
         as_of=as_of.isoformat() if hasattr(as_of, "isoformat") else str(as_of),
     )
+
+
+class ProductImportRequest(BaseModel):
+    rows: list[dict[str, Any]]
+    commit: bool = False
+
+
+@router.post("/import", dependencies=[Depends(RequireCreate)])
+async def import_products(
+    request: ProductImportRequest,
+    uow: UnitOfWork = Depends(get_uow),
+    principal: Principal = Depends(current_principal),
+) -> dict[str, Any]:
+    """Bulk import products.
+
+    Two-phase:
+    - commit=false: validate rows and return errors.
+    - commit=true: insert validated rows and return per-row results.
+    """
+    if not request.commit:
+        valid, errors = await validate_import_rows(uow, request.rows)
+        return {
+            "total_rows": len(request.rows),
+            "valid": len(valid),
+            "invalid": len(errors),
+            "errors": errors,
+        }
+    else:
+        report = await commit_import(
+            uow, request.rows, actor_user_id=principal.user_id
+        )
+        return report
 
 
 __all__ = ["router"]

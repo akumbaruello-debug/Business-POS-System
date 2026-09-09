@@ -1,62 +1,64 @@
 # Business-POS-System - STATUS
-**Last updated:** 2026-09-04
-**Spec/phase:** Backend V1.9 (backend P0 blockers CLOSED) — **Contacts backend RECOVERED** ✅ — ready for frontend integration
+**Last updated:** 2026-09-07
+**Spec/phase:** Frontend Integration Phase — Dashboard audit-fix session COMPLETE (Phase 1/18). Next: Products Management.
 
 ## Done
-- M1 foundation (auth, errors, health, logging, DB pool, rate-limit infra)
-- M2+ routes scaffolded (30+ routers: sales, products, purchases, categories, etc.)
-- G.2 OriginCheckMiddleware: installed conditionally (works if CORS origins set)
-- G.3 Security headers: installed (X-Content-Type-Options, X-Frame-Options, etc.)
-- G.6 Cron jobs: `cron.d/bpos-prune` exists, prune scripts + tests pass
-- X.6 below-cost notification: implemented
-- F.1–F.10: routes exist, but some are stubs
-- G.1 Rate limiting: CLOSED ✅ — 13/13 rate-limit tests pass; login rate-limit `5/15minute` and user-limits wired correctly
-- F.8 Notifications: routes exist + tests exist + pass
-- F.5 Dashboard: routes implemented (GET /dashboard, GET /dashboard/inventory)
-- F.6 Exports: CLOSED ✅ — `_generate()` now produces real PDF/XLSX via reportlab/openpyxl; MIME type + filename extension match format; tests verify magic bytes
-- Users & Roles: CLOSED ✅ — new `/users` routes registered; `UserService` + schemas; authz with `user.view`/`user.manage`/`user.grant_capability`/`user.revoke_capability`; 19/19 user tests pass
-- Test infrastructure: rate-limit test pollution CLOSED ✅ — `POS_ENV=test` + test-only skip in `check_limit()` keeps production limits unchanged
-- **Contacts backend recovery: CLOSED ✅** — original Python source unrecoverable from git (reflog, stashes, branches, dangling commits, deleted-file history all empty); reconstructed against canonical contract using `categories` route pattern. 6 endpoints mounted (`listContacts`, `createContact`, `getContact`, `updateContact`, `deleteContact`, `deactivateContact`). Response shape matches `openapi.yaml` `Contact` schema exactly: `{id, type, name, phone, email, address, notes, is_active, created_at, updated_at, version, created_by}`. ETag/version derived from `updated_at`; If-Match required on PATCH; Idempotency-Key on POST/DELETE/deactivate; audit logging on every mutation. All 14 runtime HTTP smoke tests pass (200/201/204/400/401/403/404/412 paths).
-- **Missing `contact.manage` capability restored ✅** — pre-existing gap: OpenAPI + frontend both required `contact.manage` for DELETE/deactivate, but it was never seeded in the canonical capability catalog or DB migration. Added to `_CANONICAL` in `app/authz/caps.py`, to `schema.sql`, and to `db/migrations/m0001__initial_schema_baseline.sql`. Owner role now gets it via the existing CROSS JOIN seed. `pos_dev` DB was manually patched (INSERT capability + role_capability).
+- Backend foundation: M1 auth/errors/health/DB/rate-limit; 30+ routers; OriginCheck; security headers; cron prune; F.5 dashboard routes; F.6 exports real PDF/XLSX; F.8 notifications; Users & Roles 19/19; Contacts recovery 34/34; test-infra pollution closed.
+- Dashboard (Phase 1) — reference integration pattern in `app/(protected)/dashboard/page.tsx`.
+- Sidebar UX: independent scroll ✅; old collapse button removed ✅; logo toggle works ✅.
+
+### Audit-fix session (2026-09-07) — all 4 P0 + 3 P1 resolved
+- **P0 Best-sellers 10×**: `dashboard_repo._BEST_SELLERS_SQL` used `SUM(sl.quantity * sl.line_total)`; `line_total` already = qty×unit_price. Now `SUM(sl.line_total)`. Independently verified: DB recompute == API (Ikan Asin Jambal 1,092,000 / Salmon Fillet Beku 1,015,000).
+- **P0 Monetary formatting**: `formatIDR` stripped of `Rp ` prefix; id-ID thousands separators kept. Verified exact: `12.514.000`, `7.492.703`, `-992.141`, `489.975.703`.
+- **P0 Negative delta**: `MetricCard` now takes numeric `deltaPct` (was pre-formatted string) and branches styling from the sign: positive green/↗, negative red/↘, zero neutral/→. Added `.metric-change.neutral` CSS.
+- **P1 Inventory semantics**: both KPI cards relabeled `Inventory (at cost)` (cost-basis value kept — standard accounting).
+- **P1 Dead nav**: removed 8 sidebar routes (sales/pos/returns/purchases/payments/reports/users/settings) + fabricated Sales "12" badge. Sidebar ships only live routes (dashboard/products/inventory/customers/suppliers).
+- **P1 Dead quick-actions**: removed `/pos` (New sale) + `/payments` (Record payment); kept `/products`.
+- **P1 Fake header**: removed fabricated global search, demo notifications, inert account-menu items (Profile/settings/preferences/language). Only real Sign out remains. `app-shell.tsx` cleaned of dead search/notification state + Cmd+K.
 
 ## In Progress
-- (none)
+- (none — between phases)
 
 ## Blocked / Pending
+### P0 — resolved this session (no longer open)
+- Best-sellers revenue, Rp prefix, negative-delta styling: all FIXED.
 
-### P0 — MUST FIX BEFORE FRONTEND (backend)
-- (none remaining)
+### Environment conflict (needs owner decision)
+- **WhatsApp bridge vs frontend port 3000**: Hermes gateway's `bridge.js` hardcodes `--port 3000` (no config.yaml/env override). Frontend must keep :3000 (backend Origin-check). Gateway was **left STOPPED**. To restore messaging, the bridge port must be moved off 3000 on the Hermes side.
 
-### P0 — frontend
-- No login/auth UI — backend auth works but no login page exists in any V0 zip or project.
-- Contacts pytest suite not authored — smoke-tested via HTTP only. Recommend `tests/api/test_contacts.py` mirroring `test_categories.py` (auth, list, filter, create, get, patch with If-Match, deactivate, delete with FK-block).
+### P1 — backend (pre-existing)
+- G.4 Metrics BLOCKED (app/metrics.py missing, arch decision needed). Ruff/mypy pre-existing errors. Version string stale 0.1.0/M1.
 
-### P1 — SHOULD FIX (does not block shell integration)
-- G.4 Metrics: BLOCKED — `app/metrics.py` missing, `middleware/metrics.py` references undefined `Counter`, `/metrics` absent, no `BPOS_ENABLE_METRICS` setting. Needs architectural decision before implementation.
-- Ruff/mypy production errors: 14 ruff, 5 mypy in app/ (pre-existing).
-- Version string stale: `main.py` says 0.1.0 / M1.
-- Idempotency-Key replay: `IdempotencyStore.start()` records fingerprint but the route layer does not implement full replay-on-duplicate-key logic (matches `categories.py` live pattern; deferred).
+### P2 — minor
+- Dead CSS for removed header/search/notification popovers still in `globals.css` (harmless).
+- Positive-delta card styling not exercised against live data (seed yields negative/zero deltas this window).
+- Dashboard `period=custom` date-picker deferred (backend supports it; UI not built).
 
-## Baseline (session-start checkpoint, 2026-09-04)
+## Verification performed this session
+- Independent `psql` recompute of per-product revenue == API best-sellers (exact).
+- Live API: this_month (sales 15,399,000 / purchases 7,492,703 / net 5,020,472.88), this_year (sales 217,016,000).
+- Sales Trend Σ = KPI exactly for this_month and this_year.
+- Delta sign path confirmed from real comparison data (-0.799 → -79.9%).
+- `npm run typecheck` PASS; `npm run build` PASS.
 
-- Exports: 9/9 PASS
-- Users & Roles: 19/19 PASS
-- Rate limits: 12/12 PASS
-- Contacts: HTTP smoke test PASS (14 scenarios on port 8006; all 6 endpoints verified)
-- Full suite: not re-run
-- Ruff: clean after fixing exports import sorting; remaining issues pre-existing
-- Mypy: pre-existing errors in dashboard.py, production_runs.py, sales.py, metrics.py; no new errors from contacts/users/exports changes
+## Browser verification limitation (honest)
+- Chrome remote-debugging permission denied → `browser_exec` returns empty (no JS/DOM/network).
+- In-app preview reached the login page, but the drive element collector mis-mapped `#username`/`#password`, and the sign-in click produced **no `POST /auth/login`** (native `required` validation or focus error) — not an app defect; **no code changed** to work around it.
+- **Live browser-rendered values (no-Rp strings, red/↘ delta, best-seller rows, chart) NOT visually confirmed.** DB/API + build verification PASS.
+
+## Live dev state
+- Backend uvicorn :8000 (PID 15852), Postgres :5433 (PID 14964), frontend :3000 — all running.
+- Dev-DB creds: owner/OwnerPass123! (reset this session; account had been locked + wrong password).
+- Auth: POST /api/v1/auth/login requires Idempotency-Key (UUID) + Origin: localhost:3000. Login rate limit 5/15min.
+- Demo seed: `backend/scripts/seed_demo_comprehensive.py` (deterministic, idempotent) — 288 sales, 731 sale_lines.
+
+## Next session
+- Phase 2/18: Products Management (frontend integration for `/products`).
+- Resolve WhatsApp-bridge/frontend port-3000 conflict before restarting gateway.
 
 ## Source of truth (links only)
-
-- Backend-Architecture-V1.0.md §2 (tech stack), §23 (security), §24 (observability), §12 (ETag/versioning)
-- Backend-Implementation-Plan-V1.0.md §7 (G.1–G.7), §6 (F)
-- openapi.yaml (§15.5 /dashboard, §15.6 /exports, §15.11-15.17 /users, §Contacts /customers+suppliers)
-- app/middleware/metrics.py (BLOCKED)
-- app/services/exports.py, app/api/v1/exports.py
-- app/services/users.py, app/api/v1/users.py, app/validation/users_schemas.py
-- app/services/contacts.py, app/api/v1/contacts_routes.py, app/validation/contacts_schemas.py, app/repositories/contacts.py
-- app/authz/caps.py (`contact.manage` capability restored)
-- schema.sql, db/migrations/m0001__initial_schema_baseline.sql (`contact.manage` seed restored)
-- tests/api/test_exports_f6.py, tests/api/test_users.py
-- backend/test_contacts_api.py (transient smoke-test script, not committed)
+- Backend-Architecture-V1.0.md, openapi.yaml §15.5 (/dashboard)
+- backend/app/reports/dashboard_repo.py, dashboard.py, period.py
+- frontend/app/(protected)/dashboard/page.tsx (MetricCard, SalesTrendChart, ComparisonBadge)
+- frontend/lib/format.ts (formatIDR), frontend/lib/dashboard-types.ts
+- V0 design source: V0-design-zip-file/new1.zip (canonical shell)

@@ -56,8 +56,14 @@ async function client<T = any>(
   if (contentType?.includes('application/json')) {
     const data = await response.json()
     if (!response.ok) {
-      // Throw error with response body for detailed messages
-      throw new Error(data.message || data.detail || 'API error')
+      // Backend envelope: { error: { code, message, details, request_id } }.
+      const errBody = data?.error ?? data
+      const message =
+        (typeof errBody?.message === 'string' && errBody.message) ||
+        (typeof data?.detail === 'string' && data.detail) ||
+        (typeof data?.message === 'string' && data.message) ||
+        `Request failed with status ${response.status}`
+      throw new Error(message)
     }
     return data as T
   } else {

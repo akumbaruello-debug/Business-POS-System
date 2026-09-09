@@ -23,8 +23,8 @@ Authoritative sources (per F.1-F.4 contracts):
   (reuses F.1 ``fetch_inventory_report``).
 * Sales trend: GROUP BY date_trunc bucket on ``sales.sale_date``
   (daily when window <= 7 days, weekly otherwise).
-* Best sellers: ``SUM(sale_lines.quantity * sale_lines.line_total)
-  GROUP BY product_id ORDER BY SUM DESC LIMIT 10`` per MS-9.
+* Best sellers: ``SUM(sale_lines.line_total) GROUP BY product_id ORDER
+  BY SUM DESC LIMIT 10`` per MS-9.
 * Expense breakdown: ``SUM(manual_finance_entries.amount) JOIN
   financial_categories GROUP BY name`` for entry_type='expense',
   lifecycle_status='posted' per MS-10 and F.3 cancellation rule.
@@ -252,14 +252,16 @@ async def fetch_sales_trend(
     return out
 
 
-# Best sellers: per MS-9 ``SUM(sale_lines.quantity * line_total)
-# GROUP BY product_id ORDER BY SUM DESC LIMIT 10`` over the period.
+# Best sellers: per MS-9 ``SUM(sale_lines.line_total)`` (line_total is
+# already quantity x unit_price per sale line, so summing it directly
+# yields true per-product revenue) ``GROUP BY product_id
+# ORDER BY SUM DESC LIMIT 10`` over the period.
 _BEST_SELLERS_SQL = """
 SELECT
     p.id AS product_id,
     p.name AS name,
     COALESCE(SUM(sl.quantity), 0) AS quantity,
-    COALESCE(SUM(sl.quantity * sl.line_total), 0) AS revenue
+    COALESCE(SUM(sl.line_total), 0) AS revenue
 FROM sale_lines sl
 JOIN sales s ON s.id = sl.sale_id
 JOIN products p ON p.id = sl.product_id
@@ -279,7 +281,7 @@ async def fetch_best_sellers(
     from_iso: datetime,
     to_iso: datetime,
 ) -> list[dict[str, Any]]:
-    """Top-10 products by ``SUM(sale_lines.quantity * line_total)``."""
+    """Top-10 products by ``SUM(sale_lines.line_total)`` revenue."""
     rows = await uow.fetch_all(_BEST_SELLERS_SQL, {"from_iso": from_iso, "to_iso": to_iso})
     return [
         {

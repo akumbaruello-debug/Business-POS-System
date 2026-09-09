@@ -152,7 +152,7 @@ def resolve_period(
             return (_start_of_day(anchor), _end_of_day(anchor))
         if period == "this_week":
             start = _start_of_week(anchor)
-            end = _start_of_day(anchor) + timedelta(days=7) - timedelta(microseconds=1)
+            end = start + timedelta(days=7) - timedelta(microseconds=1)
             return (start, end)
         if period == "this_month":
             return (_start_of_month(anchor), _end_of_month(anchor))
@@ -213,7 +213,7 @@ def resolve_compare_to(
             start, end = _start_of_day(anchor), _end_of_day(anchor)
         elif compare_to == "this_week":
             start = _start_of_week(anchor)
-            end = _start_of_day(anchor) + timedelta(days=7) - timedelta(microseconds=1)
+            end = start + timedelta(days=7) - timedelta(microseconds=1)
         elif compare_to == "this_month":
             start, end = _start_of_month(anchor), _end_of_month(anchor)
         elif compare_to == "this_year":

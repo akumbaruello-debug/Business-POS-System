@@ -8,20 +8,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
-  const [notificationsOpen, setNotificationsOpen] = useState(false)
-  const [searchOpen, setSearchOpen] = useState(false)
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setMobileOpen(false)
         setAccountOpen(false)
-        setNotificationsOpen(false)
-        setSearchOpen(false)
-      }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault()
-        setSearchOpen(true)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -55,10 +47,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           onMenu={() => setMobileOpen(true)}
           accountOpen={accountOpen}
           setAccountOpen={setAccountOpen}
-          notificationsOpen={notificationsOpen}
-          setNotificationsOpen={setNotificationsOpen}
-          searchOpen={searchOpen}
-          setSearchOpen={setSearchOpen}
         />
         {children}
       </main>
