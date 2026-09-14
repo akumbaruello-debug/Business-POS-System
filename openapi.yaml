@@ -4216,6 +4216,19 @@ paths:
         required: false
         schema:
           type: boolean
+      - name: filter[stock_status]
+        in: query
+        required: false
+        description: |-
+          Server-side stock status filter (Phase 3A). Values:
+            * `in`  — active AND on_hand > 0 AND (threshold NULL OR on_hand > threshold)
+            * `low` — active AND threshold NOT NULL AND 0 < on_hand <= threshold
+            * `out` — active AND on_hand <= 0
+          Filtering happens before pagination; summary stats are calculated
+          over the same filtered dataset.
+        schema:
+          type: string
+          enum: [in, low, out]
       responses:
         '200':
           description: OK
@@ -4226,6 +4239,7 @@ paths:
                 required:
                 - data
                 - pagination
+                - summary
                 properties:
                   data:
                     type: array
@@ -4235,6 +4249,26 @@ paths:
                     $ref: '#/components/schemas/Pagination'
                   links:
                     $ref: '#/components/schemas/Links'
+                  summary:
+                    type: object
+                    description: |-
+                      Authoritative global aggregates for the filtered inventory
+                      dataset (Phase 3A). Always reflects the same filter
+                      parameters as the list query, NOT the current page.
+                      `low_stock_count` and `out_of_stock_count` always count
+                      active products only; `total_units` and `inventory_value`
+                      likewise aggregate active products so the four metrics
+                      are internally consistent.
+                    required: [total_units, inventory_value, low_stock_count, out_of_stock_count]
+                    properties:
+                      total_units:
+                        type: number
+                      inventory_value:
+                        type: number
+                      low_stock_count:
+                        type: integer
+                      out_of_stock_count:
+                        type: integer
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -8519,12 +8553,22 @@ components:
       type: object
       required:
       - product_id
+      - product_name
+      - product_code
       - on_hand_quantity
       - inventory_value
+      - low_stock
+      - updated_at
       - as_of
       properties:
         product_id:
           type: integer
+        product_name:
+          type: string
+          nullable: false
+        product_code:
+          type: string
+          nullable: false
         on_hand_quantity:
           type: number
         moving_average_unit_cost:
@@ -8535,6 +8579,16 @@ components:
           type: number
         low_stock:
           type: boolean
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |-
+            Canonical `updated_at` (ISO-8601 UTC) of the underlying product
+            row. Frontend constructs the ETag for If-Match on
+            POST /inventory/adjustments as `"<updated_at>"`. Matches
+            the canonical ETag format produced by
+            `app.concurrency.master_etag.etag_and_version_from_updated_at`.
         as_of:
           type: string
           format: date-time

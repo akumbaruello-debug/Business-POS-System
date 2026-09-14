@@ -37,6 +37,7 @@ __all__ = [
     "count_inventory",
     "count_low_stock",
     "count_stock_movements",
+    "get_inventory_summary_stats",
     "get_product_for_update",
     "get_product_stock_row",
     "get_setting_bool",
@@ -272,6 +273,7 @@ def _where(
     from_iso: str | None,
     to_iso: str | None,
     low_stock_only: bool,
+    stock_status: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Build the WHERE clause + bind params shared by COUNT and SELECT.
 
@@ -279,6 +281,10 @@ def _where(
     lines up with the partial index. The predicate mirrors the OpenAPI
     contract: an active product with a non-null threshold that has
     dropped at or below the threshold.
+
+    ``stock_status`` is the new Phase 3A filter; mutually compatible
+    with the rest of the where-clause predicates. Valid values:
+    ``in``, ``low``, ``out`` (see _stock_status_clause for definitions).
     """
     clauses: list[str] = []
     params: dict[str, Any] = {}
@@ -306,8 +312,47 @@ def _where(
             "AND p.low_stock_threshold IS NOT NULL "
             "AND pv.on_hand_quantity <= p.low_stock_threshold"
         )
+    if stock_status is not None:
+        ss_clause, ss_params = _stock_status_clause(stock_status)
+        if ss_clause:
+            clauses.append(ss_clause)
+            params.update(ss_params)
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     return where, params
+
+
+def _stock_status_clause(status: str) -> tuple[str, dict[str, Any]]:
+    """Translate a ``filter[stock_status]`` enum into a WHERE clause.
+
+    Definitions (Phase 3A):
+    * ``in``  — active AND on_hand > 0 AND (threshold NULL OR on_hand > threshold)
+    * ``low`` — active AND threshold NOT NULL AND 0 < on_hand <= threshold
+    * ``out`` — active AND on_hand <= 0
+    """
+    s = (status or "").strip().lower()
+    if s == "in":
+        return (
+            "p.is_active = TRUE "
+            "AND pv.on_hand_quantity > 0 "
+            "AND (p.low_stock_threshold IS NULL OR pv.on_hand_quantity > p.low_stock_threshold)",
+            {},
+        )
+    if s == "low":
+        return (
+            "p.is_active = TRUE "
+            "AND p.low_stock_threshold IS NOT NULL "
+            "AND pv.on_hand_quantity > 0 "
+            "AND pv.on_hand_quantity <= p.low_stock_threshold",
+            {},
+        )
+    if s == "out":
+        return (
+            "p.is_active = TRUE AND pv.on_hand_quantity <= 0",
+            {},
+        )
+    # Unsupported value: caller validated the enum upstream; the
+    # safe default is to match nothing.
+    return "1=0", {}
 
 
 def _order_by(sort: str) -> str:
@@ -316,6 +361,15 @@ def _order_by(sort: str) -> str:
     The set is intentionally narrow — anything else falls back to a
     stable primary-key order so we never expose arbitrary SQL injection
     vectors through the sort query parameter.
+
+    ``moving_average_unit_cost`` is derived app-side as
+    ``inventory_value / NULLIF(on_hand_quantity, 0)``; the denominator
+    guard keeps the division well-defined for zero-stock products.
+
+    ``low_stock`` is the boolean "active AND threshold NOT NULL AND
+    0 < on_hand <= threshold" predicate; ordering on this flag means
+    a stable cross-product ranking of low-stock items (the only stable
+    interpretation of the boolean for ORDER BY).
     """
     sort = (sort or "id").strip()
     # Whitelist. ``-`` prefix = descending.
@@ -328,6 +382,36 @@ def _order_by(sort: str) -> str:
         "-inventory_value": "pv.inventory_value DESC, pv.product_id ASC",
         "updated_at": "p.updated_at ASC, pv.product_id ASC",
         "-updated_at": "p.updated_at DESC, pv.product_id ASC",
+        # Phase 3A — moving-average unit cost. The CASE/COALESCE
+        # wrapping keeps zero-stock items sorted at the end (NULLS LAST)
+        # for ASC, and at the start (NULLS FIRST) for DESC. This is the
+        # only deterministic ordering the contract documents.
+        "moving_average_unit_cost": (
+            "(CASE WHEN pv.on_hand_quantity = 0 THEN NULL "
+            "ELSE pv.inventory_value / pv.on_hand_quantity END) ASC NULLS LAST, "
+            "pv.product_id ASC"
+        ),
+        "-moving_average_unit_cost": (
+            "(CASE WHEN pv.on_hand_quantity = 0 THEN NULL "
+            "ELSE pv.inventory_value / pv.on_hand_quantity END) DESC NULLS FIRST, "
+            "pv.product_id ASC"
+        ),
+        # Phase 3A — low-stock boolean flag. CAST to INT so ORDER BY
+        # works without a boolean-typed column.
+        "low_stock": (
+            "CASE WHEN p.is_active = TRUE "
+            "  AND p.low_stock_threshold IS NOT NULL "
+            "  AND pv.on_hand_quantity > 0 "
+            "  AND pv.on_hand_quantity <= p.low_stock_threshold "
+            "THEN 1 ELSE 0 END ASC, pv.product_id ASC"
+        ),
+        "-low_stock": (
+            "CASE WHEN p.is_active = TRUE "
+            "  AND p.low_stock_threshold IS NOT NULL "
+            "  AND pv.on_hand_quantity > 0 "
+            "  AND pv.on_hand_quantity <= p.low_stock_threshold "
+            "THEN 1 ELSE 0 END DESC, pv.product_id ASC"
+        ),
     }
     return allowed.get(sort, "pv.product_id ASC")
 
@@ -340,6 +424,7 @@ async def count_inventory(
     is_active: bool | None,
     from_iso: str | None,
     to_iso: str | None,
+    stock_status: str | None = None,
 ) -> int:
     """Count rows that satisfy the listInventory filters (no low-stock filter)."""
     where, params = _where(
@@ -349,6 +434,7 @@ async def count_inventory(
         from_iso=from_iso,
         to_iso=to_iso,
         low_stock_only=False,
+        stock_status=stock_status,
     )
     sql = f"SELECT COUNT(*) FROM product_valuation pv JOIN products p ON p.id = pv.product_id {where}"
     total = await uow.scalar(sql, params)
@@ -366,6 +452,7 @@ async def list_inventory_rows(
     is_active: bool | None,
     from_iso: str | None,
     to_iso: str | None,
+    stock_status: str | None = None,
 ) -> list[dict[str, Any]]:
     """Paginated rows for ``listInventory``."""
     where, params = _where(
@@ -375,6 +462,7 @@ async def list_inventory_rows(
         from_iso=from_iso,
         to_iso=to_iso,
         low_stock_only=False,
+        stock_status=stock_status,
     )
     order = _order_by(sort)
     offset = (page - 1) * per_page
@@ -384,6 +472,69 @@ async def list_inventory_rows(
         "LIMIT :limit OFFSET :offset"
     )
     return await uow.fetch_all(sql, params)
+
+
+async def get_inventory_summary_stats(
+    uow: UnitOfWork,
+    *,
+    q: str | None,
+    category_id: int | None,
+    is_active: bool | None,
+    from_iso: str | None,
+    to_iso: str | None,
+    stock_status: str | None = None,
+) -> dict[str, Any]:
+    """Aggregate summary stats for the inventory list.
+
+    Returns ``{ total_units, inventory_value, low_stock_count,
+    out_of_stock_count }`` calculated over the *same filtered dataset*
+    that the list endpoint paginates. The same WHERE clause is used, so
+    the numbers always match the visible product set (after
+    filters/pagination on the wire).
+
+    ``stock_status`` semantics in the summary match the row-level
+    definitions (see ``_stock_status_clause``).
+    """
+    where, params = _where(
+        q=q,
+        category_id=category_id,
+        is_active=is_active,
+        from_iso=from_iso,
+        to_iso=to_iso,
+        low_stock_only=False,
+        stock_status=stock_status,
+    )
+    sql = f"""
+        SELECT
+            COALESCE(SUM(pv.on_hand_quantity) FILTER (WHERE p.is_active = TRUE), 0) AS total_units,
+            COALESCE(SUM(pv.inventory_value) FILTER (WHERE p.is_active = TRUE), 0) AS inventory_value,
+            COUNT(*) FILTER (
+                WHERE p.is_active = TRUE
+                  AND p.low_stock_threshold IS NOT NULL
+                  AND pv.on_hand_quantity > 0
+                  AND pv.on_hand_quantity <= p.low_stock_threshold
+            ) AS low_stock_count,
+            COUNT(*) FILTER (
+                WHERE p.is_active = TRUE AND pv.on_hand_quantity <= 0
+            ) AS out_of_stock_count
+        FROM product_valuation pv
+        JOIN products p ON p.id = pv.product_id
+        {where}
+    """
+    row = await uow.first_row(sql, params)
+    if row is None:
+        return {
+            "total_units": 0.0,
+            "inventory_value": 0.0,
+            "low_stock_count": 0,
+            "out_of_stock_count": 0,
+        }
+    return {
+        "total_units": float(row["total_units"] or 0),
+        "inventory_value": float(row["inventory_value"] or 0),
+        "low_stock_count": int(row["low_stock_count"] or 0),
+        "out_of_stock_count": int(row["out_of_stock_count"] or 0),
+    }
 
 
 async def count_low_stock(

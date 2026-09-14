@@ -186,8 +186,15 @@ async def _read_updated_at(product_id: int) -> str:
     The canonical ETag form (per ``app.util.iso_utc``) is the timezone-aware
     ``datetime.isoformat()`` form, which emits ``+00:00`` for UTC — NOT the
     ``Z`` shorthand. We return that form unchanged.
+
+    Phase 3A: Use Pydantic's JSON form (Z suffix) so test ETags match the
+    production ETag computation in ``etag_and_version_from_updated_at()``.
     """
     from app.db import get_session_factory
+    from pydantic import TypeAdapter
+    from datetime import datetime
+
+    DATETIME_ADAPTER = TypeAdapter(datetime)
 
     factory = get_session_factory()
     async with factory() as session:
@@ -199,8 +206,10 @@ async def _read_updated_at(product_id: int) -> str:
         ).mappings().first()
         assert row is not None, f"product {product_id} missing"
         ts = row["updated_at"]
-    if hasattr(ts, "isoformat"):
-        return ts.isoformat()
+    if isinstance(ts, datetime):
+        # Use Pydantic's JSON form (Z suffix, microseconds preserved) to match
+        # the production ETag computation.
+        return DATETIME_ADAPTER.dump_python(ts, mode="json")
     return str(ts)
 
 
@@ -704,6 +713,55 @@ async def test_create_adjustment_staff_with_capability_allowed(
         json={"product_id": 201, "quantity": 1.0, "reason": "by staff"},
     )
     assert r.status_code == 201, r.text
+
+
+# ---------------------------------------------------------------------------
+# Phase 3A — ETag compatibility between InventorySummary and adjustment
+# ---------------------------------------------------------------------------
+
+
+async def test_etag_from_inventory_summary_matches_adjustment(
+    app: AsyncClient, owner_user: dict[str, Any]
+) -> None:
+    """Phase 3A regression: the ETag exposed in InventorySummary must be
+    the exact same value the adjustment endpoint accepts as If-Match.
+
+    This proves the contract path:
+        InventorySummary.updated_at
+          → frontend ETag construction
+          → If-Match
+          → POST /inventory/adjustments
+    """
+    from app.concurrency.master_etag import etag_and_version_from_updated_at
+
+    h = await _owner_headers(app, owner_user)
+    # 1. Read the inventory list (which now carries updated_at).
+    r = await app.get("/api/v1/inventory", headers=h)
+    assert r.status_code == 200, r.text
+    rows = r.json()["data"]
+    row201 = next(r for r in rows if r["product_id"] == 201)
+    summary_updated_at = row201["updated_at"]
+
+    # 2. Independently compute the canonical ETag from the same
+    #    timestamp. Pydantic JSON serialization already produced the
+    #    Z-suffixed form, so we re-derive via the canonical helper.
+    from datetime import datetime
+
+    ts = datetime.fromisoformat(summary_updated_at.replace("Z", "+00:00"))
+    canonical_etag, _version = etag_and_version_from_updated_at(ts)
+
+    # 3. Use that ETag as If-Match on the adjustment endpoint. Should
+    #    be accepted (201).
+    r2 = await app.post(
+        "/api/v1/inventory/adjustments",
+        headers={
+            **h,
+            "Idempotency-Key": _idem(),
+            "If-Match": canonical_etag,
+        },
+        json={"product_id": 201, "quantity": 1.0, "reason": "etag from inventory summary"},
+    )
+    assert r2.status_code == 201, r2.text
 
 
 __all__: list[str] = []

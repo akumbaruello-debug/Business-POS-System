@@ -12,29 +12,31 @@ import {
   Download,
   Package,
   Search,
+  Settings2,
 } from 'lucide-react'
 import { api } from '@/lib/api-client'
-import type { InventorySummary, InventoryListResponse, Pagination } from '@/lib/inventory-types'
+import type {
+  InventoryListResponse,
+  InventoryListResponseWithSummary,
+  InventorySummary,
+  InventorySummaryStats,
+  Pagination,
+  StockAdjustmentRequest,
+} from '@/lib/inventory-types'
 import { formatIDR } from '@/lib/format'
 import { Button } from '@/components/ui/button'
+import { useSession } from '@/lib/session'
+import StockAdjustmentDialog from './_adjust-dialog'
 
 // ---------------------------------------------------------------------------
 // Backend contract notes (from openapi.yaml):
-//   GET /inventory?page=&per_page=&q=&sort=&filter[category_id]=&filter[is_active]=
-//     → { data: InventorySummary[], pagination: Pagination }  (capability inventory.view)
-//   InventorySummary = { product_id, on_hand_quantity, moving_average_unit_cost,
-//                        inventory_value, low_stock, as_of }
+//   GET /inventory?page=&per_page=&q=&sort=&filter[category_id]=&filter[is_active]=&filter[stock_status]=
+//     → { data: InventorySummary[], pagination: Pagination, summary: InventorySummaryStats }  (capability inventory.view)
+//   InventorySummary = { product_id, product_name, product_code, on_hand_quantity,
+//                        moving_average_unit_cost, inventory_value, low_stock, updated_at, as_of }
 //   GET /products/{id}/stock-movements   — per-product movement ledger (inventory.view)
 //   POST /inventory/adjustments          — signed-qty stock adjustment (inventory.adjust,
 //                                          requires Idempotency-Key + If-Match)
-// The InventorySummary contract does NOT carry product name/code — the UI shows
-// the numeric product_id. V0's sku/barcode/warehouse/movement-type columns and
-// per-item movement history are not part of this contract; they are omitted.
-// Import/Export have no backend endpoints → marked not-yet-wired.
-// Adjustments require If-Match (etag) from the product — wiring it needs the
-// product etag (version/updated_at) which GET /inventory does not expose.
-// ponytail: when GET /inventory exposes product names/codes/etags, show them
-// and wire the Adjust dialog. Add when that API shape exists.
 // ---------------------------------------------------------------------------
 
 const DEFAULT_PAGINATION: Pagination = {
@@ -67,10 +69,24 @@ export default function InventoryPage() {
   const [perPage, setPerPage] = useState(25)
   const [sortKey, setSortKey] = useState('product_id')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const [summary, setSummary] = useState<InventorySummaryStats | null>(null)
 
   // Selection + actions
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [notice, setNotice] = useState('')
+  const [adjustOpen, setAdjustOpen] = useState(false)
+  const [adjustRow, setAdjustRow] = useState<InventorySummary | null>(null)
+  const user = useSession()
+  const canAdjust = user.capabilities?.includes('inventory.adjust') ?? false
+
+  const handleAdjustRow = (row: InventorySummary) => {
+    setAdjustRow(row)
+    setAdjustOpen(true)
+  }
+
+  const handleAdjustDone = () => {
+    fetchInventory()
+  }
 
   const toast = (msg: string) => {
     setNotice(msg)
@@ -88,16 +104,18 @@ export default function InventoryPage() {
       }
       if (query.trim()) params.q = query.trim()
       if (activeOnly) params['filter[is_active]'] = 'true'
+      if (statusFilter !== 'all') params['filter[stock_status]'] = statusFilter
 
-      const res = await api.get<InventoryListResponse>('/inventory', { params })
+      const res = await api.get<InventoryListResponseWithSummary>('/inventory', { params })
       setRows(res.data)
       setPagination(res.pagination)
+      setSummary(res.summary ?? null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load inventory')
     } finally {
       setLoading(false)
     }
-  }, [page, perPage, query, activeOnly, sortKey, sortDir])
+  }, [page, perPage, query, activeOnly, sortKey, sortDir, statusFilter])
 
   useEffect(() => {
     fetchInventory()
@@ -143,11 +161,11 @@ export default function InventoryPage() {
     })
   }, [rows, statusFilter])
 
-  // Derived stats from current page (backend doesn't return aggregates)
-  const lowStockCount = rows.filter((r) => r.low_stock && r.on_hand_quantity > 0).length
-  const outOfStockCount = rows.filter((r) => r.on_hand_quantity <= 0).length
-  const stockValue = rows.reduce((sum, r) => sum + (r.inventory_value ?? 0), 0)
-  const totalUnits = rows.reduce((sum, r) => sum + (r.on_hand_quantity ?? 0), 0)
+  // Derived stats from server-side summary (Phase 3A)
+  const lowStockCount = summary?.low_stock_count ?? 0
+  const outOfStockCount = summary?.out_of_stock_count ?? 0
+  const stockValue = summary?.inventory_value ?? 0
+  const totalUnits = summary?.total_units ?? 0
 
   if (error && !loading) {
     return (
@@ -179,7 +197,12 @@ export default function InventoryPage() {
           <p>Monitor stock levels, movements, and replenishment needs.</p>
         </div>
         <div className="heading-actions">
-          <Button variant="outline" onClick={() => toast('Export not yet wired — no backend endpoint')}><Download size={14} /> Export report</Button>
+          {canAdjust && (
+            <Button variant="outline" size="sm" onClick={() => { setAdjustOpen(true); setAdjustRow(null) }}>
+              <Settings2 size={14} className="mr-1" />
+              Stock adjustment
+            </Button>
+          )}
         </div>
       </div>
 
@@ -281,7 +304,7 @@ export default function InventoryPage() {
                     <th style={{ width: 44, padding: '10px 14px' }}>
                       <input type="checkbox" aria-label="Select all stock items" checked={filteredRows.length > 0 && filteredRows.every((r) => selected.has(r.product_id))} onChange={toggleAll} />
                     </th>
-                    {([['product_id', 'Product ID'], ['on_hand_quantity', 'Stock'], ['moving_average_unit_cost', 'Avg unit cost'], ['inventory_value', 'Inventory value'], ['low_stock', 'Status']] as const).map(([key, label]) => (
+                    {([['product_id', 'Product ID'], ['product_name', 'Name'], ['product_code', 'Code'], ['on_hand_quantity', 'Stock'], ['moving_average_unit_cost', 'Avg unit cost'], ['inventory_value', 'Inventory value'], ['low_stock', 'Status']] as const).map(([key, label]) => (
                       <th key={key} style={{ padding: '10px 14px' }}>
                         <button onClick={() => handleSort(key)} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 600, background: 'none', border: 0, cursor: 'pointer', color: sortKey === key ? 'var(--primary)' : 'inherit' }}>
                           {label}<ChevronsUpDown size={12} />
@@ -289,6 +312,7 @@ export default function InventoryPage() {
                       </th>
                     ))}
                     <th style={{ padding: '10px 14px' }}>As of</th>
+                    {canAdjust && <th style={{ padding: '10px 14px', textAlign: 'right' }}>Actions</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -300,9 +324,9 @@ export default function InventoryPage() {
                           <input type="checkbox" aria-label={`Select product ${r.product_id}`} checked={selected.has(r.product_id)} onChange={() => toggleSelect(r.product_id)} />
                         </td>
                         <td style={{ padding: '12px 14px' }}>
-                          <div style={{ fontWeight: 600 }}>Product #{r.product_id}</div>
+                          <div style={{ fontWeight: 600 }}>{r.product_name || `Product #${r.product_id}`}</div>
                           <div style={{ fontSize: 11, color: '#718198', marginTop: 2 }}>
-                            {r.on_hand_quantity <= 0 ? 'Out of stock' : r.low_stock ? 'Below reorder point' : 'Healthy level'}
+                            {r.product_code ? `${r.product_code} · ` : ''}#{r.product_id} · {r.on_hand_quantity <= 0 ? 'Out of stock' : r.low_stock ? 'Below reorder point' : 'Healthy level'}
                           </div>
                         </td>
                         <td style={{ padding: '12px 14px', fontWeight: 600 }}>{Number(r.on_hand_quantity).toLocaleString('id-ID')}</td>
@@ -318,6 +342,13 @@ export default function InventoryPage() {
                           </span>
                         </td>
                         <td style={{ padding: '12px 14px' }}>{fmtDate(r.as_of)}</td>
+                        {canAdjust && (
+                          <td style={{ padding: '12px 14px', textAlign: 'right' }}>
+                            <Button variant="ghost" size="sm" onClick={() => handleAdjustRow(r)} aria-label={`Adjust ${r.product_name || r.product_id}`}>
+                              <Settings2 size={13} />
+                            </Button>
+                          </td>
+                        )}
                       </tr>
                     )
                   })}
@@ -332,10 +363,13 @@ export default function InventoryPage() {
                 return (
                   <article key={r.product_id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 14 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div style={{ fontWeight: 600 }}>Product #{r.product_id}</div>
+                      <div style={{ fontWeight: 600 }}>{r.product_name || `Product #${r.product_id}`}</div>
                       <span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600, background: s === 'In stock' ? '#ecfdf5' : s === 'Low stock' ? '#fff7ed' : '#f1f5f9', color: s === 'In stock' ? '#059669' : s === 'Low stock' ? '#d97706' : '#64748b' }}>
                         {s}
                       </span>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#718198', marginTop: 4 }}>
+                      {r.product_code ? `${r.product_code} · ` : ''}#{r.product_id}
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 12, fontSize: 13 }}>
                       <div><span style={{ fontSize: 11, color: '#718198' }}>Stock</span><div style={{ fontWeight: 600 }}>{Number(r.on_hand_quantity).toLocaleString('id-ID')}</div></div>
@@ -378,6 +412,13 @@ export default function InventoryPage() {
           table { display:none; }
         }
       `}</style>
+      <StockAdjustmentDialog
+        open={adjustOpen}
+        onClose={() => { setAdjustOpen(false); setAdjustRow(null) }}
+        onNotice={toast}
+        onDone={handleAdjustDone}
+        products={rows}
+      />
     </div>
   )
 }

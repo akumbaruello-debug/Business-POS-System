@@ -33,6 +33,7 @@ from app.inventory.repo import (
     count_inventory,
     count_low_stock,
     count_stock_movements,
+    get_inventory_summary_stats,
     get_product_for_update,
     get_product_stock_row,
     get_setting_bool,
@@ -84,8 +85,26 @@ def _enrich_summary(
         and on_hand is not None
         and float(on_hand) <= float(threshold)
     )
+    updated_at = row.get("updated_at")
+    if isinstance(updated_at, datetime):
+        # Use the same ISO-8601 form Pydantic emits in JSON
+        # (``Z`` for UTC, microsecond precision) so the value can be
+        # round-tripped as an ETag for ``If-Match`` on POST
+        # /inventory/adjustments.
+        from pydantic import TypeAdapter
+
+        updated_at_iso = TypeAdapter(datetime).dump_python(
+            updated_at, mode="json"
+        )
+    else:
+        updated_at_iso = str(updated_at) if updated_at is not None else None
     return {
         "product_id": int(row["product_id"]),
+        # Phase 3A: product identity (name, code) sourced from the joined
+        # products row in product_valuation. The view's ``name`` /
+        # ``code`` columns are the canonical product identity.
+        "product_name": row.get("name"),
+        "product_code": row.get("code"),
         "on_hand_quantity": on_hand,
         "moving_average_unit_cost": compute_moving_average_unit_cost(
             on_hand_quantity=on_hand,
@@ -93,6 +112,10 @@ def _enrich_summary(
         ),
         "inventory_value": inv_value,
         "low_stock": low_stock,
+        # Phase 3A: expose the same ``updated_at`` that the adjustment
+        # endpoint uses for If-Match so the frontend can construct the
+        # canonical ETag without an extra round-trip.
+        "updated_at": updated_at_iso,
         "as_of": as_of,
     }
 
@@ -152,6 +175,7 @@ class InventoryService:
         is_active: bool | None,
         from_iso: str | None,
         to_iso: str | None,
+        stock_status: str | None = None,
     ) -> dict[str, Any]:
         total = await count_inventory(
             self._uow,
@@ -160,6 +184,7 @@ class InventoryService:
             is_active=is_active,
             from_iso=from_iso,
             to_iso=to_iso,
+            stock_status=stock_status,
         )
         rows = await list_inventory_rows(
             self._uow,
@@ -171,11 +196,25 @@ class InventoryService:
             is_active=is_active,
             from_iso=from_iso,
             to_iso=to_iso,
+            stock_status=stock_status,
         )
         as_of = datetime.now(tz=UTC)
         data = [_enrich_summary(r, as_of=as_of) for r in rows]
         pag = make_pagination(page=page, per_page=per_page, total=total)
-        return {"data": data, "pagination": pag}
+        # Phase 3A: authoritative backend summary covering the *same*
+        # filtered dataset (not the current page). Always computed with
+        # identical WHERE clause parameters so the numbers match the
+        # paginated result set exactly.
+        summary = await get_inventory_summary_stats(
+            self._uow,
+            q=q,
+            category_id=category_id,
+            is_active=is_active,
+            from_iso=from_iso,
+            to_iso=to_iso,
+            stock_status=stock_status,
+        )
+        return {"data": data, "pagination": pag, "summary": summary}
 
     # -- GET /inventory/low-stock --------------------------------------
 

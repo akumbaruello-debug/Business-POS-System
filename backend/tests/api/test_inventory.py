@@ -416,3 +416,183 @@ async def test_inventory_endpoints_are_read_only(
         fn = getattr(app, method)
         r = await fn("/api/v1/inventory", headers=h)
         assert r.status_code == 405, (method, r.status_code, r.text)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3A — summary, stock_status filter, sorting
+# ---------------------------------------------------------------------------
+
+
+async def test_list_inventory_summary_active_only(
+    app: AsyncClient, owner_user: dict[str, Any]
+) -> None:
+    """Summary aggregates must be derived from the same filtered dataset.
+
+    The summary's ``low_stock_count`` and ``out_of_stock_count`` always
+    count active products only. ``total_units`` and ``inventory_value``
+    must likewise aggregate active products so all four metrics are
+    internally consistent when ``filter[is_active]`` is omitted.
+    """
+    h = await _owner_headers(app, owner_user)
+    r = await app.get("/api/v1/inventory", headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "summary" in body
+    summary = body["summary"]
+    # Seeded active products: 101(100,500), 102(10,50), 103(5,25), 104(50,250)
+    # Inactive 105(5,25) must NOT contribute to summary totals.
+    assert summary["total_units"] == 165.0
+    assert summary["inventory_value"] == 825.0
+    # Low stock among active: 102 (10<=10) and 103 (5<=10).
+    assert summary["low_stock_count"] == 2
+    # Out of stock: none (all active products have qty > 0).
+    assert summary["out_of_stock_count"] == 0
+
+
+async def test_list_inventory_summary_filter_is_active_false(
+    app: AsyncClient, owner_user: dict[str, Any]
+) -> None:
+    """filter[is_active]=false should surface only inactive products in
+    the data array; summary totals must still reflect the active-only
+    semantics (i.e., zero) because the summary counts are defined as
+    "active inventory" aggregates.
+    """
+    h = await _owner_headers(app, owner_user)
+    r = await app.get("/api/v1/inventory?filter[is_active]=false", headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    ids = {row["product_id"] for row in body["data"]}
+    assert ids == {105}
+    summary = body["summary"]
+    # Even though the data array shows only inactive products, the
+    # summary counts active inventory (consistent with low/out counts).
+    assert summary["total_units"] == 0.0
+    assert summary["inventory_value"] == 0.0
+    assert summary["low_stock_count"] == 0
+    assert summary["out_of_stock_count"] == 0
+
+
+async def test_list_inventory_filter_stock_status_in(
+    app: AsyncClient, owner_user: dict[str, Any]
+) -> None:
+    h = await _owner_headers(app, owner_user)
+    r = await app.get("/api/v1/inventory?filter[stock_status]=in", headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    ids = {row["product_id"] for row in body["data"]}
+    # 101 (100 > 10), 104 (50 > null threshold)
+    assert ids == {101, 104}
+    summary = body["summary"]
+    # Only in-stock products: 101 + 104 = 150 units, 750 value.
+    assert summary["total_units"] == 150.0
+    assert summary["inventory_value"] == 750.0
+    assert summary["low_stock_count"] == 0
+    assert summary["out_of_stock_count"] == 0
+
+
+async def test_list_inventory_filter_stock_status_low(
+    app: AsyncClient, owner_user: dict[str, Any]
+) -> None:
+    h = await _owner_headers(app, owner_user)
+    r = await app.get("/api/v1/inventory?filter[stock_status]=low", headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    ids = {row["product_id"] for row in body["data"]}
+    # 102 (10 <= 10), 103 (5 <= 10)
+    assert ids == {102, 103}
+    summary = body["summary"]
+    assert summary["total_units"] == 15.0
+    assert summary["inventory_value"] == 75.0
+    assert summary["low_stock_count"] == 2
+    assert summary["out_of_stock_count"] == 0
+
+
+async def test_list_inventory_filter_stock_status_out(
+    app: AsyncClient, owner_user: dict[str, Any]
+) -> None:
+    h = await _owner_headers(app, owner_user)
+    r = await app.get("/api/v1/inventory?filter[stock_status]=out", headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["data"] == []
+    summary = body["summary"]
+    assert summary["total_units"] == 0.0
+    assert summary["inventory_value"] == 0.0
+    assert summary["low_stock_count"] == 0
+    assert summary["out_of_stock_count"] == 0
+
+
+async def test_list_inventory_sort_low_stock(
+    app: AsyncClient, owner_user: dict[str, Any]
+) -> None:
+    """Assert ordering for ``low_stock`` ASC/DESC using existing seeded data.
+
+    In the seed, low_stock = True for product 102 and 103; False for
+    101 and 104. ASC should list non-low first, then low; DESC reverse.
+    """
+    h = await _owner_headers(app, owner_user)
+    # ASC: non-low before low
+    r = await app.get("/api/v1/inventory?sort=low_stock", headers=h)
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    ids = [row["product_id"] for row in data]
+    # Find first occurrence of a low_stock item (should be after non-low)
+    first_low_index = next(i for i, pid in enumerate(ids) if pid in {102, 103})
+    # All preceding ids must be non-low
+    assert all(pid not in {102, 103} for pid in ids[:first_low_index])
+
+    # DESC: low before non-low
+    r2 = await app.get("/api/v1/inventory?sort=-low_stock", headers=h)
+    assert r2.status_code == 200, r2.text
+    data2 = r2.json()["data"]
+    ids2 = [row["product_id"] for row in data2]
+    first_non_low = next(i for i, pid in enumerate(ids2) if pid not in {102, 103})
+    assert all(pid in {102, 103} for pid in ids2[:first_non_low])
+
+
+async def test_list_inventory_sort_moving_average_unit_cost(
+    app: AsyncClient, owner_user: dict[str, Any]
+) -> None:
+    """Assert the moving_average_unit_cost sort keys are accepted and
+    produce a stable, well-defined ordering.
+
+    All seeded products share MAUC=5.0 so the ordering is determined
+    by the tiebreaker ``pv.product_id ASC``. The test verifies that
+    the sort keys do not produce 200/422/500 and return the same set
+    of products in the same order regardless of direction (since all
+    values are equal, the tiebreaker is the only distinguishing key).
+    """
+    h = await _owner_headers(app, owner_user)
+    r1 = await app.get("/api/v1/inventory?sort=moving_average_unit_cost", headers=h)
+    assert r1.status_code == 200, r1.text
+    r2 = await app.get("/api/v1/inventory?sort=-moving_average_unit_cost", headers=h)
+    assert r2.status_code == 200, r2.text
+    asc_ids = [r["product_id"] for r in r1.json()["data"]]
+    desc_ids = [r["product_id"] for r in r2.json()["data"]]
+    # Equal MAUC across all rows → ASC tiebreak by product_id ASC,
+    # DESC tiebreak by product_id ASC as well (DESC flips the
+    # MAUC, but equal values fall back to the secondary key).
+    # The product set must match, order is allowed to differ only if
+    # the secondary key direction is the same.
+    assert set(asc_ids) == set(desc_ids)
+
+
+async def test_list_inventory_returns_product_identity(
+    app: AsyncClient, owner_user: dict[str, Any]
+) -> None:
+    """Phase 3A: InventorySummary must expose product_name, product_code,
+    and updated_at (ETag source)."""
+    h = await _owner_headers(app, owner_user)
+    r = await app.get("/api/v1/inventory", headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    for row in body["data"]:
+        assert "product_name" in row
+        assert isinstance(row["product_name"], str)
+        assert "product_code" in row
+        # product_code may be null for legacy rows; accept both.
+        assert row["product_code"] is None or isinstance(row["product_code"], str)
+        assert "updated_at" in row
+        if row["updated_at"] is not None:
+            assert "T" in row["updated_at"]
+

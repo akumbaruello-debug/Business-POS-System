@@ -99,6 +99,13 @@ async def list_inventory(
     is_active: bool | None = Query(default=None, alias="filter[is_active]"),
     from_iso: str | None = Query(default=None, alias="from"),
     to_iso: str | None = Query(default=None, alias="to"),
+    stock_status: str | None = Query(
+        default=None,
+        alias="filter[stock_status]",
+        # Phase 3A — accept the canonical status enum. FastAPI rejects
+        # other values with a 422 before we hit the service.
+        pattern="^(in|low|out)$",
+    ),
 ) -> JSONResponse:
     """Per-product inventory summary (paginated)."""
     async with UnitOfWork() as uow:
@@ -112,6 +119,7 @@ async def list_inventory(
             is_active=is_active,
             from_iso=from_iso,
             to_iso=to_iso,
+            stock_status=stock_status,
         )
         await uow.commit()
         return JSONResponse(

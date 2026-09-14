@@ -11,13 +11,16 @@ export interface Pagination {
   has_prev: boolean
 }
 
-/** Shape returned by GET /inventory */
+/** Shape returned by GET /inventory (Phase 3A extensions added) */
 export interface InventorySummary {
   product_id: number
+  product_name: string
+  product_code: string
   on_hand_quantity: number
   moving_average_unit_cost: number | null
   inventory_value: number
   low_stock: boolean
+  updated_at: string | null
   as_of: string
 }
 
@@ -25,6 +28,18 @@ export interface InventoryListResponse {
   data: InventorySummary[]
   pagination: Pagination
   links?: Record<string, string>
+}
+
+/** Global summary aggregates for the filtered inventory dataset (Phase 3A) */
+export interface InventorySummaryStats {
+  total_units: number
+  inventory_value: number
+  low_stock_count: number
+  out_of_stock_count: number
+}
+
+export interface InventoryListResponseWithSummary extends InventoryListResponse {
+  summary: InventorySummaryStats
 }
 
 /** Shape returned by GET /inventory/products/{id} */
@@ -35,6 +50,7 @@ export interface ProductStock {
   inventory_value: number
   low_stock: boolean
   low_stock_threshold: number | null
+  updated_at: string | null
   as_of: string
 }
 

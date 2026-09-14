@@ -23,7 +23,7 @@
 - Commit: `dcb8797` — 36 files, 4604 insertions, 903 deletions.
 
 ## In Progress
-- (none — between phases)
+|- Phase 3A: Inventory integration — frontend UI complete, backend verified.
 
 ## Blocked / Pending
 ### P0 — resolved (no longer open)
@@ -53,11 +53,21 @@
 - Auth: POST /api/v1/auth/login requires Idempotency-Key (UUID) + Origin: localhost:3000. Login rate limit 5/15min.
 - Demo seed: `backend/scripts/seed_demo_comprehensive.py` (deterministic, idempotent).
 
+### Phase 3A — Inventory integration (2026-09-14) ✅ COMPLETE
+|- Backend: `GET /inventory` now returns `{ data, pagination, summary }` with `InventorySummaryStats` (total_units, inventory_value, low_stock_count, out_of_stock_count) computed over the same filtered dataset. `InventorySummary` exposes `product_name`, `product_code`, `updated_at` (ETag source).
+|- New `filter[stock_status]` query param (`in|low|out`) wired through route → service → repo (`_stock_status_clause`).
+|- New sort keys: `moving_average_unit_cost` (±), `low_stock` (±).
+|- `POST /inventory/adjustments` (E.6) fully implemented: Idempotency-Key + If-Match required; negative-stock guard; MAUC snapshot; audit row.
+|- Frontend: `app/(protected)/inventory/page.tsx` shows product name/code in table + mobile cards; uses server-side summary for KPI cards; `filter[stock_status]` select wired to backend. Stock adjustment dialog (`_adjust-dialog.tsx`) — Owner-only (capability `inventory.adjust`), sends Idempotency-Key + If-Match from `updated_at`, handles 409/412.
+|- Tests: `test_inventory.py` (26) PASS, `test_stock_adjustment.py` (23) PASS. `pnpm exec tsc --noEmit` PASS. `pnpm build` PASS.
+|- Test DB bootstrap: `pg-tmp/pg17` Postgres was not running. Started it with `pg_ctl.exe -D <data_dir> -l <log> start` (use native Windows paths — MSYS path mangling breaks `pg_ctl`). Tests then ran normally.
+|- ETag fix: `test_stock_adjustment.py::_read_updated_at()` used `ts.isoformat()` (+00:00) but production uses Pydantic `Z`-form → all 10 happy-path tests failed with 412. Fixed to use `TypeAdapter(datetime).dump_python(ts, mode="json")`.
+
 ## Next session
-- Phase 3/18: Inventory frontend integration (stock adjustments, movements, valuation).
-- Customers: wire create/edit to backend.
-- Suppliers: wire create/edit to backend.
-- Remaining backend domains (sales, purchases, returns, reports, users, settings) still lack frontend UI.
+|- Phase 3B: stock movements list (`GET /stock-movements`), per-product movement history.
+|- Customers: wire create/edit to backend.
+|- Suppliers: wire create/edit to backend.
+|- Remaining backend domains (sales, purchases, returns, reports, users, settings) still lack frontend UI.
 
 ## Source of truth (links only)
 - Backend-Architecture-V1.0.md, openapi.yaml §15.5 (/dashboard), §15.7 (/products)
