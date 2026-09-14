@@ -9,6 +9,7 @@ import {
   ChevronRight,
   ChevronsUpDown,
   CircleDollarSign,
+  ClipboardList,
   Download,
   Package,
   Search,
@@ -27,6 +28,7 @@ import { formatIDR } from '@/lib/format'
 import { Button } from '@/components/ui/button'
 import { useSession } from '@/lib/session'
 import StockAdjustmentDialog from './_adjust-dialog'
+import StockHistoryDialog from './_stock-history-dialog'
 
 // ---------------------------------------------------------------------------
 // Backend contract notes (from openapi.yaml):
@@ -34,7 +36,9 @@ import StockAdjustmentDialog from './_adjust-dialog'
 //     → { data: InventorySummary[], pagination: Pagination, summary: InventorySummaryStats }  (capability inventory.view)
 //   InventorySummary = { product_id, product_name, product_code, on_hand_quantity,
 //                        moving_average_unit_cost, inventory_value, low_stock, updated_at, as_of }
-//   GET /products/{id}/stock-movements   — per-product movement ledger (inventory.view)
+//   GET /products/{id}/stock-movements   — per-product movement ledger (inventory.view);
+//                                          history dialog only — V0 exposes no global
+//                                          movements screen or nav entry.
 //   POST /inventory/adjustments          — signed-qty stock adjustment (inventory.adjust,
 //                                          requires Idempotency-Key + If-Match)
 // ---------------------------------------------------------------------------
@@ -76,6 +80,8 @@ export default function InventoryPage() {
   const [notice, setNotice] = useState('')
   const [adjustOpen, setAdjustOpen] = useState(false)
   const [adjustRow, setAdjustRow] = useState<InventorySummary | null>(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyRow, setHistoryRow] = useState<InventorySummary | null>(null)
   const user = useSession()
   const canAdjust = user.capabilities?.includes('inventory.adjust') ?? false
 
@@ -312,7 +318,7 @@ export default function InventoryPage() {
                       </th>
                     ))}
                     <th style={{ padding: '10px 14px' }}>As of</th>
-                    {canAdjust && <th style={{ padding: '10px 14px', textAlign: 'right' }}>Actions</th>}
+                    <th style={{ padding: '10px 14px', textAlign: 'right' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -342,13 +348,16 @@ export default function InventoryPage() {
                           </span>
                         </td>
                         <td style={{ padding: '12px 14px' }}>{fmtDate(r.as_of)}</td>
-                        {canAdjust && (
-                          <td style={{ padding: '12px 14px', textAlign: 'right' }}>
+                        <td style={{ padding: '12px 14px', textAlign: 'right', display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                          <Button variant="ghost" size="sm" onClick={() => { setHistoryRow(r); setHistoryOpen(true) }} aria-label={`History ${r.product_name || r.product_id}`}>
+                            <ClipboardList size={13} />
+                          </Button>
+                          {canAdjust && (
                             <Button variant="ghost" size="sm" onClick={() => handleAdjustRow(r)} aria-label={`Adjust ${r.product_name || r.product_id}`}>
                               <Settings2 size={13} />
                             </Button>
-                          </td>
-                        )}
+                          )}
+                        </td>
                       </tr>
                     )
                   })}
@@ -374,6 +383,10 @@ export default function InventoryPage() {
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 12, fontSize: 13 }}>
                       <div><span style={{ fontSize: 11, color: '#718198' }}>Stock</span><div style={{ fontWeight: 600 }}>{Number(r.on_hand_quantity).toLocaleString('id-ID')}</div></div>
                       <div><span style={{ fontSize: 11, color: '#718198' }}>Value</span><div style={{ fontWeight: 600 }}>{formatIDR(r.inventory_value)}</div></div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                      <Button variant="outline" size="sm" style={{ flex: 1 }} onClick={() => { setHistoryRow(r); setHistoryOpen(true) }}>View history</Button>
+                      {canAdjust && <Button size="sm" style={{ flex: 1 }} onClick={() => handleAdjustRow(r)}>Adjust stock</Button>}
                     </div>
                   </article>
                 )
@@ -418,6 +431,13 @@ export default function InventoryPage() {
         onNotice={toast}
         onDone={handleAdjustDone}
         products={rows}
+      />
+      <StockHistoryDialog
+        key={historyRow?.product_id ?? 'none'}
+        open={historyOpen}
+        onClose={() => { setHistoryOpen(false); setHistoryRow(null) }}
+        productId={historyRow?.product_id ?? null}
+        productName={historyRow?.product_name || `Product #${historyRow?.product_id ?? ''}`}
       />
     </div>
   )
