@@ -24,10 +24,12 @@ import { useSession } from '@/lib/session'
 
 // ---------------------------------------------------------------------------
 // Detail: GET /purchases/{id}?include=lines,shipping,payments,returns
-// Read-only (Phase A). Captures etag = purchase.etag || fallback from updated_at.
-// Supplier names via GET /contacts?filter[type]=supplier (best-effort).
-// Product names via GET /products?per_page=500 (best-effort).
-// No mutation, no ReceiveModal, no timeline, no fabricated invoice/terms/discount.
+// Captures the server ETag into If-Match for mutations.
+// Phase B: draft mutations. Phase C: POST /purchases/{id}/post (draft → posted)
+// via a confirmation dialog (capability purchase.post). Supplier names via
+// GET /contacts?filter[type]=supplier (best-effort). Product names via
+// GET /products?per_page=500 (best-effort). No ReceiveModal, no timeline,
+// no fabricated invoice/terms/discount.
 // ---------------------------------------------------------------------------
 
 function fmtDate(iso: string | null | undefined): string {
@@ -249,8 +251,11 @@ export default function PurchaseDetailPage() {
   // blind retry with a stale ETag). 409/400 -> surfaced as a readable toast.
   // -------------------------------------------------------------------------
   const canEditDraft = user.capabilities.includes('purchase.edit_own_draft')
+  const canPost = user.capabilities.includes('purchase.post')
   const isDraft = purchase?.lifecycle_status === 'draft'
   const editable = canEditDraft && isDraft
+  const postable = canPost && isDraft
+  const [postConfirmOpen, setPostConfirmOpen] = useState(false)
 
   const toast = (msg: string) => {
     setNotice(msg)
@@ -302,7 +307,7 @@ export default function PurchaseDetailPage() {
       if (code === 'version_mismatch' || /stale|412|precondition/i.test(msg)) {
         setConflict('This purchase changed elsewhere since you loaded it. Refresh and try again.')
         await refetch()
-      } else if (code === 'lifecycle_state_invalid') {
+      } else if (code === 'lifecycle_state_invalid' || (typeof code === 'string' && code.startsWith('lifecycle'))) {
         toast('This purchase is no longer a draft.')
         await refetch()
       } else if (code === 'idempotency_violation') {
@@ -378,6 +383,18 @@ export default function PurchaseDetailPage() {
         setShippingOpen(false)
       },
     )
+
+  // Phase C — post a draft (POST /purchases/{id}/post).
+  // Lifecycle draft → posted only. Backend is authoritative for inventory /
+  // stock movements / moving-average / shipping landed cost. Body is {}
+  // per the backend contract (request_body is fingerprinted for idempotency).
+  const postPurchase = () =>
+    runMutation('Purchase posted', async () => {
+      await api.post(`/purchases/${purchaseId}/post`, {}, {
+        headers: { 'If-Match': etag ?? '', 'Idempotency-Key': crypto.randomUUID() },
+      })
+      setPostConfirmOpen(false)
+    })
 
   if (loading) {
     return (
@@ -479,6 +496,11 @@ export default function PurchaseDetailPage() {
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {postable && (
+            <Button onClick={() => setPostConfirmOpen(true)} disabled={busy}>
+              <Package size={14} className="mr-1" /> Post purchase
+            </Button>
+          )}
           {editable && (
             <Button variant="outline" onClick={() => setHeaderOpen(true)} disabled={busy}>
               <Pencil size={14} className="mr-1" /> Edit purchase
@@ -856,6 +878,18 @@ export default function PurchaseDetailPage() {
         />
       )}
 
+      {/* Post confirmation dialog (Phase C) */}
+      {postConfirmOpen && purchase && (
+        <PostConfirmDialog
+          reference={purchase.reference_no ?? `#${purchase.id}`}
+          total={purchase.total_amount}
+          lineCount={purchase.lines?.length ?? 0}
+          busy={busy}
+          onCancel={() => { if (!busy) setPostConfirmOpen(false) }}
+          onConfirm={postPurchase}
+        />
+      )}
+
       {/* Line add/edit dialog */}
       {lineDialog && (
         <LineDialog
@@ -908,6 +942,65 @@ const FIELD_INPUT: React.CSSProperties = {
   padding: '0 10px',
   fontSize: 13,
   width: '100%',
+}
+
+// ---------------------------------------------------------------------------
+// Phase C — post confirmation. Server total shown verbatim (no client math).
+// Posting is irreversible: finalizes the purchase, updates inventory via a
+// stock movement (trigger purchase_receipt), applies landed shipping cost,
+// and makes the draft non-editable.
+// ---------------------------------------------------------------------------
+function PostConfirmDialog({
+  reference,
+  total,
+  lineCount,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  reference: string
+  total: string | number | null | undefined
+  lineCount: number
+  busy: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <DialogShell
+      title="Post purchase"
+      description="Posting finalizes this purchase. This cannot be undone from here."
+      onCancel={onCancel}
+      busy={busy}
+      onSave={onConfirm}
+      saveLabel={busy ? 'Posting…' : 'Post purchase'}
+      width={480}
+    >
+      <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14, fontSize: 13, color: '#334155' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, padding: '12px 14px' }}>
+          <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1, color: '#b45309' }} />
+          <div style={{ lineHeight: 1.6 }}>
+            Posting will finalize the purchase, update inventory, record the
+            purchase receipt (stock movement), apply landed shipping cost
+            where applicable, and make the draft no longer editable.
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+          <div>
+            <div style={FIELD_LABEL}>Reference</div>
+            <div style={{ marginTop: 4, fontWeight: 700 }}>{reference}</div>
+          </div>
+          <div>
+            <div style={FIELD_LABEL}>Lines</div>
+            <div style={{ marginTop: 4, fontWeight: 700 }}>{lineCount}</div>
+          </div>
+          <div>
+            <div style={FIELD_LABEL}>Total (server)</div>
+            <div style={{ marginTop: 4, fontWeight: 700 }}>{total != null ? formatIDR(Number(total)) : '—'}</div>
+          </div>
+        </div>
+      </div>
+    </DialogShell>
+  )
 }
 
 function DialogShell({
