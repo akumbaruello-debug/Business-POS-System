@@ -56,6 +56,19 @@ async def _staff_headers(app: AsyncClient, staff_user: dict[str, Any]) -> dict[s
 
 
 def _etag(resp: Any) -> str:
+    """Return the resource ETag for If-Match.
+
+    Prefer the response ``ETag`` header: that is the canonical validator
+    the server compares against in ``check_if_match`` — a quoted ISO-8601
+    timestamp serialised with the ``Z`` UTC suffix. Reading the body's
+    ``updated_at`` instead yields the ``+00:00`` offset form (FastAPI's
+    ``jsonable_encoder`` uses ``datetime.isoformat``), which does not
+    string-compare equal to the server's ETag and would 412 every
+    mutation. Fall back to the body field only when the header is absent.
+    """
+    hdr = resp.headers.get("ETag")
+    if hdr:
+        return hdr
     return f'"{resp.json()["updated_at"]}"'
 
 

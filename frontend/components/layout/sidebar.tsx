@@ -2,6 +2,7 @@
 
 import {
   Boxes,
+  ClipboardList,
   LayoutDashboard,
   Package,
   Store,
@@ -29,7 +30,10 @@ const navigation = [
   },
   {
     label: 'Purchasing',
-    items: [{ label: 'Suppliers', icon: Truck, href: '/suppliers' }],
+    items: [
+      { label: 'Purchases', icon: ClipboardList, href: '/purchases' },
+      { label: 'Suppliers', icon: Truck, href: '/suppliers' },
+    ],
   },
 ] as const
 

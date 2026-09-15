@@ -129,12 +129,24 @@ async def list_purchases(
     per_page: int = Query(default=50, ge=1, le=500),
     q: str | None = Query(default=None),
     sort: str = Query(default="id"),
-    lifecycle_status: str | None = Query(default=None),
-    supplier_id: int | None = Query(default=None),
-    payment_state: str | None = Query(default=None),
+    lifecycle_status: str | None = Query(default=None, alias="filter[lifecycle_status]"),
+    supplier_id: int | None = Query(default=None, alias="filter[supplier_id]"),
+    payment_state: str | None = Query(default=None, alias="filter[payment_state]"),
     from_iso: str | None = Query(default=None, alias="from"),
     to_iso: str | None = Query(default=None, alias="to"),
 ) -> MetaEnvelope[dict[str, Any]]:
+    # Backward-compat: also accept bare keys if caller uses legacy contract (e.g. tests).
+    if lifecycle_status is None:
+        lifecycle_status = request.query_params.get("lifecycle_status")
+    if supplier_id is None:
+        raw_sup = request.query_params.get("supplier_id")
+        if raw_sup is not None:
+            try:
+                supplier_id = int(raw_sup)
+            except ValueError:
+                pass
+    if payment_state is None:
+        payment_state = request.query_params.get("payment_state")
     async with UnitOfWork() as uow:
         svc = PurchaseService(uow)
         rows, total = await svc.list_purchases(

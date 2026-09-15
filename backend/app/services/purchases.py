@@ -90,6 +90,23 @@ _LIFECYCLE_RETURNABLE = frozenset(
 )
 
 
+# PostgreSQL unique_violation SQLSTATE — mirrors app/services/contacts.py.
+_PG_UNIQUE_VIOLATION = "23505"
+
+
+def _is_unique_violation(exc: Exception) -> bool:
+    """True when ``exc`` is a PG unique_violation.
+
+    Mirrors the helper in ``app/services/contacts.py`` so the purchases
+    service can surface a clean 409 instead of a raw IntegrityError.
+    """
+    orig = getattr(exc, "orig", None)
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if sqlstate is not None:
+        return str(sqlstate) == _PG_UNIQUE_VIOLATION
+    return "duplicate key value" in str(exc).lower()
+
+
 # Two-decimal quant for all monetary results.
 _2DP = Decimal("0.01")
 
@@ -147,11 +164,23 @@ class PurchaseService:
         return "paid", paid, outstanding
 
     async def _purchase_total(self, purchase_id: int) -> Decimal:
-        """Σ purchase_lines.line_total + purchase_shipping.amount."""
+        """Authoritative purchase total.
+
+        ``purchase_lines.line_total`` ALREADY includes the line's
+        ``allocated_shipping`` (``_recompute_shipping_allocation`` sets
+        ``line_total = line_subtotal + allocated_shipping``), and the
+        allocation always totals ``purchase_shipping.amount``. So the
+        total is simply ``Σ line_total`` — adding ``shipping.amount``
+        again would double-count the shipping. When there is shipping
+        but no lines yet, fall back to the shipping amount so a
+        header-only draft still reports its landed cost.
+        """
         line_total = await self._repo.sum_line_total(purchase_id)
         shipping = await self._repo.get_shipping(purchase_id)
         ship_amount = _quant(shipping["amount"]) if shipping else Decimal("0")
-        return _q2(line_total + ship_amount)
+        if line_total == 0:
+            return _q2(ship_amount)
+        return _q2(line_total)
 
     async def _recompute_shipping_allocation(
         self, purchase_id: int
@@ -462,13 +491,26 @@ class PurchaseService:
                 }
             )
 
-        purchase = await self._repo.create_draft(
-            supplier_id=supplier_id,
-            purchase_date=purchase_date,
-            notes=notes,
-            reference_no=reference_no,
-            created_by=principal_user_id,
-        )
+        try:
+            purchase = await self._repo.create_draft(
+                supplier_id=supplier_id,
+                purchase_date=purchase_date,
+                notes=notes,
+                reference_no=reference_no,
+                created_by=principal_user_id,
+            )
+        except Exception as exc:
+            if _is_unique_violation(exc):
+                raise Conflict(
+                    "A purchase with this reference number already exists.",
+                    details={"field": "reference_no", "value_type": "conflict"},
+                ) from exc
+            raise
+        if purchase is None:
+            raise Conflict(
+                "Purchase could not be created.",
+                details={"field": "reference_no", "value_type": "conflict"},
+            )
         purchase_id = int(purchase["id"])
 
         # Insert lines (allocated_shipping and line_total start at 0 /

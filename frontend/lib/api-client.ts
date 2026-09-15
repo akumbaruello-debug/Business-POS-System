@@ -5,10 +5,16 @@ type RequestOptions = Omit<RequestInit, 'body'> & {
   params?: Record<string, string>
 }
 
-async function client<T = any>(
+export interface ApiResult<T = any> {
+  data: T
+  status: number
+  headers: Headers
+}
+
+async function rawClient<T = any>(
   endpoint: string,
   options: RequestOptions = {}
-): Promise<T> {
+): Promise<ApiResult<T>> {
   const { body, params, headers: customHeaders, ...rest } = options
 
   const url = new URL(`${API_URL}${endpoint}`)
@@ -63,16 +69,34 @@ async function client<T = any>(
         (typeof data?.detail === 'string' && data.detail) ||
         (typeof data?.message === 'string' && data.message) ||
         `Request failed with status ${response.status}`
-      throw new Error(message)
+      const err = new Error(message)
+      // Preserve the backend error code (e.g. version_mismatch,
+      // lifecycle_state_invalid, idempotency_violation) so callers can
+      // branch on it without parsing the message text.
+      ;(err as Error & { code?: string }).code =
+        typeof errBody?.code === 'string' ? errBody.code : undefined
+      throw err
     }
-    return data as T
+    return { data: data as T, status: response.status, headers: response.headers }
   } else {
-    // Non-JSON response (e.g., file download)
+    // Non-JSON response (e.g. file download / 204 No Content)
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`)
     }
-    return (await response.text()) as unknown as T
+    return {
+      data: (await response.text()) as unknown as T,
+      status: response.status,
+      headers: response.headers,
+    }
   }
+}
+
+async function client<T = any>(
+  endpoint: string,
+  options: RequestOptions = {}
+): Promise<T> {
+  const { data } = await rawClient<T>(endpoint, options)
+  return data
 }
 
 export const api = {
@@ -86,4 +110,23 @@ export const api = {
     client<T>(endpoint, { ...options, method: 'PATCH', body }),
   delete: <T = any>(endpoint: string, options?: Omit<RequestOptions, 'body' | 'method'>) =>
     client<T>(endpoint, { ...options, method: 'DELETE' }),
+
+  /**
+   * Same verbs as `api`, but resolves `{ data, status, headers }` so callers
+   * can read response headers (notably `ETag`) and status codes. Used by the
+   * Purchasing draft-mutation flow, which needs the server's canonical ETag
+   * for the next `If-Match` without a second GET.
+   */
+  headers: {
+    get: <T = any>(endpoint: string, options?: Omit<RequestOptions, 'body' | 'method'>) =>
+      rawClient<T>(endpoint, { ...options, method: 'GET' }),
+    post: <T = any>(endpoint: string, body?: unknown, options?: Omit<RequestOptions, 'body' | 'method'>) =>
+      rawClient<T>(endpoint, { ...options, method: 'POST', body }),
+    put: <T = any>(endpoint: string, body?: unknown, options?: Omit<RequestOptions, 'body' | 'method'>) =>
+      rawClient<T>(endpoint, { ...options, method: 'PUT', body }),
+    patch: <T = any>(endpoint: string, body?: unknown, options?: Omit<RequestOptions, 'body' | 'method'>) =>
+      rawClient<T>(endpoint, { ...options, method: 'PATCH', body }),
+    delete: <T = any>(endpoint: string, options?: Omit<RequestOptions, 'body' | 'method'>) =>
+      rawClient<T>(endpoint, { ...options, method: 'DELETE' }),
+  },
 }
