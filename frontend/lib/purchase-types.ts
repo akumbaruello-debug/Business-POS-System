@@ -62,6 +62,16 @@ export interface PurchasePayment {
   created_by: number
 }
 
+export interface PaymentMethod {
+  id: number
+  code: string
+  name: string
+  is_cash: boolean
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
 export interface PurchaseReturnLine {
   id: number
   purchase_return_id: number

@@ -15,8 +15,8 @@ import {
   X,
 } from 'lucide-react'
 import { api } from '@/lib/api-client'
-import type { Purchase, PurchaseLine } from '@/lib/purchase-types'
 import type { Contact } from '@/lib/contact-types'
+import type { PaymentMethod, Purchase, PurchaseLine } from '@/lib/purchase-types'
 import type { Product } from '@/lib/product-types'
 import { formatIDR } from '@/lib/format'
 import { Button } from '@/components/ui/button'
@@ -137,6 +137,8 @@ export default function PurchaseDetailPage() {
   const [productMap, setProductMap] = useState<Map<number, string>>(new Map())
   const [productOptions, setProductOptions] = useState<Product[]>([])
   const [suppliers, setSuppliers] = useState<Contact[]>([])
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([])
+  const [paymentMap, setPaymentMap] = useState<Map<number, PaymentMethod>>(new Map())
 
   // Phase B — draft editing (lifecycle_status === 'draft' + capability).
   const [busy, setBusy] = useState(false)
@@ -145,6 +147,7 @@ export default function PurchaseDetailPage() {
   const [headerOpen, setHeaderOpen] = useState(false)
   const [lineDialog, setLineDialog] = useState<{ mode: 'add' | 'edit'; line?: PurchaseLine } | null>(null)
   const [shippingOpen, setShippingOpen] = useState(false)
+  const [paymentOpen, setPaymentOpen] = useState(false)
   const router = useRouter()
 
   const fetchPurchase = useCallback(async () => {
@@ -252,7 +255,10 @@ export default function PurchaseDetailPage() {
   // -------------------------------------------------------------------------
   const canEditDraft = user.capabilities.includes('purchase.edit_own_draft')
   const canPost = user.capabilities.includes('purchase.post')
+  const canAddPayment = user.capabilities.includes('purchase.create')
   const isDraft = purchase?.lifecycle_status === 'draft'
+  const isCancelled = purchase?.lifecycle_status === 'cancelled'
+  const payable = canAddPayment && !isDraft && !isCancelled && (purchase ? purchase.outstanding > 0 : false)
   const editable = canEditDraft && isDraft
   const postable = canPost && isDraft
   const [postConfirmOpen, setPostConfirmOpen] = useState(false)
@@ -277,6 +283,32 @@ export default function PurchaseDetailPage() {
         if (!cancelled) setSuppliers(res.data)
       } catch {
         if (!cancelled) setSuppliers([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Payment methods lookup (best-effort, capability payment_method.view)
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await api.get<{ data: PaymentMethod[] }>('/payment-methods', {
+          params: { 'filter[is_active]': 'true', per_page: '100' },
+        })
+        if (cancelled) return
+        const list = res.data ?? []
+        setPaymentMethods(list)
+        const map = new Map<number, PaymentMethod>()
+        list.forEach((m) => map.set(m.id, m))
+        setPaymentMap(map)
+      } catch {
+        if (!cancelled) {
+          setPaymentMethods([])
+          setPaymentMap(new Map())
+        }
       }
     })()
     return () => {
@@ -382,6 +414,28 @@ export default function PurchaseDetailPage() {
         )
         setShippingOpen(false)
       },
+    )
+
+  // Phase D — record a payment. Backend enforces the ceiling (allocation_exceeds_payable)
+  // + idempotency + ETag. Frontend only does UX pre-check (amount > 0, <= outstanding)
+  // and displays the server's authoritative error + refetches totals.
+  const addPayment = (payment_method_id: number, amount: number, tendered_amount: number | null, reference: string) =>
+    runMutation(
+      'Payment recorded',
+      async () => {
+        const body: Record<string, unknown> = { payment_method_id, amount }
+        if (tendered_amount !== null) body.tendered_amount = tendered_amount
+        if (reference.trim()) body.reference = reference.trim()
+        const res = await api.headers.post<Purchase>(
+          `/purchases/${purchaseId}/payments`,
+          body,
+          { headers: { 'If-Match': etag ?? '', 'Idempotency-Key': crypto.randomUUID() } },
+        )
+        const newEtag = res.headers.get('ETag') ?? (res.data as unknown as { etag?: string })?.etag ?? null
+        if (newEtag) setEtag(newEtag)
+        setPaymentOpen(false)
+      },
+      { refresh: true },
     )
 
   // Phase C — post a draft (POST /purchases/{id}/post).
@@ -499,6 +553,11 @@ export default function PurchaseDetailPage() {
           {postable && (
             <Button onClick={() => setPostConfirmOpen(true)} disabled={busy}>
               <Package size={14} className="mr-1" /> Post purchase
+            </Button>
+          )}
+          {payable && (
+            <Button variant="outline" onClick={() => setPaymentOpen(true)} disabled={busy}>
+              <Plus size={14} className="mr-1" /> Add payment
             </Button>
           )}
           {editable && (
@@ -645,7 +704,7 @@ export default function PurchaseDetailPage() {
             )}
           </Card>
 
-          <Card title="Payment history" description="Recorded allocations (read-only in Phase A)">
+          <Card title="Payment history" description="Recorded payments on this purchase">
             {purchase.payments && purchase.payments.length > 0 ? (
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -661,7 +720,7 @@ export default function PurchaseDetailPage() {
                     {purchase.payments.map((pay) => (
                       <tr key={pay.id} style={{ borderTop: '1px solid #f0f4f9' }}>
                         <td style={{ padding: '10px 14px', color: '#475569' }}>{fmtDateShort(pay.payment_date)}</td>
-                        <td style={{ padding: '10px 14px' }}>{pay.payment_method_id}</td>
+                        <td style={{ padding: '10px 14px' }}>{paymentMap.get(pay.payment_method_id)?.name ?? `Method #${pay.payment_method_id}`}</td>
                         <td style={{ padding: '10px 14px', color: '#718198', fontSize: 12 }}>{pay.reference ?? '—'}</td>
                         <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 700 }}>{formatIDR(pay.amount)}</td>
                       </tr>
@@ -915,6 +974,18 @@ export default function PurchaseDetailPage() {
           busy={busy}
           onCancel={() => setShippingOpen(false)}
           onSave={saveShipping}
+        />
+      )}
+
+      {/* Phase D — Add payment dialog (POST /purchases/{id}/payments) */}
+      {paymentOpen && purchase && (
+        <PaymentDialog
+          paymentMethods={paymentMethods}
+          outstanding={purchase.outstanding}
+          total={purchase.total_amount}
+          busy={busy}
+          onCancel={() => { if (!busy) setPaymentOpen(false) }}
+          onSave={addPayment}
         />
       )}
 
@@ -1342,6 +1413,153 @@ function ShippingDialog({
         <p style={{ margin: 0, fontSize: 11, color: '#94a3b8' }}>
           The server re-allocates the shipping amount pro-rata across the lines and recomputes each line total.
         </p>
+        {localError && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 8, background: '#fef2f2', color: '#dc2626', fontSize: 13, border: '1px solid #fecaca' }}>
+            <AlertTriangle size={15} /> {localError}
+          </div>
+        )}
+      </div>
+    </DialogShell>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Phase D — Add payment. Backend fields only (payment_method_id, amount,
+// tendered_amount, reference). The ceiling is enforced server-side; the
+// outstanding amount is displayed but never used as the authoritative check.
+// Cash methods may over-tender (tendered >= amount); non-cash must not send
+// tendered_amount at all (backend returns 400 otherwise).
+// ---------------------------------------------------------------------------
+function PaymentDialog({
+  paymentMethods,
+  outstanding,
+  total,
+  busy,
+  onCancel,
+  onSave,
+}: {
+  paymentMethods: PaymentMethod[]
+  outstanding: number
+  total: number
+  busy: boolean
+  onCancel: () => void
+  onSave: (paymentMethodId: number, amount: number, tenderedAmount: number | null, reference: string) => void
+}) {
+  const firstMethod = paymentMethods[0]
+  const [methodId, setMethodId] = useState(firstMethod ? String(firstMethod.id) : '')
+  const [amount, setAmount] = useState(() => (outstanding > 0 ? String(outstanding) : ''))
+  const [tendered, setTendered] = useState('')
+  const [reference, setReference] = useState('')
+  const [localError, setLocalError] = useState<string | null>(null)
+
+  const selected = paymentMethods.find((m) => String(m.id) === methodId)
+  const isCash = selected?.is_cash ?? false
+  const amountNum = Number(amount)
+  const tenderedNum = Number(tendered)
+
+  const submit = () => {
+    setLocalError(null)
+    if (!methodId) {
+      setLocalError('Select a payment method.')
+      return
+    }
+    if (!Number.isFinite(amountNum) || amountNum <= 0) {
+      setLocalError('Amount must be greater than 0.')
+      return
+    }
+    // UX pre-check only — the backend is authoritative for the ceiling.
+    if (amountNum > outstanding) {
+      setLocalError(`Amount exceeds the outstanding balance of ${formatIDR(outstanding)}.`)
+      return
+    }
+    let tenderedOut: number | null = null
+    if (isCash && tendered.trim() !== '') {
+      if (!Number.isFinite(tenderedNum) || tenderedNum < amountNum) {
+        setLocalError('Tendered amount must be greater than or equal to the payment amount.')
+        return
+      }
+      tenderedOut = tenderedNum
+    }
+    onSave(Number(methodId), amountNum, tenderedOut, reference)
+  }
+
+  return (
+    <DialogShell
+      title="Add payment"
+      description="Records a payment against this purchase. The server enforces the payable ceiling."
+      onCancel={onCancel}
+      busy={busy}
+      onSave={submit}
+      saveLabel="Record payment"
+      width={520}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, background: '#f8fafc', border: '1px solid var(--border)', borderRadius: 10, padding: 12, fontSize: 13 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: '#718198' }}>Purchase total</span>
+            <strong>{formatIDR(total)}</strong>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: '#718198' }}>Outstanding</span>
+            <strong style={{ color: 'var(--primary)' }}>{formatIDR(outstanding)}</strong>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label style={FIELD_LABEL}>Payment method</label>
+          <select value={methodId} onChange={(e) => setMethodId(e.target.value)} style={FIELD_INPUT}>
+            <option value="">Select method…</option>
+            {paymentMethods.map((m) => (
+              <option key={m.id} value={String(m.id)}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: isCash ? '1fr 1fr' : '1fr', gap: 14 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <label style={FIELD_LABEL}>Amount</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              style={FIELD_INPUT}
+            />
+          </div>
+          {isCash && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label style={FIELD_LABEL}>Tendered (optional)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={tendered}
+                onChange={(e) => setTendered(e.target.value)}
+                placeholder="Cash handed over"
+                style={FIELD_INPUT}
+              />
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label style={FIELD_LABEL}>Reference (optional)</label>
+          <input
+            value={reference}
+            onChange={(e) => setReference(e.target.value)}
+            maxLength={100}
+            placeholder="Transfer ref / cheque no"
+            style={FIELD_INPUT}
+          />
+        </div>
+
+        <p style={{ margin: 0, fontSize: 11, color: '#94a3b8' }}>
+          Each payment is a separate record. The server computes paid amount, outstanding and payment state.
+        </p>
+
         {localError && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 8, background: '#fef2f2', color: '#dc2626', fontSize: 13, border: '1px solid #fecaca' }}>
             <AlertTriangle size={15} /> {localError}

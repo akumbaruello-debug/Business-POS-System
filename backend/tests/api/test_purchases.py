@@ -397,6 +397,189 @@ async def test_purchase_payment_allocation_and_bound(
     assert res_over.json()["error"]["code"] == "allocation_exceeds_payable"
 
 
+@pytest.mark.asyncio
+async def test_purchase_payment_multiple_payments_accumulate_and_state(
+    app: AsyncClient,
+    owner_user: dict[str, Any],
+) -> None:
+    """Two partial payments accumulate → payment_state == partial.
+    Exact final payment → payment_state == paid, outstanding == 0.
+
+    Regression for the minimal ceiling fix: the service pre-check now
+    compares ``amount`` against ``max_payable`` (outstanding - repayments)
+    rather than the raw total, so a second payment whose running sum would
+    exceed *outstanding* is rejected with a clean 409 even when it is
+    still <= raw total.
+    """
+    h = await _owner_headers(app, owner_user)
+
+    # Create + line + post (total 125.00)
+    res = await app.post(
+        "/api/v1/purchases",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"supplier_id": 1},
+    )
+    pid = res.json()["id"]
+    await app.post(
+        f"/api/v1/purchases/{pid}/lines",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"product_id": 1, "quantity": "10.000", "unit_price": "12.50"},
+    )
+    await app.post(
+        f"/api/v1/purchases/{pid}/post",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={},
+    )
+
+    # Payment A: 50.00 (remaining 75)
+    await app.post(
+        f"/api/v1/purchases/{pid}/payments",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"payment_method_id": 2, "amount": "50.00"},
+    )
+    # Payment B: 25.00 (remaining 50)
+    res_b = await app.post(
+        f"/api/v1/purchases/{pid}/payments",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"payment_method_id": 2, "amount": "25.00"},
+    )
+    assert res_b.status_code == 201, res_b.text
+    partial = res_b.json()
+    assert partial["payment_state"] == "partial"
+    assert Decimal(str(partial["paid_amount"])) == Decimal("75.00")
+    assert Decimal(str(partial["outstanding"])) == Decimal("50.00")
+
+    # Payment C: exact (50.00) -> paid, outstanding 0
+    res_c = await app.post(
+        f"/api/v1/purchases/{pid}/payments",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"payment_method_id": 2, "amount": "50.00"},
+    )
+    assert res_c.status_code == 201, res_c.text
+    paid = res_c.json()
+    assert paid["payment_state"] == "paid"
+    assert Decimal(str(paid["paid_amount"])) == Decimal("125.00")
+    assert Decimal(str(paid["outstanding"])) == Decimal("0.00")
+
+
+@pytest.mark.asyncio
+async def test_purchase_payment_overallocation_vs_outstanding(
+    app: AsyncClient,
+    owner_user: dict[str, Any],
+) -> None:
+    """Outright overpayment (amount > total) rejected at the pre-check.
+
+    Guards the fixed branch: ``amount > max_payable`` (was
+    ``existing_paid + amount > total``), so the ceiling is the true
+    outstanding, not the raw total.
+    """
+    h = await _owner_headers(app, owner_user)
+    res = await app.post(
+        "/api/v1/purchases",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"supplier_id": 1},
+    )
+    pid = res.json()["id"]
+    await app.post(
+        f"/api/v1/purchases/{pid}/lines",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"product_id": 1, "quantity": "10.000", "unit_price": "12.50"},
+    )
+    await app.post(
+        f"/api/v1/purchases/{pid}/post",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={},
+    )
+    # 130 > 125 total -> 409 allocation_exceeds_payable
+    res_over = await app.post(
+        f"/api/v1/purchases/{pid}/payments",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"payment_method_id": 2, "amount": "130.00"},
+    )
+    assert res_over.status_code == 409, res_over.text
+    assert res_over.json()["error"]["code"] == "allocation_exceeds_payable"
+
+
+@pytest.mark.asyncio
+async def test_purchase_payment_idempotency_replay_and_violation(
+    app: AsyncClient,
+    owner_user: dict[str, Any],
+) -> None:
+    """Same key + same body → 201 replay (Idempotent-Replay).
+    Same key + different body → 409 idempotency_violation.
+    """
+    h = await _owner_headers(app, owner_user)
+    res = await app.post(
+        "/api/v1/purchases",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"supplier_id": 1},
+    )
+    pid = res.json()["id"]
+    await app.post(
+        f"/api/v1/purchases/{pid}/lines",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"product_id": 1, "quantity": "10.000", "unit_price": "12.50"},
+    )
+    await app.post(
+        f"/api/v1/purchases/{pid}/post",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={},
+    )
+
+    idk = _idem()
+    body = {"payment_method_id": 2, "amount": "50.00"}
+    first = await app.post(
+        f"/api/v1/purchases/{pid}/payments",
+        headers={**h, "Idempotency-Key": idk},
+        json=body,
+    )
+    assert first.status_code == 201, first.text
+    pay_id = first.json()["id"]
+
+    # Replay: same key, same body → 200, Idempotent-Replay header, same payment
+    replay = await app.post(
+        f"/api/v1/purchases/{pid}/payments",
+        headers={**h, "Idempotency-Key": idk},
+        json=body,
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.headers.get("Idempotent-Replay") == "true"
+    assert replay.json()["id"] == pay_id
+
+    # Same key, different body → 409 idempotency_violation
+    diff = await app.post(
+        f"/api/v1/purchases/{pid}/payments",
+        headers={**h, "Idempotency-Key": idk},
+        json={"payment_method_id": 2, "amount": "75.00"},
+    )
+    assert diff.status_code == 409, diff.text
+    assert diff.json()["error"]["code"] == "idempotency_violation"
+
+
+@pytest.mark.asyncio
+async def test_purchase_payment_lifecycle_rejected(
+    app: AsyncClient,
+    owner_user: dict[str, Any],
+) -> None:
+    """Payments on draft and cancelled purchases are rejected
+    with lifecycle_violation — mirrors the service guard."""
+    h = await _owner_headers(app, owner_user)
+    # Draft: post not called yet
+    res = await app.post(
+        "/api/v1/purchases",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"supplier_id": 1},
+    )
+    pid = res.json()["id"]
+    res_pay = await app.post(
+        f"/api/v1/purchases/{pid}/payments",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"payment_method_id": 2, "amount": "10.00"},
+    )
+    assert res_pay.status_code in (409, 422), res_pay.text
+    assert res_pay.json()["error"]["code"] == "lifecycle_violation"
+
+
 # ---------------------------------------------------------------------------
 # Cancellation: draft + posted w/ on-hand + consumed (ST-3 scenario)
 # ---------------------------------------------------------------------------

@@ -1375,8 +1375,7 @@ class PurchaseService:
             purchase_id
         )
         max_payable = _q2(max(Decimal("0"), total - existing_paid - srec_received))
-        projected = _q2(existing_paid + amount)
-        if projected > total:
+        if _q2(amount) > max_payable:
             raise AllocationExceedsPayable(
                 "Payment exceeds outstanding payable.",
                 details={
