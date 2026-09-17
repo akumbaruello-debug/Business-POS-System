@@ -29,7 +29,10 @@ from app.util import client_ip
 from app.validation.headers import parse_idempotency_key
 from app.validation.pagination import MetaEnvelope, make_pagination
 from app.validation.purchases_schemas import (
+    PurchaseReturnArrivalRequest,
     PurchaseReturnCancelRequest,
+    PurchaseReturnFinalizeRequest,
+    PurchaseReturnOverrideRequest,
     PurchaseReturnRequest,
 )
 
@@ -204,6 +207,116 @@ async def cancel_purchase_return(
         svc = PurchaseService(uow)
         try:
             result, is_replay = await svc.cancel_return(
+                return_id=return_id,
+                principal_user_id=principal.user_id,
+                reason=payload.reason,
+                if_match=parse_if_match_optional(if_match),
+                idempotency_key=str(parsed_key.value),
+                ctx=_audit_ctx(principal, request),
+                request_body=body_dict,
+            )
+        except IdempotencyViolationConflict as exc:
+            raise IdempotencyViolation(
+                "Idempotency-Key reused with a different request body.",
+                details=exc.details,
+            ) from exc
+        await uow.commit()
+        return _idempotent_response(result, status.HTTP_200_OK, is_replay)
+
+
+@top_router.post(
+    "/{return_id}/finalize",
+    operation_id="finalizePurchaseReturn",
+    summary="Confirm courier handoff on a posted purchase return (finalized_at set).",
+    status_code=status.HTTP_200_OK,
+)
+async def finalize_purchase_return(
+    request: Request,
+    return_id: int,
+    principal: Annotated[Principal, Depends(require_capability("purchase.return.finalize"))],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    if_match: str | None = Header(default=None, alias="If-Match"),
+) -> JSONResponse:
+    parsed_key = parse_idempotency_key(idempotency_key)
+    body_dict = await request.json()
+    payload = PurchaseReturnFinalizeRequest.model_validate(body_dict)
+    async with UnitOfWork() as uow:
+        svc = PurchaseService(uow)
+        try:
+            result, is_replay = await svc.finalize_return(
+                return_id=return_id,
+                principal_user_id=principal.user_id,
+                reason=payload.reason,
+                if_match=parse_if_match_optional(if_match),
+                idempotency_key=str(parsed_key.value),
+                ctx=_audit_ctx(principal, request),
+                request_body=body_dict,
+            )
+        except IdempotencyViolationConflict as exc:
+            raise IdempotencyViolation(
+                "Idempotency-Key reused with a different request body.",
+                details=exc.details,
+            ) from exc
+        await uow.commit()
+        return _idempotent_response(result, status.HTTP_200_OK, is_replay)
+
+
+@top_router.post(
+    "/{return_id}/arrival",
+    operation_id="recordPurchaseReturnArrival",
+    summary="Record supplier arrival on a posted purchase return (server-authoritative timestamp).",
+    status_code=status.HTTP_200_OK,
+)
+async def record_purchase_return_arrival(
+    request: Request,
+    return_id: int,
+    principal: Annotated[Principal, Depends(require_capability("purchase.return.arrival"))],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    if_match: str | None = Header(default=None, alias="If-Match"),
+) -> JSONResponse:
+    parsed_key = parse_idempotency_key(idempotency_key)
+    body_dict = await request.json()
+    PurchaseReturnArrivalRequest.model_validate(body_dict)
+    async with UnitOfWork() as uow:
+        svc = PurchaseService(uow)
+        try:
+            result, is_replay = await svc.record_return_arrival(
+                return_id=return_id,
+                principal_user_id=principal.user_id,
+                if_match=parse_if_match_optional(if_match),
+                idempotency_key=str(parsed_key.value),
+                ctx=_audit_ctx(principal, request),
+                request_body=body_dict,
+            )
+        except IdempotencyViolationConflict as exc:
+            raise IdempotencyViolation(
+                "Idempotency-Key reused with a different request body.",
+                details=exc.details,
+            ) from exc
+        await uow.commit()
+        return _idempotent_response(result, status.HTTP_200_OK, is_replay)
+
+
+@top_router.post(
+    "/{return_id}/override-expired-window",
+    operation_id="overridePurchaseReturnExpiredWindow",
+    summary="Owner-only: override an expired supplier-arrival confirmation window.",
+    status_code=status.HTTP_200_OK,
+)
+async def override_purchase_return_expired_window(
+    request: Request,
+    return_id: int,
+    principal: Annotated[Principal, Depends(require_capability("purchase.return.override"))],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    if_match: str | None = Header(default=None, alias="If-Match"),
+) -> JSONResponse:
+    parsed_key = parse_idempotency_key(idempotency_key)
+    body_dict = await request.json()
+    payload = PurchaseReturnOverrideRequest.model_validate(body_dict)
+    async with UnitOfWork() as uow:
+        svc = PurchaseService(uow)
+        try:
+            result, is_replay = await svc.override_return_expired_window(
                 return_id=return_id,
                 principal_user_id=principal.user_id,
                 reason=payload.reason,

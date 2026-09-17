@@ -29,6 +29,7 @@ plus column CHECKs. Services add pre-checks for clean error envelopes.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
@@ -60,7 +61,10 @@ _PURCHASE_PAYMENT_COLS = (
 
 _PURCHASE_RETURN_COLS = (
     "id, purchase_id, return_date, reason, total_value_returned, "
-    "lifecycle_status, created_at, created_by, version"
+    "lifecycle_status, finalized_at, finalized_by, finalized_reason, "
+    "supplier_arrival_at, supplier_arrival_by, "
+    "overdue_override_at, overdue_override_by, overdue_override_reason, "
+    "created_at, created_by, version"
 )
 
 _PURCHASE_RETURN_LINE_COLS = (
@@ -701,8 +705,6 @@ class PurchaseRepository:
     async def cancel_return(
         self,
         return_id: int,
-        *,
-        cancelled_by: int | None = None,
     ) -> dict[str, Any] | None:
         """``purchase_returns`` has no ``cancellation_date`` column per
         schema and the ``trg_purchase_returns_bump_version`` trigger
@@ -710,6 +712,14 @@ class PurchaseRepository:
         (pre-existing schema inconsistency). To bypass the broken
         trigger without modifying the frozen schema, we disable user
         triggers for this UPDATE only. We bump ``version`` manually.
+
+        Cancellation flips lifecycle_status only. Who / when / why are
+        recorded in the audit log by the service layer.
+
+        ``finalized_at`` is NOT cleared — finalization is a historical
+        fact and cannot be reversed by cancellation. The service layer
+        gates cancellation by ``finalized_at IS NULL`` before reaching
+        this method.
         """
         await self._uow.execute("SET LOCAL session_replication_role = replica")
         try:
@@ -728,6 +738,100 @@ class PurchaseRepository:
                 "SET LOCAL session_replication_role = origin"
             )
         return row
+
+    async def finalize_return(
+        self,
+        return_id: int,
+        *,
+        finalized_by: int,
+        reason: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Courier handoff confirmed. Idempotent: a return already finalized
+        is a no-op replay (the service layer guards the 409 path)."""
+        return await self._uow.first_row(
+            f"""
+            UPDATE purchase_returns
+            SET finalized_at   = :now,
+                finalized_by   = :finalized_by,
+                finalized_reason = :reason,
+                version = version + 1
+            WHERE id = :id
+            RETURNING {_PURCHASE_RETURN_COLS}
+            """,
+            {
+                "id": return_id,
+                "now": datetime.now(UTC),
+                "finalized_by": finalized_by,
+                "reason": reason,
+            },
+        )
+
+    async def record_arrival(
+        self, return_id: int, *, arrived_by: int
+    ) -> dict[str, Any] | None:
+        """Supplier arrival recorded. Idempotent via the service-layer
+        idempotency key (re-record is a no-op replay)."""
+        return await self._uow.first_row(
+            f"""
+            UPDATE purchase_returns
+            SET supplier_arrival_at = :now,
+                supplier_arrival_by = :arrived_by,
+                version = version + 1
+            WHERE id = :id
+            RETURNING {_PURCHASE_RETURN_COLS}
+            """,
+            {
+                "id": return_id,
+                "now": datetime.now(UTC),
+                "arrived_by": arrived_by,
+            },
+        )
+
+    async def override_expired_window(
+        self,
+        return_id: int,
+        *,
+        overridden_by: int,
+        reason: str,
+    ) -> dict[str, Any] | None:
+        """Owner-only durable overdue-window bypass."""
+        return await self._uow.first_row(
+            f"""
+            UPDATE purchase_returns
+            SET overdue_override_at     = :now,
+                overdue_override_by     = :overridden_by,
+                overdue_override_reason = :reason,
+                version = version + 1
+            WHERE id = :id
+            RETURNING {_PURCHASE_RETURN_COLS}
+            """,
+            {
+                "id": return_id,
+                "now": datetime.now(UTC),
+                "overridden_by": overridden_by,
+                "reason": reason,
+            },
+        )
+
+    async def sum_active_returned_qty_for_purchase(
+        self, purchase_id: int
+    ) -> Decimal:
+        """Sum of returned quantity across all NON-cancelled (posted) returns
+        for a purchase. Used by parent-lifecycle recovery after an unfinalized
+        return is cancelled. Mirrors sum_returned_qty_for_line but at the
+        purchase level with no finalization filter — finalized returns keep
+        contributing their qty (finalization ≠ removal)."""
+        row = await self._uow.first_row(
+            """
+            SELECT COALESCE(SUM(prl.quantity), 0) AS s
+            FROM purchase_return_lines prl
+            JOIN purchase_returns pr ON pr.id = prl.purchase_return_id
+            WHERE pr.purchase_id = :pid
+              AND pr.lifecycle_status = 'posted'
+            """,
+            {"pid": purchase_id},
+        )
+        return Decimal(str((row or {"s": 0})["s"]))
 
     async def list_return_lines(
         self, return_id: int

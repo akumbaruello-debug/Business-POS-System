@@ -259,6 +259,41 @@ class PurchaseReturnCancelRequest(BaseModel):
     reason: str = Field(..., min_length=1, max_length=1000)
 
 
+class PurchaseReturnFinalizeRequest(BaseModel):
+    """Body for finalizePurchaseReturn (confirm courier handoff).
+
+    Mirrors openapi.yaml §13 ``PurchaseReturnFinalizeRequest``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class PurchaseReturnArrivalRequest(BaseModel):
+    """Body for recordPurchaseReturnArrival (supplier received the goods).
+
+    Mirrors openapi.yaml §13 ``PurchaseReturnArrivalRequest``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Arrival has no mutable fields — the body is empty/optional. A comment
+    # field is permitted for the operator's note.
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class PurchaseReturnOverrideRequest(BaseModel):
+    """Body for overridePurchaseReturnExpiredWindow (Owner-only).
+
+    Mirrors openapi.yaml §13 ``PurchaseReturnOverrideRequest``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(..., min_length=1, max_length=1000)
+
+
 class PurchaseReturn(BaseModel):
     """Response for a purchase return. Mirrors openapi.yaml §13."""
 
@@ -359,10 +394,13 @@ __all__ = [
     "PurchasePayment",
     "PurchasePaymentInput",
     "PurchaseReturn",
+    "PurchaseReturnArrivalRequest",
     "PurchaseReturnCancelRequest",
+    "PurchaseReturnFinalizeRequest",
     "PurchaseReturnLine",
     "PurchaseReturnLineRequest",
     "PurchaseReturnRequest",
+    "PurchaseReturnOverrideRequest",
     "PurchaseShipping",
     "PurchaseShippingRequest",
     "Refund",

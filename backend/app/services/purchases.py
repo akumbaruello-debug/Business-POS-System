@@ -46,7 +46,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Final
 
 from app.audit.service import (
     ENTITY_PURCHASE_LINES,
@@ -1926,6 +1926,413 @@ class PurchaseService:
             "updated_at": ret.get("created_at") or ret.get("return_date"),
         }
 
+    # ========================================================================
+    # Phase-E finalization / arrival / overdue override (purchase_returns)
+    # ========================================================================
+
+    # Hard-locked supplier-arrival confirmation window (calendar days).
+    # Owner override sets overdue_override_at on the row, which makes the
+    # derived overdue = false permanently for that return.
+    _ARRIVAL_CONFIRMATION_DAYS: Final[int] = 5
+
+    async def _get_return_or_404(
+        self, return_id: int, *, lock: bool = False
+    ) -> dict[str, Any]:
+        ret = (
+            await self._repo.get_return_for_update(return_id)
+            if lock
+            else await self._repo.get_return(return_id)
+        )
+        if ret is None:
+            raise NotFound(f"Purchase return {return_id} not found.")
+        return ret
+
+    def _check_return_posted(self, ret: dict[str, Any]) -> None:
+        if ret["lifecycle_status"] != "posted":
+            raise Conflict(
+                f"Purchase return is in '{ret['lifecycle_status']}'; "
+                "only posted returns can be finalized / arrived / overridden."
+            )
+
+    async def finalize_return(
+        self,
+        return_id: int,
+        *,
+        principal_user_id: int,
+        reason: str | None,
+        if_match: str | None,
+        idempotency_key: str | None,
+        ctx: AuditContext | None,
+        request_body: dict[str, Any] | None,
+    ) -> tuple[dict[str, Any], bool]:
+        """Confirm courier handoff. One-way (finalized_at is never cleared)."""
+        idem_rec = None
+        if idempotency_key is not None:
+            store = IdempotencyStore(self._uow)
+            fingerprint = compute_request_fingerprint(
+                method="POST",
+                path=f"/purchase-returns/{return_id}/finalize",
+                body=request_body,
+            )
+            idem_rec = await store.start(
+                key=idempotency_key,
+                user_id=principal_user_id or 0,
+                endpoint="POST /purchase-returns/{id}/finalize",
+                fingerprint=fingerprint,
+            )
+            if idem_rec is not None and idem_rec.is_completed:
+                await self._uow.commit()
+                return idem_rec.response_body, True  # type: ignore[return-value]
+
+        ret = await self._get_return_or_404(return_id, lock=True)
+        self._check_return_posted(ret)
+
+        if ret["finalized_at"] is not None:
+            raise Conflict("Purchase return is already finalized.")
+
+        current_etag = f'"{int(ret["version"])}"'
+        check_if_match(provided=if_match, current_etag=current_etag)
+
+        old = dict(ret)
+        updated = await self._repo.finalize_return(
+            return_id,
+            finalized_by=principal_user_id,
+            reason=reason,
+        )
+        if updated is None:
+            raise NotFound("Purchase return missing after finalize.")
+
+        if ctx is not None:
+            await write_audit(
+                self._uow,
+                action=AuditAction.FINALIZE,
+                entity_type=ENTITY_PURCHASE_RETURNS,
+                entity_id=return_id,
+                old_values=old,
+                new_values={
+                    "finalized_at": updated["finalized_at"],
+                    "finalized_by": int(updated["finalized_by"] or 0),
+                    "finalized_reason": updated.get("finalized_reason"),
+                    "lifecycle_status": updated["lifecycle_status"],
+                    "version": int(updated["version"]),
+                },
+                reason=reason,
+                ctx=ctx,
+            )
+
+        enriched = await self._enrich_return(return_id)
+        if idempotency_key is not None and idem_rec is not None:
+            store = IdempotencyStore(self._uow)
+            await store.complete(
+                record_id=idem_rec.id,
+                status=200,
+                body=_json_serializable(enriched),
+                user_id=principal_user_id,
+            )
+        return enriched, False
+
+    async def record_return_arrival(
+        self,
+        return_id: int,
+        *,
+        principal_user_id: int,
+        if_match: str | None,
+        idempotency_key: str | None,
+        ctx: AuditContext | None,
+        request_body: dict[str, Any] | None,
+    ) -> tuple[dict[str, Any], bool]:
+        """Record supplier arrival. Server-authoritative timestamp."""
+        idem_rec = None
+        if idempotency_key is not None:
+            store = IdempotencyStore(self._uow)
+            fingerprint = compute_request_fingerprint(
+                method="POST",
+                path=f"/purchase-returns/{return_id}/arrival",
+                body=request_body,
+            )
+            idem_rec = await store.start(
+                key=idempotency_key,
+                user_id=principal_user_id or 0,
+                endpoint="POST /purchase-returns/{id}/arrival",
+                fingerprint=fingerprint,
+            )
+            if idem_rec is not None and idem_rec.is_completed:
+                await self._uow.commit()
+                return idem_rec.response_body, True  # type: ignore[return-value]
+
+        ret = await self._get_return_or_404(return_id, lock=True)
+        self._check_return_posted(ret)
+
+        if ret["supplier_arrival_at"] is not None:
+            raise Conflict(
+                "Supplier arrival has already been recorded for this return."
+            )
+
+        current_etag = f'"{int(ret["version"])}"'
+        check_if_match(provided=if_match, current_etag=current_etag)
+
+        old = dict(ret)
+        updated = await self._repo.record_arrival(
+            return_id, arrived_by=principal_user_id
+        )
+        if updated is None:
+            raise NotFound("Purchase return missing after arrival record.")
+
+        if ctx is not None:
+            await write_audit(
+                self._uow,
+                action=AuditAction.ARRIVAL,
+                entity_type=ENTITY_PURCHASE_RETURNS,
+                entity_id=return_id,
+                old_values=old,
+                new_values={
+                    "supplier_arrival_at": updated["supplier_arrival_at"],
+                    "supplier_arrival_by": int(updated["supplier_arrival_by"] or 0),
+                    "lifecycle_status": updated["lifecycle_status"],
+                    "version": int(updated["version"]),
+                },
+                ctx=ctx,
+            )
+
+        enriched = await self._enrich_return(return_id)
+        if idempotency_key is not None and idem_rec is not None:
+            store = IdempotencyStore(self._uow)
+            await store.complete(
+                record_id=idem_rec.id,
+                status=200,
+                body=_json_serializable(enriched),
+                user_id=principal_user_id,
+            )
+        return enriched, False
+
+    async def override_return_expired_window(
+        self,
+        return_id: int,
+        *,
+        principal_user_id: int,
+        reason: str,
+        if_match: str | None,
+        idempotency_key: str | None,
+        ctx: AuditContext | None,
+        request_body: dict[str, Any] | None,
+    ) -> tuple[dict[str, Any], bool]:
+        """Owner-only durable bypass of the 5-day supplier-arrival window.
+
+        Sets overdue_override_at on the row; the derived overdue flag is
+        recomputed as false permanently. Requires the row to currently be
+        overdue (supplier_arrival_at set, no override yet, now > +5d).
+        """
+        idem_rec = None
+        if idempotency_key is not None:
+            store = IdempotencyStore(self._uow)
+            fingerprint = compute_request_fingerprint(
+                method="POST",
+                path=f"/purchase-returns/{return_id}/override-expired-window",
+                body=request_body,
+            )
+            idem_rec = await store.start(
+                key=idempotency_key,
+                user_id=principal_user_id or 0,
+                endpoint="POST /purchase-returns/{id}/override",
+                fingerprint=fingerprint,
+            )
+            if idem_rec is not None and idem_rec.is_completed:
+                await self._uow.commit()
+                return idem_rec.response_body, True  # type: ignore[return-value]
+
+        ret = await self._get_return_or_404(return_id, lock=True)
+        self._check_return_posted(ret)
+
+        if ret["overdue_override_at"] is not None:
+            raise Conflict("Overdue window already overridden for this return.")
+
+        if ret["supplier_arrival_at"] is None:
+            raise Conflict(
+                "Overdue override requires a recorded supplier arrival."
+            )
+
+        # Derived overdue check: now() > supplier_arrival_at + 5 days
+        # and overdue_override_at IS NULL. Compute in the DB (single source
+        # of truth on clock).
+        overdue_row = await self._uow.first_row(
+            """
+            SELECT (NOW() > (
+                supplier_arrival_at + (:days || ' days')::interval
+            )) AS is_overdue
+            FROM purchase_returns
+            WHERE id = :return_id
+            """,
+            {
+                "return_id": return_id,
+                "days": str(self._ARRIVAL_CONFIRMATION_DAYS),
+            },
+        )
+        is_overdue = bool(overdue_row and overdue_row["is_overdue"])
+        if not is_overdue:
+            raise Conflict(
+                "Return is not overdue; override is only valid after the "
+                "supplier-arrival confirmation window has expired."
+            )
+
+        current_etag = f'"{int(ret["version"])}"'
+        check_if_match(provided=if_match, current_etag=current_etag)
+
+        old = dict(ret)
+        updated = await self._repo.override_expired_window(
+            return_id,
+            overridden_by=principal_user_id,
+            reason=reason,
+        )
+        if updated is None:
+            raise NotFound("Purchase return missing after override.")
+
+        if ctx is not None:
+            await write_audit(
+                self._uow,
+                action=AuditAction.OVERRIDE,
+                entity_type=ENTITY_PURCHASE_RETURNS,
+                entity_id=return_id,
+                old_values=old,
+                new_values={
+                    "overdue_override_at": updated["overdue_override_at"],
+                    "overdue_override_by": int(updated["overdue_override_by"] or 0),
+                    "overdue_override_reason": updated.get("overdue_override_reason"),
+                    "lifecycle_status": updated["lifecycle_status"],
+                    "version": int(updated["version"]),
+                },
+                reason=reason,
+                ctx=ctx,
+            )
+
+        enriched = await self._enrich_return(return_id)
+        if idempotency_key is not None and idem_rec is not None:
+            store = IdempotencyStore(self._uow)
+            await store.complete(
+                record_id=idem_rec.id,
+                status=200,
+                body=_json_serializable(enriched),
+                user_id=principal_user_id,
+            )
+        return enriched, False
+
+    async def _enrich_return(self, return_id: int) -> dict[str, Any]:
+        """Refresh a return from the DB and shape it as the API expects.
+
+        Used by finalize / arrival / override after the repo write.
+        """
+        refreshed = await self._repo.get_return(return_id)
+        if refreshed is None:
+            raise NotFound("Purchase return missing after mutation.")
+        lines_now = await self._repo.list_return_lines(return_id)
+        # Derived overdue flag: supplier arrival older than the confirmation
+        # window, with no durable Owner override recorded yet.
+        arrival_at = refreshed.get("supplier_arrival_at")
+        is_overdue_flag = False
+        if arrival_at is not None and refreshed.get("overdue_override_at") is None:
+            is_overdue_flag = (
+                datetime.now(UTC) - arrival_at
+            ).days > self._ARRIVAL_CONFIRMATION_DAYS
+        return {
+            "id": int(refreshed["id"]),
+            "purchase_id": int(refreshed["purchase_id"]),
+            "return_date": refreshed["return_date"],
+            "reason": refreshed.get("reason"),
+            "total_value_returned": float(refreshed["total_value_returned"]),
+            "lifecycle_status": str(refreshed["lifecycle_status"]),
+            "finalized_at": refreshed.get("finalized_at"),
+            "finalized_by": refreshed.get("finalized_by"),
+            "finalized_reason": refreshed.get("finalized_reason"),
+            "supplier_arrival_at": refreshed.get("supplier_arrival_at"),
+            "supplier_arrival_by": refreshed.get("supplier_arrival_by"),
+            "overdue_override_at": refreshed.get("overdue_override_at"),
+            "overdue_override_by": refreshed.get("overdue_override_by"),
+            "overdue_override_reason": refreshed.get("overdue_override_reason"),
+            "lines": [self._return_line_dict(ln) for ln in lines_now],
+            "created_at": refreshed["created_at"],
+            "created_by": int(refreshed["created_by"]),
+            "updated_at": refreshed.get("created_at") or refreshed.get("return_date"),
+            "is_overdue": bool(is_overdue_flag),
+        }
+
+    async def _recover_parent_purchase_lifecycle(
+        self, purchase_id: int, *, ctx: AuditContext | None
+    ) -> None:
+        """Recompute the parent purchase's lifecycle_status after an unfinalized
+        return is cancelled. Only mutates the parent when its current
+        lifecycle is ``returned`` (the only case where the recovery is actually
+        a change); other states already match the active_returned_qty reality.
+
+        Decision table (per Phase-E final contract):
+          active_returned >= purchased_qty           -> 'returned'
+          0 < active_returned <  purchased_qty      -> 'partially_returned'
+          active_returned == 0 + payment_state paid -> 'completed'
+          active_returned == 0 + otherwise          -> 'posted'
+        """
+        purchase = await self._repo.get_for_update(purchase_id)
+        if purchase is None:
+            return  # No parent recovery needed.
+        current = str(purchase["lifecycle_status"])
+
+        # purchased_qty = Σ line quantities
+        purchased_row = await self._uow.first_row(
+            "SELECT COALESCE(SUM(quantity), 0) AS q "
+            "FROM purchase_lines WHERE purchase_id = :id",
+            {"id": purchase_id},
+        )
+        purchased_qty = Decimal(str((purchased_row or {"q": 0})["q"]))
+
+        active_returned = await self._repo.sum_active_returned_qty_for_purchase(
+            purchase_id
+        )
+
+        # payment_state: a purchase is "paid" when Σ purchase_payments covers
+        # the total. The simplest mirror: total == Σ purchase_payments.
+        pay_row = await self._uow.first_row(
+            "SELECT COALESCE(SUM(amount), 0) AS s "
+            "FROM purchase_payments WHERE purchase_id = :id",
+            {"id": purchase_id},
+        )
+        paid_amount = Decimal(str((pay_row or {"s": 0})["s"]))
+        is_paid = paid_amount >= purchased_qty and purchased_qty > 0
+
+        if active_returned >= purchased_qty and purchased_qty > 0:
+            target = "returned"
+        elif active_returned > 0:
+            target = "partially_returned"
+        else:
+            target = "completed" if is_paid else "posted"
+
+        if target == current:
+            return
+
+        await self._repo.set_lifecycle_status(
+            purchase_id, lifecycle_status=target
+        )
+        if ctx is not None:
+            await write_audit(
+                self._uow,
+                action=AuditAction.UPDATE,
+                entity_type=ENTITY_PURCHASES,
+                entity_id=purchase_id,
+                old_values={"lifecycle_status": current},
+                new_values={"lifecycle_status": target},
+                reason=(
+                    "Parent-purchase lifecycle recovery after unfinalized "
+                    "return cancellation."
+                ),
+                ctx=ctx,
+            )
+        logger.info(
+            "parent_purchase_lifecycle_recovered",
+            extra={
+                "purchase_id": purchase_id,
+                "from": current,
+                "to": target,
+                "active_returned_qty": str(active_returned),
+                "purchased_qty": str(purchased_qty),
+            },
+        )
+
     async def cancel_return(
         self,
         return_id: int,
@@ -1960,6 +2367,13 @@ class PurchaseService:
             raise NotFound(f"Purchase return {return_id} not found.")
         if ret["lifecycle_status"] == "cancelled":
             raise Conflict("Purchase return is already cancelled.")
+        # Phase-E finalization gate: cancellation is blocked once the courier
+        # handoff has been confirmed. finalized_at is a historical fact and
+        # is NOT cleared by cancellation.
+        if ret["finalized_at"] is not None:
+            raise Conflict(
+                "Purchase return is finalized and cannot be cancelled."
+            )
         # No `updated_at` on purchase_returns; treat version as the
         # ETag. Use the integer version for the If-Match check.
         current_etag = f'"{int(ret["version"])}"'
@@ -2016,6 +2430,12 @@ class PurchaseService:
                 reason=reason,
                 ctx=ctx,
             )
+
+        # Phase-E parent-recovery: recompute the parent purchase's
+        # lifecycle_status (only mutates when parent is currently 'returned').
+        await self._recover_parent_purchase_lifecycle(
+            int(ret["purchase_id"]), ctx=ctx
+        )
 
         refreshed = await self._repo.get_return(return_id)
         if refreshed is None:

@@ -89,6 +89,10 @@ class AuditAction(StrEnum):
     SETTINGS_CHANGE = "settings_change"
     DEACTIVATE = "deactivate"
     UPDATE = "update"
+    # Phase-E finalization + arrival + overdue override (purchase_returns).
+    FINALIZE = "finalize"
+    ARRIVAL = "arrival"
+    OVERRIDE = "override"
 
 
 class FinancialEntryType(StrEnum):

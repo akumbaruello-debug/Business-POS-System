@@ -847,7 +847,25 @@ CREATE TABLE purchase_returns (
     CONSTRAINT ck_purchase_returns_value_pos
         CHECK (total_value_returned > 0),
     CONSTRAINT ck_purchase_returns_lifecycle
-        CHECK (lifecycle_status IN ('posted','cancelled'))
+        CHECK (lifecycle_status IN ('posted','cancelled')),
+    -- Finalization = courier handoff confirmed (manual). Irreversible once set.
+    -- supplier_arrival = supplier received the goods (manual, server-authoritative).
+    -- overdue is DERIVED (supplier_arrival_at + 5 days); not persisted.
+    -- overdue_override_* = durable record of an Owner-only window bypass.
+    finalized_at                TIMESTAMPTZ     NULL,
+    finalized_by                INT             NULL,
+    finalized_reason            TEXT            NULL,
+    supplier_arrival_at         TIMESTAMPTZ     NULL,
+    supplier_arrival_by         INT             NULL,
+    overdue_override_at         TIMESTAMPTZ     NULL,
+    overdue_override_by         INT             NULL,
+    overdue_override_reason     TEXT            NULL,
+    CONSTRAINT fk_purchase_returns_finalized_by
+        FOREIGN KEY (finalized_by) REFERENCES users (id) ON DELETE SET NULL,
+    CONSTRAINT fk_purchase_returns_arrival_by
+        FOREIGN KEY (supplier_arrival_by) REFERENCES users (id) ON DELETE SET NULL,
+    CONSTRAINT fk_purchase_returns_override_by
+        FOREIGN KEY (overdue_override_by) REFERENCES users (id) ON DELETE SET NULL
 );
 
 CREATE INDEX ix_purchase_returns_purchase ON purchase_returns (purchase_id);
@@ -1492,7 +1510,7 @@ CREATE TABLE audit_log (
         CHECK (action IN ('create','post','cancel','complete','return','adjust',
                           'movement','price_override','payment','refund',
                           'permission_grant','permission_revoke','settings_change',
-                          'deactivate','update'))
+                          'deactivate','update','finalize','arrival','override'))
 );
 
 CREATE INDEX ix_audit_entity ON audit_log (entity_type, entity_id);
@@ -1842,8 +1860,8 @@ BEGIN
         IF NOT (
             (OLD.lifecycle_status = 'draft' AND NEW.lifecycle_status IN ('posted','cancelled'))
          OR (OLD.lifecycle_status = 'posted' AND NEW.lifecycle_status IN ('completed','partially_returned','returned','cancelled'))
-         OR (OLD.lifecycle_status = 'partially_returned' AND NEW.lifecycle_status IN ('returned','cancelled'))
-         OR (OLD.lifecycle_status = 'returned' AND NEW.lifecycle_status = 'cancelled')
+         OR (OLD.lifecycle_status = 'partially_returned' AND NEW.lifecycle_status IN ('returned','cancelled','posted'))
+         OR (OLD.lifecycle_status = 'returned' AND NEW.lifecycle_status IN ('cancelled','partially_returned','completed','posted'))
          OR (OLD.lifecycle_status = 'completed' AND NEW.lifecycle_status IN ('partially_returned','cancelled'))
         ) THEN
             RAISE EXCEPTION
@@ -1917,7 +1935,9 @@ BEGIN
 
     SELECT COALESCE(SUM(prl.quantity), 0) INTO v_total_ret
     FROM purchase_return_lines prl
+    JOIN purchase_returns pr ON pr.id = prl.purchase_return_id
     WHERE prl.purchase_line_id = NEW.purchase_line_id
+      AND pr.lifecycle_status = 'posted'
       AND prl.id <> COALESCE(NEW.id, -1);
 
     IF (v_total_ret + NEW.quantity) > v_orig_qty THEN
@@ -2185,9 +2205,14 @@ CREATE TRIGGER trg_sales_returns_bump_version
 BEFORE UPDATE ON sales_returns
 FOR EACH ROW EXECUTE FUNCTION fn_bump_version_only();
 
+-- 18.21 ON UPDATE version++ for purchase_returns
+-- purchase_returns has no updated_at column (§7.5 tracks lifecycle via
+-- cancellation_date + version, mirroring sales_returns above), so the
+-- trigger must use fn_bump_version_only (not fn_bump_version_and_updated_at,
+-- which would reference the nonexistent updated_at column).
 CREATE TRIGGER trg_purchase_returns_bump_version
 BEFORE UPDATE ON purchase_returns
-FOR EACH ROW EXECUTE FUNCTION fn_bump_version_and_updated_at();
+FOR EACH ROW EXECUTE FUNCTION fn_bump_version_only();
 
 
 -- -----------------------------------------------------------------------------
@@ -2299,6 +2324,9 @@ INSERT INTO capabilities (code, description) VALUES
   ('purchase.complete', 'Complete a purchase (auto on full payment).'),
   ('purchase.cancel', 'Cancel a posted purchase.'),
   ('purchase.return', 'Process a purchase return.'),
+  ('purchase.return.finalize', 'Confirm courier handoff (finalize) on a posted purchase return. Irreversible.'),
+  ('purchase.return.arrival', 'Record supplier arrival on a posted purchase return (starts the 5-day confirmation window).'),
+  ('purchase.return.override', 'Owner-only: override an expired arrival-confirmation window on a posted purchase return.'),
   ('purchase.refund', 'Disburse a supplier refund / repayment.'),
   -- Inventory
   ('inventory.view', 'View inventory and stock movements.'),
@@ -2347,6 +2375,7 @@ JOIN capabilities c ON c.code IN (
     'payment_method.view','cost_type.view',
     'sale.view','sale.create','sale.edit_own_draft',
     'purchase.view','purchase.create','purchase.edit_own_draft',
+    'purchase.return.finalize','purchase.return.arrival',
     'inventory.view',
     'production.view',
     'notification.view','notification.mark_read'

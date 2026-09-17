@@ -1849,7 +1849,7 @@ BEGIN
         IF NOT (
             (OLD.lifecycle_status = 'draft' AND NEW.lifecycle_status IN ('posted','cancelled'))
          OR (OLD.lifecycle_status = 'posted' AND NEW.lifecycle_status IN ('completed','partially_returned','returned','cancelled'))
-         OR (OLD.lifecycle_status = 'partially_returned' AND NEW.lifecycle_status IN ('returned','cancelled'))
+         OR (OLD.lifecycle_status = 'partially_returned' AND NEW.lifecycle_status IN ('returned','cancelled','posted'))
          OR (OLD.lifecycle_status = 'returned' AND NEW.lifecycle_status = 'cancelled')
          OR (OLD.lifecycle_status = 'completed' AND NEW.lifecycle_status IN ('partially_returned','cancelled'))
         ) THEN
@@ -2185,7 +2185,7 @@ FOR EACH ROW EXECUTE FUNCTION fn_bump_version_and_updated_at();
 
 CREATE TRIGGER trg_purchase_returns_bump_version
 BEFORE UPDATE ON purchase_returns
-FOR EACH ROW EXECUTE FUNCTION fn_bump_version_and_updated_at();
+FOR EACH ROW EXECUTE FUNCTION fn_bump_version_only();
 
 
 -- -----------------------------------------------------------------------------
