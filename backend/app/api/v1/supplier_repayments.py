@@ -122,6 +122,7 @@ async def create_supplier_repayment(
             result, is_replay = await svc.create_repayment(
                 principal_user_id=principal.user_id,
                 purchase_id=payload.purchase_id,
+                purchase_return_id=payload.purchase_return_id,
                 amount=Decimal(str(payload.amount)),
                 payment_method_id=payload.payment_method_id,
                 repayment_date=payload.repayment_date,

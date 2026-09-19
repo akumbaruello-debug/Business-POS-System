@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse
 from app.audit.service import AuditContext
 from app.auth.principal import Principal
 from app.authz.deps import require_capability
-from app.concurrency.etag import parse_if_match_optional
+from app.concurrency.etag import parse_if_match_optional, parse_if_match_required
 from app.db import UnitOfWork
 from app.errors import IdempotencyViolation
 from app.logging import get_logger
@@ -124,7 +124,7 @@ async def create_purchase_return(
                     {"purchase_line_id": rl.purchase_line_id, "quantity": rl.quantity}
                     for rl in payload.lines
                 ],
-                if_match=parse_if_match_optional(if_match),
+                if_match=parse_if_match_required(if_match),
                 idempotency_key=str(parsed_key.value),
                 ctx=_audit_ctx(principal, request),
                 request_body=body_dict,
@@ -210,7 +210,7 @@ async def cancel_purchase_return(
                 return_id=return_id,
                 principal_user_id=principal.user_id,
                 reason=payload.reason,
-                if_match=parse_if_match_optional(if_match),
+                if_match=parse_if_match_required(if_match),
                 idempotency_key=str(parsed_key.value),
                 ctx=_audit_ctx(principal, request),
                 request_body=body_dict,

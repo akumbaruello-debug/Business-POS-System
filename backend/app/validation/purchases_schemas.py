@@ -355,6 +355,7 @@ class SupplierRepaymentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     purchase_id: int = Field(..., ge=1)
+    purchase_return_id: int | None = None
     amount: float = Field(..., gt=0)
     payment_method_id: int = Field(..., ge=1)
     repayment_date: datetime | None = None
@@ -368,9 +369,10 @@ class SupplierRepayment(BaseModel):
 
     id: int
     purchase_id: int
+    purchase_return_id: int | None = None
     amount: float
     received_amount: float
-    payment_method_id: int
+    payment_method_id: int | None = None
     repayment_date: datetime
     reason: str | None = None
     refundable_amount_snapshot: float

@@ -105,10 +105,18 @@ def parse_if_match_optional(value: str | None) -> str | None:
     Raises ``InvalidHeader``-compatible: for M2 we raise
     :class:`app.errors.InvalidHeader` when the header is present but
     malformed.
+
+    RFC 7232 ``If-Match: *`` is accepted as a wildcard that passes
+    unconditionally (handled in :func:`check_if_match`); it is returned
+    verbatim so the caller can short-circuit the comparison.
     """
     if not value:
         return None
-    inner = parse_etag(value.strip())
+    stripped = value.strip()
+    # RFC 7232 wildcard: matches any existing resource.
+    if stripped == "*":
+        return "*"
+    inner = parse_etag(stripped)
     if inner is None:
         from app.errors import InvalidHeader
 

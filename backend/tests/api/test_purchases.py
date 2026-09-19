@@ -745,9 +745,11 @@ async def test_purchase_return_create_list_get_cancel(
     )
 
     # Return 5 units
+    res_p = await app.get(f"/api/v1/purchases/{pid}", headers=h)
+    p_etag = _etag(res_p)
     res_ret = await app.post(
         f"/api/v1/purchases/{pid}/returns",
-        headers={**h, "Idempotency-Key": _idem()},
+        headers={**h, "Idempotency-Key": _idem(), "If-Match": p_etag},
         json={"reason": "damaged", "lines": [{"purchase_line_id": line_id, "quantity": "5.000"}]},
     )
     assert res_ret.status_code == 201, res_ret.text
@@ -765,9 +767,10 @@ async def test_purchase_return_create_list_get_cancel(
     assert res_g.json()["id"] == ret_id
 
     # Cancel return
+    ret_etag = _etag(res_ret)
     res_c = await app.post(
         f"/api/v1/purchase-returns/{ret_id}/cancel",
-        headers={**h, "Idempotency-Key": _idem()},
+        headers={**h, "Idempotency-Key": _idem(), "If-Match": ret_etag},
         json={"reason": "vendor dispute resolved"},
     )
     assert res_c.status_code == 200, res_c.text
@@ -801,9 +804,11 @@ async def test_purchase_return_quantity_bound(
     )
 
     # Try to return 100 (max 10)
+    res_p = await app.get(f"/api/v1/purchases/{pid}", headers=h)
+    p_etag = _etag(res_p)
     res_over = await app.post(
         f"/api/v1/purchases/{pid}/returns",
-        headers={**h, "Idempotency-Key": _idem()},
+        headers={**h, "Idempotency-Key": _idem(), "If-Match": p_etag},
         json={"reason": "x", "lines": [{"purchase_line_id": line_id, "quantity": "100.000"}]},
     )
     assert res_over.status_code in (400, 409), res_over.text

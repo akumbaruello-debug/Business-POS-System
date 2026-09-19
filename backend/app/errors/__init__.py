@@ -54,6 +54,7 @@ __all__ = [
     "ReferencedByHistory",
     "RefundExceedsCRL",
     "RepaymentExceedsSREC",
+    "ReturnCannotBeCancelled",
     "SessionExpired",
     "SessionRevoked",
     "TenderedNotAllowedForNonCash",
@@ -80,6 +81,7 @@ DEFAULT_STATUS: Final[dict[ErrorCode, int]] = {
     ErrorCode.REPAYMENT_EXCEEDS_SREC: 409,
     ErrorCode.ALLOCATION_EXCEEDS_PAYABLE: 409,
     ErrorCode.PURCHASE_RETURN_QUANTITY_EXCEEDS_ORIGINAL: 409,
+    ErrorCode.RETURN_CANNOT_BE_CANCELLED: 400,
     ErrorCode.UNAUTHENTICATED: 401,
     ErrorCode.INVALID_CREDENTIALS: 401,
     ErrorCode.SESSION_EXPIRED: 401,
@@ -362,6 +364,12 @@ class RepaymentExceedsSREC(AppError):
     code = ErrorCode.REPAYMENT_EXCEEDS_SREC
     status = 409
     default_message = "Supplier repayment exceeds the current supplier receivable (SREC)."
+
+
+class ReturnCannotBeCancelled(AppError):
+    code = ErrorCode.RETURN_CANNOT_BE_CANCELLED
+    status = 400
+    default_message = "Purchase return cannot be cancelled because cash repayment has already been received."
 
 
 class BelowCost(AppError):
