@@ -79,7 +79,8 @@ _REFUND_COLS = (
 
 _SUPPLIER_REPAYMENT_COLS = (
     "id, purchase_id, amount, received_amount, payment_method_id, "
-    "repayment_date, reason, refundable_amount_snapshot, created_at, created_by"
+    "repayment_date, reason, refundable_amount_snapshot, purchase_return_id, "
+    "created_at, created_by"
 )
 
 
@@ -706,38 +707,182 @@ class PurchaseRepository:
         self,
         return_id: int,
     ) -> dict[str, Any] | None:
-        """``purchase_returns`` has no ``cancellation_date`` column per
-        schema and the ``trg_purchase_returns_bump_version`` trigger
-        references an ``updated_at`` column that the table does NOT have
-        (pre-existing schema inconsistency). To bypass the broken
-        trigger without modifying the frozen schema, we disable user
-        triggers for this UPDATE only. We bump ``version`` manually.
-
-        Cancellation flips lifecycle_status only. Who / when / why are
-        recorded in the audit log by the service layer.
-
-        ``finalized_at`` is NOT cleared — finalization is a historical
-        fact and cannot be reversed by cancellation. The service layer
-        gates cancellation by ``finalized_at IS NULL`` before reaching
+        """Cancel a purchase return by flipping ``lifecycle_status`` to
+        ``'cancelled'``. ``finalized_at`` is NOT cleared — finalization is
+        a historical fact and cannot be reversed by cancellation. The
+        service layer gates cancellation by ``finalized_at IS NULL``
+        (and ``received_amount = 0`` on the linked SREC) before reaching
         this method.
+
+        The ``trg_purchase_returns_bump_version`` trigger fires
+        ``fn_bump_version_and_updated_at()``, which bumps ``version``
+        (and sets ``updated_at``) automatically — so we do not set it
+        manually here. No ``session_replication_role`` bypass is needed
+        (the trigger was fixed in commit ``25fa0af``).
         """
-        await self._uow.execute("SET LOCAL session_replication_role = replica")
-        try:
-            row = await self._uow.first_row(
-                f"""
-                UPDATE purchase_returns
-                SET lifecycle_status = 'cancelled',
-                    version = version + 1
-                WHERE id = :id
-                RETURNING {_PURCHASE_RETURN_COLS}
-                """,
-                {"id": return_id},
-            )
-        finally:
-            await self._uow.execute(
-                "SET LOCAL session_replication_role = origin"
-            )
+        row = await self._uow.first_row(
+            f"""
+            UPDATE purchase_returns
+            SET lifecycle_status = 'cancelled'
+            WHERE id = :id
+            RETURNING {_PURCHASE_RETURN_COLS}
+            """,
+            {"id": return_id},
+        )
         return row
+
+    async def get_srec_for_return(
+        self, return_id: int
+    ) -> dict[str, Any] | None:
+        """Return the ``supplier_repayments`` rows carrying the SREC created by
+        a purchase return (``reason = 'purchase_return_credit'``), if any exist
+        and are **not** voided (i.e. ``amount > 0 OR received_amount > 0``).
+        Uses ``purchase_return_id`` for exact linkage per schema §11.2.
+        Returns ``None`` when no SREC exists — the safe case per existing
+        business rules.
+        """
+        return await self._uow.first_row(
+            f"""
+            SELECT {_SUPPLIER_REPAYMENT_COLS}
+            FROM supplier_repayments
+            WHERE purchase_return_id = :rid
+              AND reason = 'purchase_return_credit'
+              AND (amount > 0 OR received_amount > 0)
+            """,
+            {"rid": return_id},
+        )
+
+    async def delete_unreceived_srec_for_return(self, return_id: int) -> int:
+        """Reverse (void) the unreceived SREC for a purchase return.
+        Delegates to ``reverse_unreceived_srec_for_return``, which zeros the
+        obligation in-place (``amount = 0, received_amount = 0``) rather than
+        hard-deleting, preserving the audit trail per project rules. See
+        that method for idempotency / safety guarantees.
+        """
+        return await self.reverse_unreceived_srec_for_return(return_id)
+
+    async def reverse_unreceived_srec_for_return(
+        self, return_id: int
+    ) -> int:
+        """Void the SREC obligation row for a purchase return when it has
+        NOT been (partially) paid, so SREC is removed from the outstanding
+        balance. Per project rules we never hard-delete posted data; we
+        void (zero) the obligation columns in place so the row stays in
+        the audit trail with zero economic impact.
+
+        Safe + idempotent: a row with ``received_amount = 0`` becomes
+        ``amount = 0, received_amount = 0`` (contributes 0 to SREC). Rows
+        that were already voided are no-ops. Rows with ``received_amount > 0``
+        are never matched — the service layer blocks those before reaching
+        here.
+        """
+        result = await self._uow.execute(
+            """
+            UPDATE supplier_repayments
+            SET amount = 0,
+                received_amount = 0
+            WHERE purchase_return_id = :rid
+              AND reason = 'purchase_return_credit'
+              AND received_amount = 0
+            """,
+            {"rid": return_id},
+        )
+        return result.rowcount or 0
+
+    async def sum_posted_return_value_for_purchase(
+        self, purchase_id: int
+    ) -> Decimal:
+        """Σ total_value_returned for **posted** (non-cancelled) purchase
+        returns belonging to ``purchase_id``. Used by the service layer to
+        compute the payment-allocation ceiling:
+        ``max_payable = total - Σ payments - Σ posted_returns``.
+        Matches ``fn_purchase_payment_allocation_bound`` DB logic."""
+        row = await self._uow.first_row(
+            "SELECT COALESCE(SUM(total_value_returned), 0) AS s "
+            "FROM purchase_returns "
+            "WHERE purchase_id = :id AND lifecycle_status = 'posted'",
+            {"id": purchase_id},
+        )
+        return Decimal(str((row or {"s": 0})["s"]))
+
+    async def supplier_repayment_totals(
+        self, purchase_id: int
+    ) -> tuple[Decimal, Decimal]:
+        """Return ``(Σ amount, Σ received_amount)`` for all supplier_repayments
+        rows on ``purchase_id``. Mirrors the DB trigger's SREC calculation:
+        SREC = Σ amount − Σ received_amount.
+
+        Note: unlike ``sum_supplier_repayments_for_purchase`` (which returns
+        only the received sum) this returns BOTH columns so the service layer
+        can compute SREC = amount − received in a single query."""
+        row = await self._uow.first_row(
+            "SELECT COALESCE(SUM(amount), 0) AS amt, "
+            "       COALESCE(SUM(received_amount), 0) AS rcv "
+            "FROM supplier_repayments WHERE purchase_id = :id",
+            {"id": purchase_id},
+        )
+        return (
+            Decimal(str((row or {"amt": 0})["amt"])),
+            Decimal(str((row or {"rcv": 0})["rcv"])),
+        )
+
+    async def find_supplier_repayment_for_return(
+        self,
+        purchase_id: int,
+        *,
+        purchase_return_id: int | None = None,
+    ) -> dict[str, Any] | None:
+        """Locate the SREC obligation row to credit received_amount against.
+
+        Per Phase-E Gap #4, each return creates exactly one SREC obligation
+        (``reason = 'purchase_return_credit'``) linked via
+        ``purchase_return_id``. This lookup is purchase-scoped (not just
+        return-scoped) so a return's repayment never mutates another's SREC.
+
+        When ``purchase_return_id`` is provided, the row is matched by that
+        FK directly. Returns the first matching obligation row or ``None``
+        if no return-credit SREC exists for this purchase/return."""
+        params: dict[str, Any] = {"pid": purchase_id}
+        where = "purchase_id = :pid AND reason = 'purchase_return_credit'"
+        if purchase_return_id is not None:
+            where += " AND purchase_return_id = :rid"
+            params["rid"] = purchase_return_id
+        return await self._uow.first_row(
+            f"SELECT {_SUPPLIER_REPAYMENT_COLS} "
+            f"FROM supplier_repayments WHERE {where} "
+            f"ORDER BY id ASC LIMIT 1",
+            params,
+        )
+
+    async def update_supplier_repayment_received(
+        self,
+        *,
+        repayment_id: int,
+        received_increment: Decimal,
+        payment_method_id: int | None,
+    ) -> dict[str, Any] | None:
+        """Increment ``received_amount`` on an SREC obligation row.
+
+        Used when a supplier repayment (repayment against a return credit)
+        is received. ``received_increment`` is added atomically; ``amount``
+        and ``refundable_amount_snapshot`` are preserved. ``payment_method_id``
+        is forwarded so the obligation records the settlement instrument
+        (Phase E: an unpaid SREC has ``payment_method_id = NULL`` and is
+        updated on first repayment)."""
+        return await self._uow.first_row(
+            f"""
+            UPDATE supplier_repayments
+            SET received_amount = received_amount + :inc,
+                payment_method_id = COALESCE(:pm, payment_method_id)
+            WHERE id = :id
+            RETURNING {_SUPPLIER_REPAYMENT_COLS}
+            """,
+            {"inc": received_increment, "pm": payment_method_id, "id": repayment_id},
+        )
+
+    # ========================================================================
+    # finalize / arrival / override (finalized_at)
+    # ========================================================================
 
     async def finalize_return(
         self,
@@ -1082,17 +1227,19 @@ class PurchaseRepository:
         repayment_date: Any | None,
         reason: str | None,
         refundable_amount_snapshot: Decimal,
+        purchase_return_id: int | None = None,
         created_by: int,
     ) -> dict[str, Any] | None:
         row = await self._uow.first_row(
             f"""
             INSERT INTO supplier_repayments (
                 purchase_id, amount, received_amount, payment_method_id,
-                repayment_date, reason, refundable_amount_snapshot, created_by
+                repayment_date, reason, refundable_amount_snapshot,
+                purchase_return_id, created_by
             ) VALUES (
                 :purchase_id, :amount, :received_amount, :payment_method_id,
                 COALESCE(:repayment_date, NOW()), :reason,
-                :refundable_amount_snapshot, :created_by
+                :refundable_amount_snapshot, :purchase_return_id, :created_by
             )
             RETURNING {_SUPPLIER_REPAYMENT_COLS}
             """,
@@ -1104,6 +1251,7 @@ class PurchaseRepository:
                 "repayment_date": repayment_date,
                 "reason": reason,
                 "refundable_amount_snapshot": refundable_amount_snapshot,
+                "purchase_return_id": purchase_return_id,
                 "created_by": created_by,
             },
         )

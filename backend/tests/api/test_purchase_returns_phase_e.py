@@ -63,7 +63,7 @@ async def _create_return(
 ) -> int:
     res = await app.post(
         f"/api/v1/purchases/{pid}/returns",
-        headers={**headers, "Idempotency-Key": _idem()},
+        headers={**headers, "Idempotency-Key": _idem(), "If-Match": '*'},
         json={
             "reason": "damaged",
             "lines": [{"purchase_line_id": line_id, "quantity": qty}],
@@ -99,7 +99,7 @@ async def test_finalize_return_owner_then_cancel_rejected(
     # Cancel after finalize -> 409 return_finalized
     res_cancel = await app.post(
         f"/api/v1/purchase-returns/{ret_id}/cancel",
-        headers={**h, "Idempotency-Key": _idem()},
+        headers={**h, "Idempotency-Key": _idem(), "If-Match": '*'},
         json={"reason": "vendor dispute"},
     )
     assert res_cancel.status_code == 409
@@ -320,7 +320,7 @@ async def test_cancel_unfinalized_return_recovery_to_posted(
     # Cancel the unfinalized return (no If-Match — optional on cancel)
     res_c = await app.post(
         f"/api/v1/purchase-returns/{ret_id}/cancel",
-        headers={**h, "Idempotency-Key": _idem()},
+        headers={**h, "Idempotency-Key": _idem(), "If-Match": '*'},
         json={"reason": "vendor dispute resolved"},
     )
     assert res_c.status_code == 200, res_c.text
@@ -345,7 +345,7 @@ async def test_cancel_partial_return_recovery_to_partially_returned(
     # Cancel that full return (unfinalized) -> active_returned drops to 0 -> posted
     res_c = await app.post(
         f"/api/v1/purchase-returns/{ret_full}/cancel",
-        headers={**h, "Idempotency-Key": _idem()},
+        headers={**h, "Idempotency-Key": _idem(), "If-Match": '*'},
         json={"reason": "changed mind"},
     )
     assert res_c.status_code == 200, res_c.text
@@ -355,7 +355,7 @@ async def test_cancel_partial_return_recovery_to_partially_returned(
     # Now create a partial return of 5 units -> 'partially_returned'
     res_ret = await app.post(
         f"/api/v1/purchases/{pid}/returns",
-        headers={**h, "Idempotency-Key": _idem()},
+        headers={**h, "Idempotency-Key": _idem(), "If-Match": '*'},
         json={
             "reason": "damaged 5",
             "lines": [{"purchase_line_id": line_id, "quantity": "5.000"}],
@@ -370,7 +370,7 @@ async def test_cancel_partial_return_recovery_to_partially_returned(
     # Cancel the partial -> active 0 -> recover to posted
     res_c2 = await app.post(
         f"/api/v1/purchase-returns/{ret_partial}/cancel",
-        headers={**h, "Idempotency-Key": _idem()},
+        headers={**h, "Idempotency-Key": _idem(), "If-Match": '*'},
         json={"reason": "resolved"},
     )
     assert res_c2.status_code == 200, res_c2.text

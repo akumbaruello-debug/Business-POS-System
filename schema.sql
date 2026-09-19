@@ -1275,14 +1275,17 @@ CREATE TABLE supplier_repayments (
     purchase_id                     BIGINT          NOT NULL,
     amount                          NUMERIC(15,2)   NOT NULL,
     received_amount                 NUMERIC(15,2)   NOT NULL DEFAULT 0,
-    payment_method_id               INT             NOT NULL,
+    payment_method_id               INT             NULL,
     repayment_date                  TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     reason                          TEXT            NULL,
     refundable_amount_snapshot      NUMERIC(15,2)   NOT NULL,
+    purchase_return_id              BIGINT          NULL,
     created_at                      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     created_by                      INT             NOT NULL,
     CONSTRAINT fk_srep_purchase
         FOREIGN KEY (purchase_id) REFERENCES purchases (id) ON DELETE RESTRICT,
+    CONSTRAINT fk_srep_purchase_return
+        FOREIGN KEY (purchase_return_id) REFERENCES purchase_returns (id) ON DELETE RESTRICT,
     CONSTRAINT fk_srep_method
         FOREIGN KEY (payment_method_id) REFERENCES payment_methods (id) ON DELETE RESTRICT,
     CONSTRAINT fk_srep_created_by
@@ -1298,6 +1301,7 @@ CREATE TABLE supplier_repayments (
 );
 
 CREATE INDEX ix_srep_purchase ON supplier_repayments (purchase_id);
+CREATE INDEX ix_srep_purchase_return ON supplier_repayments (purchase_return_id);
 CREATE INDEX ix_srep_date ON supplier_repayments (repayment_date);
 
 COMMENT ON TABLE supplier_repayments IS 'Supplier repayment obligations and receipts. amount = total obligation; received_amount = cumulative cash received (INV-04 ceiling).';
@@ -1888,6 +1892,7 @@ FOR EACH ROW EXECUTE FUNCTION fn_purchase_lifecycle_terminal();
 CREATE OR REPLACE FUNCTION fn_purchase_payment_allocation_bound() RETURNS TRIGGER AS $$
 DECLARE
     v_total       NUMERIC(15,2);
+    v_returned    NUMERIC(15,2);
     v_allocated   NUMERIC(15,2);
 BEGIN
     -- The purchases.total_amount is not stored; it is derived from
@@ -1899,15 +1904,20 @@ BEGIN
       INTO v_total;
     IF v_total IS NULL THEN v_total := 0; END IF;
 
+    SELECT COALESCE(SUM(total_value_returned), 0) INTO v_returned
+    FROM purchase_returns
+    WHERE purchase_id = NEW.purchase_id
+      AND lifecycle_status = 'posted';
+
     SELECT COALESCE(SUM(amount), 0) INTO v_allocated
     FROM purchase_payments
     WHERE purchase_id = NEW.purchase_id
       AND id <> COALESCE(NEW.id, -1);
 
-    IF (v_allocated + NEW.amount) > v_total THEN
+    IF (v_allocated + NEW.amount) > (v_total - v_returned) THEN
         RAISE EXCEPTION
-            'purchase_payment allocation exceeds purchase total (allocated=%, new=%, total=%); BR-PAYMENT-004',
-            v_allocated, NEW.amount, v_total
+            'purchase_payment allocation exceeds purchase payable (allocated=%, new=%, total=%, returned=%); BR-PAYMENT-004',
+            v_allocated, NEW.amount, v_total, v_returned
             USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;

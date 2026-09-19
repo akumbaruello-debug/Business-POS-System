@@ -40,6 +40,7 @@ class ErrorCode(StrEnum):
     REPAYMENT_EXCEEDS_SREC = "repayment_exceeds_srec"
     ALLOCATION_EXCEEDS_PAYABLE = "allocation_exceeds_payable"
     PURCHASE_RETURN_QUANTITY_EXCEEDS_ORIGINAL = "purchase_return_quantity_exceeds_original"
+    RETURN_CANNOT_BE_CANCELLED = "return_cannot_be_cancelled"
 
     # ---- 401 Unauthorized --------------------------------------------
     UNAUTHENTICATED = "unauthenticated"

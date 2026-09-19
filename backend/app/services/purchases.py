@@ -66,6 +66,7 @@ from app.errors import (
     InsufficientCash,
     LifecycleViolation,
     NotFound,
+    ReturnCannotBeCancelled,
     TenderedNotAllowedForNonCash,
 )
 from app.logging import get_logger
@@ -154,12 +155,15 @@ class PurchaseService:
         return etag_and_version_from_updated_at(ts)
 
     @staticmethod
-    def _payment_state(total: Decimal, paid: Decimal) -> tuple[str, Decimal, Decimal]:
+    def _payment_state(
+        total: Decimal, paid: Decimal, returned: Decimal = Decimal("0")
+    ) -> tuple[str, Decimal, Decimal]:
         paid = paid if paid > 0 else Decimal("0")
-        outstanding = max(Decimal("0"), total - paid)
+        returned = returned if returned > 0 else Decimal("0")
+        outstanding = _q2(max(Decimal("0"), total - paid - returned))
         if paid == 0:
             return "unpaid", paid, outstanding
-        if paid < total:
+        if paid < total - returned:
             return "partial", paid, outstanding
         return "paid", paid, outstanding
 
@@ -238,18 +242,18 @@ class PurchaseService:
         purchase_id = int(row["id"])
         total = await self._purchase_total(purchase_id)
         paid = await self._repo.sum_payments(purchase_id)
-        state, paid_amt, outstanding = self._payment_state(total, paid)
-        # SREC = supplier receivable = outstanding (same number as AP).
-        # supplier_repayments.received_amount is the cash-in from the
-        # supplier; outstanding - Σ received_amount = remaining SREC
-        # that the supplier still owes. For our purposes, the derived
-        # ap / supplier_receivable both equal outstanding (the DB does
-        # not store AP — it is derived from payments + repayments).
-        srec_received = await self._repo.sum_supplier_repayments_for_purchase(
+        returned = await self._repo.sum_posted_return_value_for_purchase(
             purchase_id
         )
+        state, paid_amt, outstanding = self._payment_state(total, paid, returned)
+        # SREC (Supplier Receivable, asset 1300) per DB-Design §8.4:
+        # SREC = Σ supplier_repayments.amount − Σ received_amount.
+        # AP (liability 2010) = max(0, total − Σ payments − Σ returns).
+        srec_amount, srec_received = (
+            await self._repo.supplier_repayment_totals(purchase_id)
+        )
         ap = _q2(outstanding)
-        srec = _q2(max(Decimal("0"), ap - srec_received))
+        srec = _q2(max(Decimal("0"), srec_amount - srec_received))
 
         etag, _v = self._etag_from_row(row)
 
@@ -1368,13 +1372,10 @@ class PurchaseService:
         # also enforce; we raise a clean error code first).
         total = await self._purchase_total(purchase_id)
         existing_paid = await self._repo.sum_payments(purchase_id)
-        # Outstanding is reduced by supplier_repayments(received_amount)
-        # as well — for an AP context the supplier may have given us
-        # goods back via supplier_repayments(received), so we deduct.
-        srec_received = await self._repo.sum_supplier_repayments_for_purchase(
+        total_returned = await self._repo.sum_posted_return_value_for_purchase(
             purchase_id
         )
-        max_payable = _q2(max(Decimal("0"), total - existing_paid - srec_received))
+        max_payable = _q2(max(Decimal("0"), total - existing_paid - total_returned))
         if _q2(amount) > max_payable:
             raise AllocationExceedsPayable(
                 "Payment exceeds outstanding payable.",
@@ -1836,6 +1837,29 @@ class PurchaseService:
             # Trigger guards may block if transition not allowed.
             logger.debug("lifecycle_status_returned_blocked", error=str(exc))
 
+        # Phase E §5 step 4 / §14 prerequisite #1: create the SREC obligation row.
+        # SREC_created = max(0, return_value − max(0, total − paid)).
+        # No AP-reduction payment row is inserted here (that is a separate gap).
+        # The obligation is linked back to the originating purchase_return so a
+        # later repayment against THIS return can never mutate another return's
+        # SREC (one obligation row per return, see Phase E Gap #4).
+        purchase_total = await self._purchase_total(purchase_id)
+        purchase_paid = await self._repo.sum_payments(purchase_id)
+        remaining_ap = _q2(max(Decimal("0"), _quant(purchase_total) - _quant(purchase_paid)))
+        srec_created = _q2(max(Decimal("0"), _quant(total_value) - remaining_ap))
+        if srec_created > 0:
+            await self._repo.insert_supplier_repayment(
+                purchase_id=purchase_id,
+                amount=srec_created,
+                received_amount=Decimal("0"),
+                payment_method_id=None,
+                repayment_date=None,
+                reason="purchase_return_credit",
+                refundable_amount_snapshot=srec_created,
+                purchase_return_id=ret_id,
+                created_by=principal_user_id,
+            )
+
         if ctx is not None:
             await write_audit(
                 self._uow,
@@ -1858,7 +1882,9 @@ class PurchaseService:
             "created_at": ret["created_at"],
             "created_by": principal_user_id,
             "updated_at": ret["created_at"],
+            "version": int(ret["version"]) if ret.get("version") else 1,
         }
+        enriched["etag"] = f'"{enriched["version"]}"'
 
         if idempotency_key is not None and idem_rec is not None:
             store = IdempotencyStore(self._uow)
@@ -1924,6 +1950,7 @@ class PurchaseService:
             "created_at": ret["created_at"],
             "created_by": int(ret["created_by"]),
             "updated_at": ret.get("created_at") or ret.get("return_date"),
+            "etag": f'"{int(ret["version"])}"',
         }
 
     # ========================================================================
@@ -2251,6 +2278,7 @@ class PurchaseService:
             "created_at": refreshed["created_at"],
             "created_by": int(refreshed["created_by"]),
             "updated_at": refreshed.get("created_at") or refreshed.get("return_date"),
+            "etag": f'"{int(refreshed["version"])}"',
             "is_overdue": bool(is_overdue_flag),
         }
 
@@ -2365,9 +2393,22 @@ class PurchaseService:
         ret = await self._repo.get_return_for_update(return_id)
         if ret is None:
             raise NotFound(f"Purchase return {return_id} not found.")
+        # Phase E — SREC guard: a posted return may only be cancelled if the
+        # SREC generated by it has not been partially/fully received.
+        srec = await self._repo.get_srec_for_return(return_id)
+        if srec is not None and _q2(srec["received_amount"]) > 0:
+            raise ReturnCannotBeCancelled(
+                "Purchase return cannot be cancelled: its associated supplier "
+                "repayment obligation has already been (partially) received."
+            )
+        if srec is not None:
+            # Unreceived SREC — void the obligation so SREC is removed
+            # from the outstanding balance (idempotent: 0 rows if already
+            # voided or no obligation row).
+            await self._repo.reverse_unreceived_srec_for_return(return_id)
         if ret["lifecycle_status"] == "cancelled":
             raise Conflict("Purchase return is already cancelled.")
-        # Phase-E finalization gate: cancellation is blocked once the courier
+        # Phase E finalization gate: cancellation is blocked once the courier
         # handoff has been confirmed. finalized_at is a historical fact and
         # is NOT cleared by cancellation.
         if ret["finalized_at"] is not None:

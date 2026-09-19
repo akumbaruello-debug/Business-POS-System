@@ -72,9 +72,18 @@ class SupplierRepaymentService:
         return {
             "id": int(r["id"]),
             "purchase_id": int(r["purchase_id"]),
+            "purchase_return_id": (
+                int(r["purchase_return_id"])
+                if r.get("purchase_return_id") is not None
+                else None
+            ),
             "amount": float(r["amount"]),
             "received_amount": float(r["received_amount"]),
-            "payment_method_id": int(r["payment_method_id"]),
+            "payment_method_id": (
+                int(r["payment_method_id"])
+                if r.get("payment_method_id") is not None
+                else None
+            ),
             "repayment_date": r["repayment_date"],
             "reason": r.get("reason"),
             "refundable_amount_snapshot": float(r["refundable_amount_snapshot"]),
@@ -125,6 +134,7 @@ class SupplierRepaymentService:
         *,
         principal_user_id: int,
         purchase_id: int,
+        purchase_return_id: int | None = None,
         amount: Decimal,
         payment_method_id: int,
         repayment_date: datetime | None,
@@ -164,17 +174,17 @@ class SupplierRepaymentService:
         check_if_match(provided=if_match, current_etag=current_etag)
 
         # Compute outstanding (Σ lines + shipping - Σ payments) and
-        # SREC = outstanding - Σ supplier_repayments(received_amount).
+        # SREC per DB-Design §8.4: SREC = Σ amount − Σ received_amount.
         line_total = await self._repo.sum_line_total(purchase_id)
         ship = await self._repo.get_shipping(purchase_id)
         ship_amount = _quant(ship["amount"]) if ship else Decimal("0")
         total = _q2(line_total + ship_amount)
         paid = await self._repo.sum_payments(purchase_id)
         outstanding = _q2(max(Decimal("0"), total - paid))
-        srec_received = await self._repo.sum_supplier_repayments_for_purchase(
-            purchase_id
+        srec_amount, srec_received = (
+            await self._repo.supplier_repayment_totals(purchase_id)
         )
-        srec = _q2(max(Decimal("0"), outstanding - srec_received))
+        srec = _q2(max(Decimal("0"), srec_amount - srec_received))
 
         if amount > srec:
             raise RepaymentExceedsSREC(
@@ -206,32 +216,48 @@ class SupplierRepaymentService:
                     },
                 )
 
-        # amount = total obligation (Σ payments for this purchase at the
-        # time of recording), received_amount = this cash receipt.
-        # Per DB §11.2 schema comment, amount is the total obligation;
-        # since the model is simplified to one row per purchase, we set
-        # amount = outstanding (lines + shipping - payments) and
-        # received_amount increments by this receipt. We do that with a
-        # bounded UPDATE so concurrent inserts cannot push past amount.
-        # NOTE: For an unpaid / pure-credit purchase there are no
-        # purchase_payments rows, so Σ purchase_payments = 0 would
-        # incorrectly mask the cumulative cap. `outstanding` is already
-        # computed above as (lines + shipping - payments) and is the
-        # correct obligation for the SREC cumulative bound.
-        total_obligation = outstanding
-        new_received = _q2(srec_received + amount)
-        if new_received > total_obligation:
-            new_received = total_obligation
+        # Gap #4: locate a return‑created SREC obligation row
+        # (reason = 'purchase_return_credit') and accumulate received_amount
+        # on it atomically instead of inserting a new obligation-bearing row.
+        srec_row = await self._repo.find_supplier_repayment_for_return(
+            purchase_id, purchase_return_id=purchase_return_id
+        )
+        if srec_row is None:
+            # No return credit exists — no SREC obligation to repay.
+            raise RepaymentExceedsSREC(
+                "Supplier repayment exceeds current SREC (no return credit).",
+                details={
+                    "purchase_id": purchase_id,
+                    "purchase_return_id": purchase_return_id,
+                },
+            )
 
-        repayment = await self._repo.insert_supplier_repayment(
-            purchase_id=purchase_id,
-            amount=total_obligation if total_obligation > 0 else _q2(amount),
-            received_amount=new_received,
+        # In addition to the purchase-level SREC check, enforce the specific
+        # return obligation ceiling when a specific return is targeted or found.
+        row_amount = Decimal(str(srec_row["amount"]))
+        row_received = Decimal(str(srec_row["received_amount"]))
+        row_remaining = _q2(max(Decimal("0"), row_amount - row_received))
+        if amount > row_remaining:
+            raise RepaymentExceedsSREC(
+                "Supplier repayment exceeds obligation ceiling for this return.",
+                details={
+                    "requested": float(amount),
+                    "remaining": float(row_remaining),
+                    "obligation_amount": float(row_amount),
+                    "received_amount": float(row_received),
+                },
+            )
+
+        # The caller already enforced ``amount <= srec`` (remaining SREC),
+        # so this increment keeps received_amount <= amount (DB CHECK).
+        # ``payment_method_id`` is forwarded so the obligation row records
+        # the actual settlement instrument when cash is received (Phase E /
+        # m6 corrected: an unpaid SREC obligation has payment_method_id
+        # NULL, and the row is updated on the first repayment).
+        repayment = await self._repo.update_supplier_repayment_received(
+            repayment_id=int(srec_row["id"]),
+            received_increment=_q2(amount),
             payment_method_id=payment_method_id,
-            repayment_date=repayment_date,
-            reason=reason,
-            refundable_amount_snapshot=srec,
-            created_by=principal_user_id,
         )
 
         if repayment is not None and bool(row["is_cash"]):
