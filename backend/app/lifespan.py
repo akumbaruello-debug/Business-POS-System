@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -43,7 +44,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # In test mode the worker is not started — tests drive
     # notifications explicitly via the service layer or by
     # issuing NOTIFY on the test connection.
-    if not settings.is_test:
+    # On Vercel's serverless runtime (VERCEL is set by the platform)
+    # we must not launch a long-lived background task: serverless
+    # functions freeze after ~60 s and cannot host asyncio listeners.
+    if not settings.is_test and not os.environ.get("VERCEL"):
         await start_stock_change_worker()
 
     try:
