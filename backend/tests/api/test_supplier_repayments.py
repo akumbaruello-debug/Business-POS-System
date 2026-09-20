@@ -772,6 +772,121 @@ async def test_supplier_repayment_auth(
 
 
 # ---------------------------------------------------------------------------
+# Phase 3 gap P3-2/P3-3: filter[supplier_id] on GET /supplier-repayments
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_supplier_repayment_filter_supplier_id_isolation(
+    app: AsyncClient,
+    owner_user: dict[str, Any],
+) -> None:
+    """``filter[supplier_id]`` must return only repayments for that supplier's
+    purchases, isolating across suppliers sharing the same table.
+
+    Seeds two suppliers (contacts), one purchase per supplier, one repayment
+    per purchase. Asserts that filtering by supplier_id returns only the
+    matching repayment.
+    """
+    h = await _owner_headers(app, owner_user)
+
+    # Seed two suppliers (unique names to avoid conflict with existing seed data)
+    for sid, name in [(1, "Test Supplier"), (2, "Other Supplier")]:
+        res = await app.post(
+            "/api/v1/contacts",
+            headers={**h, "Idempotency-Key": _idem()},
+            json={"type": "supplier", "name": name},
+        )
+        # 409 = already exists (seeded by other tests); acceptable
+        assert res.status_code in (200, 201, 409), res.text
+
+    # Purchase for supplier 1
+    r1 = await app.post(
+        "/api/v1/purchases",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"supplier_id": 1},
+    )
+    pid1 = r1.json()["id"]
+    await app.post(
+        f"/api/v1/purchases/{pid1}/lines",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"product_id": 1, "quantity": "10.000", "unit_price": "10.00"},
+    )
+    await app.post(
+        f"/api/v1/purchases/{pid1}/post",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={},
+    )
+
+    # Purchase for supplier 2
+    r2 = await app.post(
+        "/api/v1/purchases",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"supplier_id": 2},
+    )
+    pid2 = r2.json()["id"]
+    await app.post(
+        f"/api/v1/purchases/{pid2}/lines",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"product_id": 1, "quantity": "10.000", "unit_price": "10.00"},
+    )
+    await app.post(
+        f"/api/v1/purchases/{pid2}/post",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={},
+    )
+
+    # Seed SREC obligation for each purchase
+    await _seed_srec_row(pid1, amount=Decimal("100.00"), received_amount=Decimal("0.00"))
+    await _seed_srec_row(pid2, amount=Decimal("100.00"), received_amount=Decimal("0.00"))
+
+    # Create one repayment on each purchase
+    res_rep1 = await app.post(
+        "/api/v1/supplier-repayments",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"purchase_id": pid1, "payment_method_id": 2, "amount": "10.00"},
+    )
+    assert res_rep1.status_code == 201, res_rep1.text
+    rid1 = res_rep1.json()["id"]
+
+    res_rep2 = await app.post(
+        "/api/v1/supplier-repayments",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"purchase_id": pid2, "payment_method_id": 2, "amount": "10.00"},
+    )
+    assert res_rep2.status_code == 201, res_rep2.text
+    rid2 = res_rep2.json()["id"]
+
+    # Without filter: should see both
+    res_all = await app.get("/api/v1/supplier-repayments", headers=h)
+    assert res_all.status_code == 200
+    all_items = res_all.json()["data"]
+    assert any(x["id"] == rid1 for x in all_items)
+    assert any(x["id"] == rid2 for x in all_items)
+
+    # filter[supplier_id]=1 → only rid1
+    res_f1 = await app.get(
+        "/api/v1/supplier-repayments",
+        headers=h,
+        params={"filter[supplier_id]": 1},
+    )
+    assert res_f1.status_code == 200
+    items_1 = res_f1.json()["data"]
+    assert any(x["id"] == rid1 for x in items_1), f"expected rid1={rid1} in {items_1}"
+    assert not any(x["id"] == rid2 for x in items_1), f"rid2={rid2} leaked into supplier 1 filter"
+
+    # filter[supplier_id]=2 → only rid2
+    res_f2 = await app.get(
+        "/api/v1/supplier-repayments",
+        headers=h,
+        params={"filter[supplier_id]": 2},
+    )
+    assert res_f2.status_code == 200
+    items_2 = res_f2.json()["data"]
+    assert any(x["id"] == rid2 for x in items_2), f"expected rid2={rid2} in {items_2}"
+    assert not any(x["id"] == rid1 for x in items_2), f"rid1={rid1} leaked into supplier 2 filter"
+
+
+# ---------------------------------------------------------------------------
 # Phase E §14 prerequisite #1: create_return must create the SREC obligation row
 # ---------------------------------------------------------------------------
 
