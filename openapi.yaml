@@ -4014,6 +4014,11 @@ paths:
         required: false
         schema:
           type: integer
+      - name: filter[supplier_id]
+        in: query
+        required: false
+        schema:
+          type: integer
       responses:
         '200':
           description: OK

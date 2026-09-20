@@ -78,9 +78,13 @@ _REFUND_COLS = (
 )
 
 _SUPPLIER_REPAYMENT_COLS = (
-    "id, purchase_id, amount, received_amount, payment_method_id, "
-    "repayment_date, reason, refundable_amount_snapshot, purchase_return_id, "
-    "created_at, created_by"
+    "supplier_repayments.id, supplier_repayments.purchase_id, "
+    "supplier_repayments.amount, supplier_repayments.received_amount, "
+    "supplier_repayments.payment_method_id, "
+    "supplier_repayments.repayment_date, supplier_repayments.reason, "
+    "supplier_repayments.refundable_amount_snapshot, "
+    "supplier_repayments.purchase_return_id, "
+    "supplier_repayments.created_at, supplier_repayments.created_by"
 )
 
 
