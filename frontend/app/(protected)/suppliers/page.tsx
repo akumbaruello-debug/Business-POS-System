@@ -22,21 +22,18 @@ import {
 import { api } from '@/lib/api-client'
 import type { Contact, ContactListResponse, Pagination } from '@/lib/contact-types'
 import { Button } from '@/components/ui/button'
+import { useSession } from '@/lib/session'
 
 // ---------------------------------------------------------------------------
-// Backend contract notes (from openapi.yaml):
+// Backend contract notes (from openapi.yaml §Contacts):
 //   GET /contacts?filter[type]=supplier&page=&per_page=&q=&sort=&filter[is_active]=
-//     → { data: Contact[], pagination: Pagination }   (capability contact.view)
-//   POST /contacts/{id}/deactivate   (Idempotency-Key, capability contact.manage)
-//   PATCH /contacts/{id}             (If-Match, capability contact.edit)
-//   POST /contacts                   (Idempotency-Key, capability contact.create)
-//   DELETE /contacts/{id}            (Idempotency-Key, capability contact.manage)
-// Suppliers share the Contact model with customers — type field distinguishes them.
-// Backend Contact has NO contact-person / city / terms / purchase-aggregate fields;
-// V0's purchase history and sub-type columns are omitted (not fabricated).
-// Import / Export have no backend endpoints → marked not-yet-wired.
-// ponytail: when supplier-purchase-aggregate endpoints land, surface per-supplier
-// orders/total columns again. Add when that API exists.
+//     → { data: Contact[], pagination }  (capability contact.view)
+//   POST /contacts                    (Idempotency-Key, capability contact.create)
+//   PATCH /contacts/{id}            (If-Match required, capability contact.edit)
+//   POST /contacts/{id}/deactivate  (Idempotency-Key, capability contact.manage)
+//   PATCH /contacts/{id} is_active=true reactivates (capability contact.edit)
+// Contact is shared with customers — type field distinguishes them.
+// Reactivate = PATCH with { is_active: true } + If-Match (ETag from list row).
 // ---------------------------------------------------------------------------
 
 const DEFAULT_PAGINATION: Pagination = {
@@ -51,7 +48,20 @@ function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString('id-ID', { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
 
+/** Compute the If-Match header value from a contact's updated_at.
+ * Matches backend format_etag() — quoted ISO-8601. */
+function etagHeader(c: Contact): Record<string, string> {
+  return { 'If-Match': `"${c.updated_at}"` }
+}
+
 export default function SuppliersPage() {
+  const user = useSession()
+  const canManage = user.capabilities.includes('contact.manage')
+  const canEdit = user.capabilities.includes('contact.edit')
+  const canCreate = user.capabilities.includes('contact.create')
+  // Reactivate uses contact.edit (PATCH). Deactivate requires contact.manage.
+  const canDeactivate = canManage
+
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [suppliers, setSuppliers] = useState<Contact[]>([])
@@ -69,7 +79,7 @@ export default function SuppliersPage() {
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [menuOpen, setMenuOpen] = useState<number | null>(null)
   const [notice, setNotice] = useState('')
-  const [dialog, setDialog] = useState<'view' | 'confirm-deactivate' | null>(null)
+  const [dialog, setDialog] = useState<'view' | 'add' | 'edit' | 'reactivate' | 'confirm-deactivate' | null>(null)
   const [activeSupplier, setActiveSupplier] = useState<Contact | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
 
@@ -92,9 +102,10 @@ export default function SuppliersPage() {
       if (statusFilter === 'active') params['filter[is_active]'] = 'true'
       if (statusFilter === 'inactive') params['filter[is_active]'] = 'false'
 
-      const res = await api.get<ContactListResponse>('/contacts', { params })
-      setSuppliers(res.data)
-      setPagination(res.pagination)
+      const res = await api.headers.get<{ data: Contact[]; pagination: Pagination }>('/contacts', { params })
+      const body = res.data
+      setSuppliers(body.data)
+      setPagination(body.pagination)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load suppliers')
     } finally {
@@ -139,6 +150,102 @@ export default function SuppliersPage() {
   const activeCount = suppliers.filter((s) => s.is_active).length
   const inactiveCount = suppliers.length - activeCount
 
+  // --- Mutations ------------------------------------------------------------
+
+  async function handleCreate(form: {
+    name: string
+    phone: string
+    email: string
+    address: string
+    notes: string
+  }) {
+    setActionLoading(true)
+    try {
+      await api.post<Contact>('/contacts', {
+        type: 'supplier',
+        name: form.name.trim(),
+        phone: form.phone.trim() || undefined,
+        email: form.email.trim() || undefined,
+        address: form.address.trim() || undefined,
+        notes: form.notes.trim() || undefined,
+      }, {
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
+      })
+      toast('Supplier created')
+      setDialog(null)
+      fetchSuppliers()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Create failed'
+      toast(msg)
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  async function handleEdit(form: {
+    name: string
+    phone: string
+    email: string
+    address: string
+    notes: string
+  }) {
+    if (!activeSupplier) return
+    setActionLoading(true)
+    try {
+      await api.patch<Contact>(`/contacts/${activeSupplier.id}`, {
+        name: form.name.trim() || undefined,
+        phone: form.phone.trim() || undefined,
+        email: form.email.trim() || undefined,
+        address: form.address.trim() || undefined,
+        notes: form.notes.trim() || undefined,
+      }, {
+        headers: {
+          'Idempotency-Key': crypto.randomUUID(),
+          ...etagHeader(activeSupplier),
+        },
+      })
+      toast('Supplier updated')
+      setDialog(null)
+      setActiveSupplier(null)
+      fetchSuppliers()
+    } catch (err: any) {
+      if (err.code === 'version_mismatch') {
+        toast('Supplier was modified by another user. Please refresh.')
+      } else {
+        toast(err instanceof Error ? err.message : 'Update failed')
+      }
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  async function handleReactivate() {
+    if (!activeSupplier) return
+    setActionLoading(true)
+    try {
+      await api.patch<Contact>(`/contacts/${activeSupplier.id}`, {
+        is_active: true,
+      }, {
+        headers: {
+          'Idempotency-Key': crypto.randomUUID(),
+          ...etagHeader(activeSupplier),
+        },
+      })
+      toast(`${activeSupplier.name} reactivated`)
+      setDialog(null)
+      setActiveSupplier(null)
+      fetchSuppliers()
+    } catch (err: any) {
+      if (err.code === 'version_mismatch') {
+        toast('Supplier was modified by another user. Please refresh and try again.')
+      } else {
+        toast(err instanceof Error ? err.message : 'Reactivate failed')
+      }
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   const handleDeactivate = async () => {
     if (!activeSupplier) return
     setActionLoading(true)
@@ -168,6 +275,18 @@ export default function SuppliersPage() {
     setActiveSupplier(s)
     setMenuOpen(null)
     setDialog('confirm-deactivate')
+  }
+
+  const openEdit = (s: Contact) => {
+    setActiveSupplier(s)
+    setMenuOpen(null)
+    setDialog('edit')
+  }
+
+  const openReactivate = (s: Contact) => {
+    setActiveSupplier(s)
+    setMenuOpen(null)
+    setDialog('reactivate')
   }
 
   const sortedRows = useMemo(() => {
@@ -218,7 +337,9 @@ export default function SuppliersPage() {
         <div className="heading-actions">
           <Button variant="outline" onClick={() => toast('Import not yet wired — no backend endpoint')}><Upload size={14} /> Import</Button>
           <Button variant="outline" onClick={() => toast('Export not yet wired — no backend endpoint')}><Download size={14} /> Export</Button>
-          <Button><Plus size={14} /> Add supplier</Button>
+          {canCreate && (
+            <Button onClick={() => { setActiveSupplier(null); setDialog('add') }}><Plus size={14} /> Add supplier</Button>
+          )}
         </div>
       </div>
 
@@ -305,7 +426,7 @@ export default function SuppliersPage() {
             <p>Try adjusting your search or filters.</p>
             <div style={{ display: 'flex', gap: 8 }}>
               <Button variant="outline" onClick={() => { setQuery(''); setStatusFilter('all'); setPage(1) }}>Clear filters</Button>
-              <Button>Add supplier</Button>
+              {canCreate && <Button onClick={() => { setActiveSupplier(null); setDialog('add') }}>Add supplier</Button>}
             </div>
           </div>
         ) : (
@@ -356,10 +477,17 @@ export default function SuppliersPage() {
                         {menuOpen === s.id && (
                           <div style={{ position: 'absolute', right: 14, top: 40, zIndex: 30, width: 200, background: 'white', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 8px 24px rgba(0,0,0,.1)', padding: 4 }}>
                             <button onClick={() => openView(s)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><Eye size={14} /> View supplier</button>
-                            <button onClick={() => { setMenuOpen(null); toast('Edit not yet wired in this UI') }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><Pencil size={14} /> Edit supplier</button>
-                            <button onClick={() => toast('Change status not yet wired')} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><UserCheck size={14} /> Change status</button>
-                            {s.is_active && (
-                              <button onClick={() => openDeactivate(s)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#dc2626' }}><UserCheck size={14} /> Deactivate</button>
+                            {canEdit && (
+                              <button onClick={() => openEdit(s)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><Pencil size={14} /> Edit supplier</button>
+                            )}
+                            {s.is_active ? (
+                              canDeactivate && (
+                                <button onClick={() => openDeactivate(s)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#dc2626' }}><UserCheck size={14} /> Deactivate</button>
+                              )
+                            ) : (
+                              canEdit && (
+                                <button onClick={() => openReactivate(s)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#059669' }}><UserCheck size={14} /> Reactivate</button>
+                              )
                             )}
                           </div>
                         )}
@@ -379,9 +507,14 @@ export default function SuppliersPage() {
                       <button onClick={() => openView(s)} style={{ background: 'none', border: 0, cursor: 'pointer', fontWeight: 600, color: 'var(--primary)', padding: 0 }}>{s.name}</button>
                       <div style={{ fontSize: 11, color: '#718198' }}>{s.type}</div>
                     </div>
-                    <span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600, background: s.is_active ? '#ecfdf5' : '#f1f5f9', color: s.is_active ? '#059669' : '#64748b' }}>
-                      {statusLabel(s)}
-                    </span>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600, background: s.is_active ? '#ecfdf5' : '#f1f5f9', color: s.is_active ? '#059669' : '#64748b' }}>
+                        {statusLabel(s)}
+                      </span>
+                      <button onClick={() => setMenuOpen(menuOpen === s.id ? null : s.id)} style={{ background: 'none', border: 0, cursor: 'pointer', padding: 2, borderRadius: 4, color: '#6b7a90' }} aria-label={`Actions for ${s.name}`}>
+                        <MoreHorizontal size={16} />
+                      </button>
+                    </div>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 12, fontSize: 13 }}>
                     <div><span style={{ fontSize: 11, color: '#718198' }}>Phone</span><div>{s.phone ?? '—'}</div></div>
@@ -414,6 +547,35 @@ export default function SuppliersPage() {
       {notice && (
         <div role="status" style={{ position: 'fixed', bottom: 20, right: 20, zIndex: 50, display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderRadius: 10, background: 'var(--foreground)', color: 'white', fontSize: 13, boxShadow: '0 8px 24px rgba(0,0,0,.15)' }}>
           <Check size={14} />{notice}
+        </div>
+      )}
+
+      {/* Add / Edit Supplier Dialog */}
+      {(dialog === 'add' || (dialog === 'edit' && activeSupplier)) && (
+        <SupplierFormDialog
+          mode={dialog === 'add' ? 'add' : 'edit'}
+          supplier={activeSupplier}
+          onClose={() => { setDialog(null); setActiveSupplier(null) }}
+          onSubmit={dialog === 'add' ? handleCreate : handleEdit}
+          loading={actionLoading}
+        />
+      )}
+
+      {/* Reactivate confirmation */}
+      {dialog === 'reactivate' && activeSupplier && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,.35)', padding: 16 }} onMouseDown={(e) => { if (e.target === e.currentTarget) { setDialog(null); setActiveSupplier(null) } }}>
+          <div style={{ width: '100%', maxWidth: 420, background: 'white', borderRadius: 14, border: '1px solid var(--border)', padding: 24, boxShadow: '0 20px 48px rgba(0,0,0,.12)' }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 8px' }}>Reactivate supplier?</h2>
+            <p style={{ fontSize: 13, color: '#718198', margin: '0 0 20px' }}>
+              <strong>{activeSupplier.name}</strong> will be marked active again. This will restore full access to the supplier in purchasing workflows.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <Button variant="outline" onClick={() => { setDialog(null); setActiveSupplier(null) }} disabled={actionLoading}>Cancel</Button>
+              <Button onClick={handleReactivate} disabled={actionLoading}>
+                {actionLoading ? 'Reactivating...' : 'Reactivate'}
+              </Button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -453,7 +615,9 @@ export default function SuppliersPage() {
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
               <Button variant="outline" onClick={() => { setDialog(null); setActiveSupplier(null) }}>Close</Button>
-              <Button onClick={() => toast('Edit not yet wired in this UI')}>Edit supplier</Button>
+              {canEdit && activeSupplier.is_active && (
+                <Button onClick={() => { setDialog('edit') }}>Edit supplier</Button>
+              )}
             </div>
           </div>
         </div>
@@ -484,6 +648,145 @@ export default function SuppliersPage() {
           table { display:none; }
         }
       `}</style>
+    </div>
+  )
+}
+
+// --- SupplierFormDialog component -------------------------------------------
+
+function SupplierFormDialog({
+  mode,
+  supplier,
+  onClose,
+  onSubmit,
+  loading,
+}: {
+  mode: 'add' | 'edit'
+  supplier: Contact | null
+  onClose: () => void
+  onSubmit: (form: { name: string; phone: string; email: string; address: string; notes: string }) => void
+  loading: boolean
+}) {
+  const [name, setName] = useState(supplier?.name ?? '')
+  const [phone, setPhone] = useState(supplier?.phone ?? '')
+  const [email, setEmail] = useState(supplier?.email ?? '')
+  const [address, setAddress] = useState(supplier?.address ?? '')
+  const [notes, setNotes] = useState(supplier?.notes ?? '')
+  const [errors, setErrors] = useState<Record<string, string>>({})
+
+  const validate = () => {
+    const next: Record<string, string> = {}
+    if (!name.trim()) next.name = 'Name is required'
+    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) next.email = 'Enter a valid email address'
+    setErrors(next)
+    return Object.keys(next).length === 0
+  }
+
+  const handleSubmit = () => {
+    if (!validate()) return
+    onSubmit({
+      name,
+      phone: phone || '',
+      email: email || '',
+      address: address || '',
+      notes: notes || '',
+    })
+  }
+
+  const labelStyle: React.CSSProperties = {
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    color: '#8a98ab',
+    marginBottom: 4,
+  }
+  const fieldStyle: React.CSSProperties = {
+    height: 34,
+    borderRadius: 8,
+    border: '1px solid var(--border)',
+    background: 'white',
+    padding: '0 10px',
+    fontSize: 13,
+    width: '100%',
+  }
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 40,
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'center',
+        background: 'rgba(15,23,42,.35)',
+        padding: 24,
+        overflowY: 'auto',
+      }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div style={{ width: '100%', maxWidth: 560, background: 'white', borderRadius: 14, border: '1px solid var(--border)', padding: 24, boxShadow: '0 20px 48px rgba(0,0,0,.12)', margin: '24px 0' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+          <div>
+            <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: 'var(--foreground)' }}>
+              {mode === 'add' ? 'Add supplier' : 'Edit supplier'}
+            </h2>
+            <p style={{ fontSize: 13, color: '#718198', marginTop: 4 }}>
+              {mode === 'add' ? 'Create a new supplier record.' : 'Update supplier contact information.'}
+            </p>
+          </div>
+          <button onClick={onClose} aria-label="Close" style={{ background: 'none', border: 0, cursor: 'pointer', padding: 4 }}><X size={18} /></button>
+        </div>
+        <div style={{ display: 'grid', gap: 16 }}>
+          <div>
+            <label style={labelStyle}>Name *</label>
+            <input
+              value={name}
+              onChange={(e) => { setName(e.target.value); setErrors({ ...errors, name: '' }) }}
+              placeholder="Supplier name"
+              style={{ ...fieldStyle, ...(errors.name ? { borderColor: '#dc2626' } : {}) }}
+              aria-label="Supplier name"
+            />
+            {errors.name && <div style={{ fontSize: 11, color: '#dc2626', marginTop: 2 }}>{errors.name}</div>}
+          </div>
+          <div>
+            <label style={labelStyle}>Phone</label>
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+62 8xx-xxxx-xxxx" style={fieldStyle} aria-label="Phone" />
+          </div>
+          <div>
+            <label style={labelStyle}>Email</label>
+            <input
+              value={email}
+              onChange={(e) => { setEmail(e.target.value); setErrors({ ...errors, email: '' }) }}
+              placeholder="supplier@example.com"
+              style={{ ...fieldStyle, ...(errors.email ? { borderColor: '#dc2626' } : {}) }}
+              aria-label="Email"
+            />
+            {errors.email && <div style={{ fontSize: 11, color: '#dc2626', marginTop: 2 }}>{errors.email}</div>}
+          </div>
+          <div>
+            <label style={labelStyle}>Address</label>
+            <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Street address" style={fieldStyle} aria-label="Address" />
+          </div>
+          <div>
+            <label style={labelStyle}>Notes</label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Additional notes..."
+              style={{ ...fieldStyle, minHeight: 80, resize: 'vertical', padding: '8px 10px' }}
+              aria-label="Notes"
+            />
+          </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
+          <Button variant="outline" onClick={onClose} disabled={loading}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={loading}>
+            {loading ? (mode === 'add' ? 'Creating...' : 'Saving...') : mode === 'add' ? 'Add supplier' : 'Save changes'}
+          </Button>
+        </div>
+      </div>
     </div>
   )
 }
