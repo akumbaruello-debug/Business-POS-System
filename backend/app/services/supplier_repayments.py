@@ -104,6 +104,7 @@ class SupplierRepaymentService:
         q: str | None = None,
         purchase_id: int | None = None,
         payment_method_id: int | None = None,
+        supplier_id: int | None = None,
         from_iso: str | None = None,
         to_iso: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
@@ -114,6 +115,7 @@ class SupplierRepaymentService:
             q=q,
             purchase_id=purchase_id,
             payment_method_id=payment_method_id,
+            supplier_id=supplier_id,
             from_iso=from_iso,
             to_iso=to_iso,
         )

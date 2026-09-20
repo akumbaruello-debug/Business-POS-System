@@ -82,6 +82,7 @@ async def list_supplier_repayments(
     to_iso: str | None = Query(default=None, alias="to"),
     purchase_id: int | None = Query(default=None),
     payment_method_id: int | None = Query(default=None),
+    supplier_id: int | None = Query(default=None, alias="filter[supplier_id]"),
 ) -> MetaEnvelope[dict[str, Any]]:
     async with UnitOfWork() as uow:
         svc = SupplierRepaymentService(uow)
@@ -92,6 +93,7 @@ async def list_supplier_repayments(
             q=q,
             purchase_id=purchase_id,
             payment_method_id=payment_method_id,
+            supplier_id=supplier_id,
             from_iso=from_iso,
             to_iso=to_iso,
         )

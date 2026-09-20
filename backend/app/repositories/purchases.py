@@ -1164,6 +1164,7 @@ class PurchaseRepository:
         q: str | None = None,
         purchase_id: int | None = None,
         payment_method_id: int | None = None,
+        supplier_id: int | None = None,
         from_iso: str | None = None,
         to_iso: str | None = None,
     ) -> tuple[Sequence[dict[str, Any]], int]:
@@ -1184,11 +1185,19 @@ class PurchaseRepository:
         if to_iso is not None:
             clauses.append("repayment_date <= :to_iso")
             params["to_iso"] = to_iso
+        if supplier_id is not None:
+            clauses.append("p.supplier_id = :supplier_id")
+            params["supplier_id"] = supplier_id
         order = _SUPPLIER_REPAYMENT_SORT_MAP.get(sort, "id")
         where = "WHERE " + " AND ".join(clauses) if clauses else ""
+        join = (
+            "JOIN purchases p ON p.id = supplier_repayments.purchase_id"
+            if supplier_id is not None
+            else ""
+        )
         total = int(
             await self._uow.first_scalar(
-                f"SELECT COUNT(*) FROM supplier_repayments {where}",
+                f"SELECT COUNT(*) FROM supplier_repayments {join} {where}",
                 params,
             )
             or 0
@@ -1196,6 +1205,7 @@ class PurchaseRepository:
         rows = await self._uow.fetch_all(
             f"""
             SELECT {_SUPPLIER_REPAYMENT_COLS} FROM supplier_repayments
+            {join}
             {where}
             ORDER BY {order} DESC
             LIMIT :limit OFFSET :offset
