@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import {
   AlertCircle,
   Building2,
@@ -456,10 +457,10 @@ export default function SuppliersPage() {
                         <input type="checkbox" aria-label={`Select ${s.name}`} checked={selected.has(s.id)} onChange={() => toggleSelect(s.id)} />
                       </td>
                       <td style={{ padding: '12px 14px' }}>
-                        <button onClick={() => openView(s)} style={{ background: 'none', border: 0, cursor: 'pointer', textAlign: 'left' }}>
+                        <Link href={`/suppliers/${s.id}`} style={{ fontWeight: 600, color: 'var(--primary)', textDecoration: 'none', textAlign: 'left', display: 'block' }}>
                           <div style={{ fontWeight: 600, color: 'var(--primary)' }}>{s.name}</div>
                           {s.address && <div style={{ fontSize: 11, color: '#718198', marginTop: 2 }}>{s.address}</div>}
-                        </button>
+                        </Link>
                       </td>
                       <td style={{ padding: '12px 14px' }}>{s.phone ?? '—'}</td>
                       <td style={{ padding: '12px 14px' }}>{s.email ?? '—'}</td>
@@ -504,7 +505,7 @@ export default function SuppliersPage() {
                 <article key={s.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 14 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
-                      <button onClick={() => openView(s)} style={{ background: 'none', border: 0, cursor: 'pointer', fontWeight: 600, color: 'var(--primary)', padding: 0 }}>{s.name}</button>
+                      <Link href={`/suppliers/${s.id}`} style={{ fontWeight: 600, color: 'var(--primary)', textDecoration: 'none', padding: 0 }}>{s.name}</Link>
                       <div style={{ fontSize: 11, color: '#718198' }}>{s.type}</div>
                     </div>
                     <div style={{ display: 'flex', gap: 4 }}>
