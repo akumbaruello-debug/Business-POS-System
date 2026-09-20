@@ -1,0 +1,3 @@
+# Keep local scratch dirs out of Vercel uploads (Vercel CLI ignores some
+# .gitignore rules during file upload; these dirs are large local-only state)
+pg-tmp/
