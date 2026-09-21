@@ -317,4 +317,25 @@ async def delete_contact(
     )
 
 
+# ---------------------------------------------------------------------------
+# Customer summary (G1)
+# ---------------------------------------------------------------------------
+@router.get(
+    "/{id}/summary",
+    operation_id="getContactSummary",
+    summary="Per-customer sales summary.",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(RequireView)],
+)
+async def get_contact_summary(
+    id: int,
+    uow: UnitOfWork = Depends(get_uow),
+) -> dict[str, Any]:
+    """Return ``{total_sales, sales_count, receivable}`` for a customer."""
+    svc = ContactService(uow)
+    result = await svc.get_customer_summary(id)
+    await uow.commit()
+    return result
+
+
 __all__ = ["router"]
