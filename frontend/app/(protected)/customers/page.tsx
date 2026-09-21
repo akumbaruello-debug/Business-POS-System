@@ -8,14 +8,11 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsUpDown,
-  Download,
   Eye,
-  FileDown,
   MoreHorizontal,
   Pencil,
   Plus,
   Search,
-  Upload,
   UserCheck,
   Users,
   X,
@@ -351,8 +348,7 @@ export default function CustomersPage() {
           <p>Manage customer relationships and purchase history.</p>
         </div>
         <div className="heading-actions">
-          <Button variant="outline" onClick={() => toast('Import not yet wired — no backend endpoint')}><Upload size={14} /> Import</Button>
-          <Button variant="outline" onClick={() => toast('Export not yet wired — no backend endpoint')}><Download size={14} /> Export</Button>
+
           {canCreate && (
             <Button onClick={openAdd}><Plus size={14} /> Add customer</Button>
           )}
@@ -490,7 +486,7 @@ export default function CustomersPage() {
                             {canEdit && (
                               <button onClick={() => openEdit(c)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><Pencil size={14} /> Edit customer</button>
                             )}
-                            <button onClick={() => toast('Change status not yet wired')} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><UserCheck size={14} /> Change status</button>
+
                             {c.is_active && (
                               <button onClick={() => openDeactivate(c)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#dc2626' }}><UserCheck size={14} /> Deactivate</button>
                             )}
