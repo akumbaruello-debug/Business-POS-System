@@ -29,6 +29,7 @@ import { Button } from '@/components/ui/button'
 //   POST /contacts/{id}/deactivate   (Idempotency-Key, capability contact.manage)
 //   DELETE /contacts/{id}            (Idempotency-Key, capability contact.manage)
 //   PATCH /contacts/{id}             (If-Match, capability contact.edit)
+//   PATCH /contacts/{id} is_active=true reactivates (capability contact.edit)
 //   POST /contacts                   (Idempotency-Key, capability contact.create)
 // The backend models customers + suppliers as a single `contacts` record whose
 // `type` is `customer` | `supplier` | `both`. There is no separate Customer
@@ -85,7 +86,7 @@ export default function CustomersPage() {
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [menuOpen, setMenuOpen] = useState<number | null>(null)
   const [notice, setNotice] = useState('')
-  const [dialog, setDialog] = useState<'view' | 'confirm-deactivate' | 'add' | 'edit' | null>(null)
+  const [dialog, setDialog] = useState<'view' | 'confirm-deactivate' | 'reactivate' | 'add' | 'edit' | null>(null)
   const [activeCustomer, setActiveCustomer] = useState<Contact | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
   const [summary, setSummary] = useState<CustomerSummary | null>(null)
@@ -185,6 +186,33 @@ export default function CustomersPage() {
     }
   }
 
+  const handleReactivate = async () => {
+    if (!activeCustomer) return
+    setActionLoading(true)
+    try {
+      await api.patch<Contact>(`/contacts/${activeCustomer.id}`, {
+        is_active: true,
+      }, {
+        headers: {
+          'Idempotency-Key': crypto.randomUUID(),
+          ...etagHeader(activeCustomer),
+        },
+      })
+      toast(`${activeCustomer.name} reactivated`)
+      setDialog(null)
+      setActiveCustomer(null)
+      fetchCustomers()
+    } catch (err: any) {
+      if (err?.code === 'version_mismatch') {
+        toast('Customer was modified by another user. Please refresh and try again.')
+      } else {
+        toast(err instanceof Error ? err.message : 'Reactivate failed')
+      }
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   const openView = (c: Contact) => {
     setActiveCustomer(c)
     setMenuOpen(null)
@@ -198,6 +226,12 @@ export default function CustomersPage() {
     setActiveCustomer(c)
     setMenuOpen(null)
     setDialog('confirm-deactivate')
+  }
+
+  const openReactivate = (c: Contact) => {
+    setActiveCustomer(c)
+    setMenuOpen(null)
+    setDialog('reactivate')
   }
 
   const openAdd = () => {
@@ -487,8 +521,12 @@ export default function CustomersPage() {
                               <button onClick={() => openEdit(c)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><Pencil size={14} /> Edit customer</button>
                             )}
 
-                            {c.is_active && (
+                            {c.is_active ? (
                               <button onClick={() => openDeactivate(c)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#dc2626' }}><UserCheck size={14} /> Deactivate</button>
+                            ) : (
+                              canEdit && (
+                                <button onClick={() => openReactivate(c)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#059669' }}><UserCheck size={14} /> Reactivate</button>
+                              )
                             )}
                           </div>
                         )}
@@ -623,6 +661,24 @@ export default function CustomersPage() {
               <Button variant="outline" onClick={() => { setDialog(null); setActiveCustomer(null) }} disabled={actionLoading}>Cancel</Button>
               <Button variant="destructive" onClick={handleDeactivate} disabled={actionLoading}>
                 {actionLoading ? 'Deactivating...' : 'Deactivate'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reactivate confirmation dialog */}
+      {dialog === 'reactivate' && activeCustomer && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,.35)', padding: 16 }} onMouseDown={(e) => { if (e.target === e.currentTarget) { setDialog(null); setActiveCustomer(null) } }}>
+          <div style={{ width: '100%', maxWidth: 420, background: 'white', borderRadius: 14, border: '1px solid var(--border)', padding: 24, boxShadow: '0 20px 48px rgba(0,0,0,.12)' }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 8px' }}>Reactivate customer?</h2>
+            <p style={{ fontSize: 13, color: '#718198', margin: '0 0 20px' }}>
+              <strong>{activeCustomer.name}</strong> will be marked active again. Existing transactions and records are preserved.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <Button variant="outline" onClick={() => { setDialog(null); setActiveCustomer(null) }} disabled={actionLoading}>Cancel</Button>
+              <Button onClick={handleReactivate} disabled={actionLoading}>
+                {actionLoading ? 'Reactivating...' : 'Reactivate'}
               </Button>
             </div>
           </div>
