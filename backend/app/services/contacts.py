@@ -240,6 +240,24 @@ class ContactService:
         return result
 
     # ------------------------------------------------------------------
+    # Customer summary (G1)
+    # ------------------------------------------------------------------
+    async def get_customer_summary(self, contact_id: int) -> dict[str, Any]:
+        """Return {total_sales, sales_count, receivable} for a customer.
+
+        Raises NotFound when the contact is missing or is supplier-only.
+        """
+        row = await self._repo.get(contact_id)
+        if row is None:
+            raise NotFound(f"Contact {contact_id} not found.")
+        if row["type"] not in ("customer", "both"):
+            raise NotFound(f"Contact {contact_id} is not a customer.")
+
+        from app.reports.customer_summary_repo import fetch_customer_summary_totals
+
+        return await fetch_customer_summary_totals(self._uow, customer_id=contact_id)
+
+    # ------------------------------------------------------------------
     # Deactivate
     # ------------------------------------------------------------------
     async def deactivate(

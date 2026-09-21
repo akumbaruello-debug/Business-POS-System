@@ -55,6 +55,13 @@ function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString('id-ID', { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
 
+/** GET /contacts/{id}/summary */
+type CustomerSummary = {
+  total_sales: number
+  sales_count: number
+  receivable: number
+}
+
 export default function CustomersPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -76,6 +83,8 @@ export default function CustomersPage() {
   const [dialog, setDialog] = useState<'view' | 'confirm-deactivate' | null>(null)
   const [activeCustomer, setActiveCustomer] = useState<Contact | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
+  const [summary, setSummary] = useState<CustomerSummary | null>(null)
+  const [summaryLoading, setSummaryLoading] = useState(false)
 
   const toast = (msg: string) => {
     setNotice(msg)
@@ -168,12 +177,24 @@ export default function CustomersPage() {
     setActiveCustomer(c)
     setMenuOpen(null)
     setDialog('view')
+    setSummary(null)
+    setSummaryLoading(true)
+    fetchSummary(c.id).finally(() => setSummaryLoading(false))
   }
 
   const openDeactivate = (c: Contact) => {
     setActiveCustomer(c)
     setMenuOpen(null)
     setDialog('confirm-deactivate')
+  }
+
+  const fetchSummary = async (id: number) => {
+    try {
+      const res = await api.get<CustomerSummary>(`/contacts/${id}/summary`)
+      setSummary(res.data)
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed to load summary')
+    }
   }
 
   const sortedRows = useMemo(() => {
@@ -253,14 +274,6 @@ export default function CustomersPage() {
           </div>
           <div className="metric-value">{loading ? '—' : inactiveCount}</div>
           <div className="metric-change positive"><span className="change-note">On this page</span></div>
-        </article>
-        <article className="metric-card">
-          <div className="metric-top">
-            <span className="metric-label">Lifetime value</span>
-            <span className="metric-icon"><Eye size={18} /></span>
-          </div>
-          <div className="metric-value">{loading ? '—' : '—'}</div>
-          <div className="metric-change positive"><span className="change-note">Not yet tracked</span></div>
         </article>
       </section>
 
@@ -456,6 +469,27 @@ export default function CustomersPage() {
                   <div style={{ fontSize: 13 }}>{activeCustomer.notes}</div>
                 </div>
               )}
+            </div>
+            {/* Customer summary metrics (G1) */}
+            <div style={{ marginTop: 20 }}>
+              {summaryLoading ? (
+                <div>Loading summary…</div>
+              ) : summary ? (
+                <div style={{ display: 'grid', gap: 12, gridTemplateColumns: '1fr 1fr 1fr' }}>
+                  <div style={{ background: '#f8fafc', borderRadius: 8, padding: 12 }}>
+                    <div style={{ fontSize: 11, color: '#718198', marginBottom: 4 }}>Total sales</div>
+                    <div style={{ fontSize: 14, fontWeight: 500 }}>{formatIDR(summary.total_sales)}</div>
+                  </div>
+                  <div style={{ background: '#f8fafc', borderRadius: 8, padding: 12 }}>
+                    <div style={{ fontSize: 11, color: '#718198', marginBottom: 4 }}>Receivable</div>
+                    <div style={{ fontSize: 14, fontWeight: 500 }}>{formatIDR(summary.receivable)}</div>
+                  </div>
+                  <div style={{ background: '#f8fafc', borderRadius: 8, padding: 12 }}>
+                    <div style={{ fontSize: 11, color: '#718198', marginBottom: 4 }}>Sales count</div>
+                    <div style={{ fontSize: 14, fontWeight: 500 }}>{summary.sales_count}</div>
+                  </div>
+                </div>
+              ) : null}
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
               <Button variant="outline" onClick={() => { setDialog(null); setActiveCustomer(null) }}>Close</Button>
