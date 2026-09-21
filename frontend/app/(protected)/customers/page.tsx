@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSession } from '@/lib/session'
 import {
   AlertCircle,
   Check,
@@ -55,6 +56,13 @@ function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString('id-ID', { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
 
+/** Compute the If-Match header value from a contact's updated_at.
+ * Matches backend format_etag() — quoted ISO-8601. */
+function etagHeader(c: Contact): Record<string, string> {
+  return { 'If-Match': `"${c.updated_at}"` }
+}
+
+
 /** GET /contacts/{id}/summary */
 type CustomerSummary = {
   total_sales: number
@@ -80,11 +88,18 @@ export default function CustomersPage() {
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [menuOpen, setMenuOpen] = useState<number | null>(null)
   const [notice, setNotice] = useState('')
-  const [dialog, setDialog] = useState<'view' | 'confirm-deactivate' | null>(null)
+  const [dialog, setDialog] = useState<'view' | 'confirm-deactivate' | 'add' | 'edit' | null>(null)
   const [activeCustomer, setActiveCustomer] = useState<Contact | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
   const [summary, setSummary] = useState<CustomerSummary | null>(null)
   const [summaryLoading, setSummaryLoading] = useState(false)
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({})
+
+  // Permissions — gated via capabilities, never via role name checks.
+  const user = useSession()
+  const canCreate = user.capabilities.includes('contact.create')
+  const canEdit = user.capabilities.includes('contact.edit')
+
 
   const toast = (msg: string) => {
     setNotice(msg)
@@ -188,10 +203,103 @@ export default function CustomersPage() {
     setDialog('confirm-deactivate')
   }
 
+  const openAdd = () => {
+    setActiveCustomer(null)
+    setFormErrors({})
+    setDialog('add')
+  }
+
+  const openEdit = (c: Contact) => {
+    setActiveCustomer(c)
+    setMenuOpen(null)
+    setFormErrors({})
+    setDialog('edit')
+  }
+
+  // --- Mutations ------------------------------------------------------------
+
+  async function handleCreateCustomer(form: {
+    name: string
+    phone: string
+    email: string
+    address: string
+    notes: string
+  }) {
+    setActionLoading(true)
+    setFormErrors({})
+    try {
+      await api.post<Contact>('/contacts', {
+        type: 'customer',
+        name: form.name.trim(),
+        phone: form.phone.trim() || undefined,
+        email: form.email.trim() || undefined,
+        address: form.address.trim() || undefined,
+        notes: form.notes.trim() || undefined,
+        is_active: true,
+      }, {
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
+      })
+      toast('Customer created')
+      setDialog(null)
+      fetchCustomers()
+    } catch (err) {
+      const code = (err as Error & { code?: string }).code
+      if (code === 'conflict') {
+        setFormErrors({ name: 'A contact with this name already exists' })
+      } else {
+        toast(err instanceof Error ? err.message : 'Create failed')
+      }
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  async function handleEditCustomer(form: {
+    name: string
+    phone: string
+    email: string
+    address: string
+    notes: string
+  }) {
+    if (!activeCustomer) return
+    setActionLoading(true)
+    setFormErrors({})
+    try {
+      await api.patch<Contact>(`/contacts/${activeCustomer.id}`, {
+        name: form.name.trim() || undefined,
+        phone: form.phone.trim() || undefined,
+        email: form.email.trim() || undefined,
+        address: form.address.trim() || undefined,
+        notes: form.notes.trim() || undefined,
+      }, {
+        headers: {
+          'Idempotency-Key': crypto.randomUUID(),
+          ...etagHeader(activeCustomer),
+        },
+      })
+      toast('Customer updated')
+      setDialog(null)
+      setActiveCustomer(null)
+      fetchCustomers()
+    } catch (err) {
+      const code = (err as Error & { code?: string }).code
+      if (code === 'version_mismatch') {
+        toast('Customer was modified by another user. Please refresh.')
+        fetchCustomers()
+      } else if (code === 'conflict') {
+        setFormErrors({ name: 'A contact with this name already exists' })
+      } else {
+        toast(err instanceof Error ? err.message : 'Update failed')
+      }
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   const fetchSummary = async (id: number) => {
     try {
       const res = await api.get<CustomerSummary>(`/contacts/${id}/summary`)
-      setSummary(res.data)
+      setSummary(res)
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed to load summary')
     }
@@ -245,7 +353,9 @@ export default function CustomersPage() {
         <div className="heading-actions">
           <Button variant="outline" onClick={() => toast('Import not yet wired — no backend endpoint')}><Upload size={14} /> Import</Button>
           <Button variant="outline" onClick={() => toast('Export not yet wired — no backend endpoint')}><Download size={14} /> Export</Button>
-          <Button><Plus size={14} /> Add customer</Button>
+          {canCreate && (
+            <Button onClick={openAdd}><Plus size={14} /> Add customer</Button>
+          )}
         </div>
       </div>
 
@@ -324,7 +434,9 @@ export default function CustomersPage() {
             <p>Try adjusting your search or filters.</p>
             <div style={{ display: 'flex', gap: 8 }}>
               <Button variant="outline" onClick={() => { setQuery(''); setStatusFilter('all'); setPage(1) }}>Clear filters</Button>
-              <Button>Add customer</Button>
+              {canCreate && (
+                <Button onClick={openAdd}>Add customer</Button>
+              )}
             </div>
           </div>
         ) : (
@@ -375,7 +487,9 @@ export default function CustomersPage() {
                         {menuOpen === c.id && (
                           <div style={{ position: 'absolute', right: 14, top: 40, zIndex: 30, width: 200, background: 'white', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 8px 24px rgba(0,0,0,.1)', padding: 4 }}>
                             <button onClick={() => openView(c)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><Eye size={14} /> View customer</button>
-                            <button onClick={() => { setMenuOpen(null); toast('Edit not yet wired in this UI') }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><Pencil size={14} /> Edit customer</button>
+                            {canEdit && (
+                              <button onClick={() => openEdit(c)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><Pencil size={14} /> Edit customer</button>
+                            )}
                             <button onClick={() => toast('Change status not yet wired')} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><UserCheck size={14} /> Change status</button>
                             {c.is_active && (
                               <button onClick={() => openDeactivate(c)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#dc2626' }}><UserCheck size={14} /> Deactivate</button>
@@ -493,7 +607,9 @@ export default function CustomersPage() {
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
               <Button variant="outline" onClick={() => { setDialog(null); setActiveCustomer(null) }}>Close</Button>
-              <Button onClick={() => toast('Edit not yet wired in this UI')}>Edit customer</Button>
+              {canEdit && (
+                <Button onClick={() => { const c = activeCustomer; setDialog(null); if (c) openEdit(c) }}>Edit customer</Button>
+              )}
             </div>
           </div>
         </div>
@@ -517,6 +633,22 @@ export default function CustomersPage() {
         </div>
       )}
 
+      {/* Customer Form Dialog (Add / Edit) */}
+      {(dialog === 'add' || (dialog === 'edit' && activeCustomer)) && (
+        <CustomerFormDialog
+          mode={dialog === 'add' ? 'add' : 'edit'}
+          customer={dialog === 'edit' ? activeCustomer : null}
+          onClose={() => {
+            setDialog(null)
+            setActiveCustomer(null)
+            setFormErrors({})
+          }}
+          onSubmit={dialog === 'add' ? handleCreateCustomer : handleEditCustomer}
+          loading={actionLoading}
+          serverErrors={formErrors}
+        />
+      )}
+
       <style>{`
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
         @media(max-width:620px) {
@@ -524,6 +656,156 @@ export default function CustomersPage() {
           table { display:none; }
         }
       `}</style>
+    </div>
+  )
+}
+
+// --- CustomerFormDialog component ------------------------------------------
+
+function CustomerFormDialog({
+  mode,
+  customer,
+  onClose,
+  onSubmit,
+  loading,
+  serverErrors,
+}: {
+  mode: 'add' | 'edit'
+  customer: Contact | null
+  onClose: () => void
+  onSubmit: (form: { name: string; phone: string; email: string; address: string; notes: string }) => void
+  loading: boolean
+  serverErrors?: Record<string, string>
+}) {
+  const [name, setName] = useState(customer?.name ?? '')
+  const [phone, setPhone] = useState(customer?.phone ?? '')
+  const [email, setEmail] = useState(customer?.email ?? '')
+  const [address, setAddress] = useState(customer?.address ?? '')
+  const [notes, setNotes] = useState(customer?.notes ?? '')
+  const [errors, setErrors] = useState<Record<string, string>>({})
+
+  // Surface server-side errors (e.g. 409 conflict on name) as inline field errors.
+  useEffect(() => {
+    if (serverErrors && Object.keys(serverErrors).length > 0) {
+      setErrors((prev) => ({ ...prev, ...serverErrors }))
+    }
+  }, [serverErrors])
+
+  const validate = () => {
+    const next: Record<string, string> = { ...errors }
+    if (!name.trim()) next.name = 'Name is required'
+    else delete next.name
+    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) next.email = 'Enter a valid email address'
+    else delete next.email
+    setErrors(next)
+    return Object.keys(next).length === 0
+  }
+
+  const handleSubmit = () => {
+    if (!validate()) return
+    onSubmit({
+      name,
+      phone: phone || '',
+      email: email || '',
+      address: address || '',
+      notes: notes || '',
+    })
+  }
+
+  const labelStyle: React.CSSProperties = {
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    color: '#8a98ab',
+    marginBottom: 4,
+  }
+  const fieldStyle: React.CSSProperties = {
+    height: 34,
+    borderRadius: 8,
+    border: '1px solid var(--border)',
+    background: 'white',
+    padding: '0 10px',
+    fontSize: 13,
+    width: '100%',
+  }
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 40,
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'center',
+        background: 'rgba(15,23,42,.35)',
+        padding: 24,
+        overflowY: 'auto',
+      }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div style={{ width: '100%', maxWidth: 560, background: 'white', borderRadius: 14, border: '1px solid var(--border)', padding: 24, boxShadow: '0 20px 48px rgba(0,0,0,.12)', margin: '24px 0' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+          <div>
+            <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: 'var(--foreground)' }}>
+              {mode === 'add' ? 'Add customer' : 'Edit customer'}
+            </h2>
+            <p style={{ fontSize: 13, color: '#718198', marginTop: 4 }}>
+              {mode === 'add' ? 'Create a new customer record.' : 'Update customer contact information.'}
+            </p>
+          </div>
+          <button onClick={onClose} aria-label="Close" style={{ background: 'none', border: 0, cursor: 'pointer', padding: 4 }}><X size={18} /></button>
+        </div>
+        <div style={{ display: 'grid', gap: 16 }}>
+          <div>
+            <label style={labelStyle}>Name *</label>
+            <input
+              value={name}
+              onChange={(e) => { setName(e.target.value); setErrors((prev) => { const n = { ...prev }; delete n.name; return n }) }}
+              placeholder="Customer name"
+              style={{ ...fieldStyle, ...(errors.name ? { borderColor: '#dc2626' } : {}) }}
+              aria-label="Customer name"
+            />
+            {errors.name && <div style={{ fontSize: 11, color: '#dc2626', marginTop: 2 }}>{errors.name}</div>}
+          </div>
+          <div>
+            <label style={labelStyle}>Phone</label>
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+62 8xx-xxxx-xxxx" style={fieldStyle} aria-label="Phone" />
+          </div>
+          <div>
+            <label style={labelStyle}>Email</label>
+            <input
+              value={email}
+              onChange={(e) => { setEmail(e.target.value); setErrors((prev) => { const n = { ...prev }; delete n.email; return n }) }}
+              placeholder="customer@example.com"
+              style={{ ...fieldStyle, ...(errors.email ? { borderColor: '#dc2626' } : {}) }}
+              aria-label="Email"
+            />
+            {errors.email && <div style={{ fontSize: 11, color: '#dc2626', marginTop: 2 }}>{errors.email}</div>}
+          </div>
+          <div>
+            <label style={labelStyle}>Address</label>
+            <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Street address" style={fieldStyle} aria-label="Address" />
+          </div>
+          <div>
+            <label style={labelStyle}>Notes</label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Additional notes..."
+              style={{ ...fieldStyle, minHeight: 80, resize: 'vertical', padding: '8px 10px' }}
+              aria-label="Notes"
+            />
+          </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
+          <Button variant="outline" onClick={onClose} disabled={loading}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={loading}>
+            {loading ? (mode === 'add' ? 'Creating...' : 'Saving...') : mode === 'add' ? 'Add customer' : 'Save changes'}
+          </Button>
+        </div>
+      </div>
     </div>
   )
 }
