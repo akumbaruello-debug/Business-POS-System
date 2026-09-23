@@ -6,6 +6,7 @@ import {
   FileText,
   LayoutDashboard,
   Package,
+  PieChart,
   Store,
   Truck,
   Users,
@@ -41,6 +42,10 @@ const navigation = [
       { label: 'Purchases', icon: ClipboardList, href: '/purchases' },
       { label: 'Suppliers', icon: Truck, href: '/suppliers' },
     ],
+  },
+  {
+    label: 'Reports',
+    items: [{ label: 'Reports', icon: PieChart, href: '/reports' }],
   },
 ] as const
 
