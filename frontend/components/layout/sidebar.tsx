@@ -3,6 +3,7 @@
 import {
   Boxes,
   ClipboardList,
+  FileText,
   LayoutDashboard,
   Package,
   Store,
@@ -11,10 +12,9 @@ import {
 } from 'lucide-react'
 import { useSession, initialsFor } from '@/lib/session'
 
-// Only routes with implemented pages ship. Dead sections (Sales,
-// Purchasing, Finance, Administration) have no page yet, so their links
-// are withheld rather than 404ing. Reintroduce a group when its first
-// page lands.
+// Only routes with implemented pages ship. Dead sections have no page yet,
+// so their links are withheld rather than 404ing. Reintroduce a group when
+// its first page lands.
 const navigation = [
   { label: 'Overview', items: [{ label: 'Dashboard', icon: LayoutDashboard, href: '/dashboard' }] },
   {
@@ -27,6 +27,13 @@ const navigation = [
   {
     label: 'Customers',
     items: [{ label: 'Customers', icon: Users, href: '/customers' }],
+  },
+  {
+    label: 'Sales',
+    items: [
+      { label: 'Sales', icon: FileText, href: '/sales' },
+      { label: 'Returns & refunds', icon: ClipboardList, href: '/sales/returns' },
+    ],
   },
   {
     label: 'Purchasing',
