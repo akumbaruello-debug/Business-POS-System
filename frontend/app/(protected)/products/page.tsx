@@ -23,6 +23,7 @@ import { api } from '@/lib/api-client'
 import type { Category, Pagination, Product, Unit } from '@/lib/product-types'
 import { formatIDR } from '@/lib/format'
 import { useSession } from '@/lib/session'
+import { useLanguage } from '@/lib/i18n'
 import { Button } from '@/components/ui/button'
 import ExportProductsDialog from './_export-dialog'
 import ImportProductsDialog from './_import-dialog'
@@ -117,6 +118,7 @@ function emptyForm(): ProductFormValues {
 }
 
 export default function ProductsPage() {
+  const { t } = useLanguage()
   const user = useSession()
   const canCreate = user.capabilities.includes('product.create')
   const canEdit = user.capabilities.includes('product.edit')
@@ -308,13 +310,13 @@ export default function ProductsPage() {
       await api.post('/products', body, {
         headers: { 'Idempotency-Key': crypto.randomUUID() },
       })
-      toast('Product added to your catalog')
+      toast(t('products.addedToCatalog'))
       setDialog(null)
       setActiveProduct(null)
       setPage(1)
       fetchProducts()
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Create failed')
+      toast(err instanceof Error ? err.message : t('products.createFailed'))
     } finally {
       setActionLoading(false)
     }
@@ -346,13 +348,13 @@ export default function ProductsPage() {
       await api.patch(`/products/${activeProduct.id}`, body, {
         headers: { 'If-Match': `"${activeProduct.updated_at}"` },
       })
-      toast('Product updated')
+      toast(t('products.updated'))
       setDialog(null)
       setActiveProduct(null)
       fetchProducts()
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Update failed'
-      toast(/stale|412|precondition/i.test(msg) ? 'Product changed elsewhere — refresh and retry' : msg)
+      const msg = err instanceof Error ? err.message : t('products.updateFailed')
+      toast(/stale|412|precondition/i.test(msg) ? t('products.staleRetry') : msg)
     } finally {
       setActionLoading(false)
     }
@@ -366,18 +368,18 @@ export default function ProductsPage() {
       await api.post(`/products/${activeProduct.id}/deactivate`, { reason: 'Deactivated from Products UI' }, {
         headers: { 'Idempotency-Key': crypto.randomUUID() },
       })
-      toast(`${activeProduct.name} deactivated`)
+      toast(t('products.deactivated', { name: activeProduct.name }))
       setDialog(null)
       setActiveProduct(null)
       fetchProducts()
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Deactivate failed')
+      toast(err instanceof Error ? err.message : t('products.deactivateFailed'))
     } finally {
       setActionLoading(false)
     }
   }
 
-  const notYet = (what: string) => toast(`${what} not yet available — no backend endpoint`)
+  const notYet = (what: string) => toast(t('common.notYetAvailable', { feature: what }))
 
   // ---- Dialogs (export/import/category) are full components mounted inline ----
 
@@ -386,16 +388,16 @@ export default function ProductsPage() {
       <div className="content">
         <div className="page-heading">
           <div>
-            <div className="eyebrow">Catalog / Products</div>
-            <h1>Products</h1>
-            <p>Manage product identity, pricing, and catalog status.</p>
+            <div className="eyebrow">{t('products.eyebrow')}</div>
+            <h1>{t('products.title')}</h1>
+            <p>{t('products.subtitle')}</p>
           </div>
         </div>
         <div className="error-state">
           <div className="error-icon"><AlertCircle size={32} /></div>
-          <strong>Failed to load products</strong>
+          <strong>{t('common.failedToLoad', { resource: t('products.title') })}</strong>
           <p>{error}</p>
-          <Button variant="outline" onClick={fetchProducts}>Retry</Button>
+          <Button variant="outline" onClick={fetchProducts}>{t('common.retry')}</Button>
         </div>
       </div>
     )
@@ -406,16 +408,16 @@ export default function ProductsPage() {
       {/* Page heading */}
       <div className="page-heading">
         <div>
-          <div className="eyebrow">Catalog / Products</div>
-          <h1>Products</h1>
-          <p>Manage product identity, pricing, and catalog status.</p>
+          <div className="eyebrow">{t('products.eyebrow')}</div>
+          <h1>{t('products.title')}</h1>
+          <p>{t('products.subtitle')}</p>
         </div>
         <div className="heading-actions">
-          <Button variant="outline" onClick={() => setImportOpen(true)}><Upload size={14} /> Import</Button>
-          <Button variant="outline" onClick={() => setExportOpen(true)}><Download size={14} /> Export</Button>
-          <Button variant="outline" onClick={() => setCategoryOpen(true)}><Tag size={14} /> Categories</Button>
+          <Button variant="outline" onClick={() => setImportOpen(true)}><Upload size={14} /> {t('products.import')}</Button>
+          <Button variant="outline" onClick={() => setExportOpen(true)}><Download size={14} /> {t('products.export')}</Button>
+          <Button variant="outline" onClick={() => setCategoryOpen(true)}><Tag size={14} /> {t('common.categories')}</Button>
           {canCreate && (
-            <Button onClick={openAdd}><Plus size={14} /> Add product</Button>
+            <Button onClick={openAdd}><Plus size={14} /> {t('products.addProduct')}</Button>
           )}
         </div>
       </div>
@@ -424,35 +426,35 @@ export default function ProductsPage() {
       <section className="metrics">
         <article className="metric-card">
           <div className="metric-top">
-            <span className="metric-label">Total products</span>
+            <span className="metric-label">{t('products.totalProducts')}</span>
             <span className="metric-icon"><Package size={18} /></span>
           </div>
           <div className="metric-value">{loading ? '—' : pagination.total}</div>
-          <div className="metric-change positive"><span className="change-note">Across all categories</span></div>
+          <div className="metric-change positive"><span className="change-note">{t('products.acrossAllCategories')}</span></div>
         </article>
         <article className="metric-card">
           <div className="metric-top">
-            <span className="metric-label">Active products</span>
+            <span className="metric-label">{t('products.activeProducts')}</span>
             <span className="metric-icon"><Check size={18} /></span>
           </div>
           <div className="metric-value">{loading ? '—' : activeCount}</div>
-          <div className="metric-change positive"><span className="change-note">Available for sale</span></div>
+          <div className="metric-change positive"><span className="change-note">{t('products.availableForSale')}</span></div>
         </article>
         <article className="metric-card">
           <div className="metric-top">
-            <span className="metric-label">Inactive products</span>
+            <span className="metric-label">{t('products.inactiveProducts')}</span>
             <span className="metric-icon"><Archive size={18} /></span>
           </div>
           <div className="metric-value">{loading ? '—' : inactiveCount}</div>
-          <div className="metric-change positive"><span className="change-note">Not available for sale</span></div>
+          <div className="metric-change positive"><span className="change-note">{t('products.notAvailableForSale')}</span></div>
         </article>
         <article className="metric-card">
           <div className="metric-top">
-            <span className="metric-label">Low stock</span>
+            <span className="metric-label">{t('products.lowStock')}</span>
             <span className="metric-icon"><AlertCircle size={18} /></span>
           </div>
           <div className="metric-value">{loading ? '—' : lowStockCount}</div>
-          <div className="metric-change positive"><span className="change-note">At or below threshold</span></div>
+          <div className="metric-change positive"><span className="change-note">{t('products.atOrBelowThreshold')}</span></div>
         </article>
       </section>
 
@@ -466,7 +468,7 @@ export default function ProductsPage() {
                 aria-label="Search products"
                 value={query}
                 onChange={(e) => { setQuery(e.target.value); setPage(1) }}
-                placeholder="Search name or code..."
+                placeholder={t('products.searchPlaceholder')}
                 style={{ width: '100%', height: 36, paddingLeft: 32, paddingRight: 12, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--background)', fontSize: 13, outline: 'none' }}
               />
             </div>
@@ -476,9 +478,9 @@ export default function ProductsPage() {
               onChange={(e) => { setStatusFilter(e.target.value as typeof statusFilter); setPage(1) }}
               style={{ height: 36, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--background)', padding: '0 10px', fontSize: 13 }}
             >
-              <option value="all">All status</option>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
+              <option value="all">{t('products.allStatus')}</option>
+              <option value="active">{t('common.active')}</option>
+              <option value="inactive">{t('common.inactive')}</option>
             </select>
             <select
               aria-label="Category filter"
@@ -486,9 +488,9 @@ export default function ProductsPage() {
               onChange={(e) => { setCategoryFilter(e.target.value); setPage(1) }}
               style={{ height: 36, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--background)', padding: '0 10px', fontSize: 13 }}
               disabled={categories.length === 0}
-              title={categories.length === 0 ? 'No categories yet' : 'Filter by category'}
+              title={categories.length === 0 ? t('products.noCategoriesYet') : undefined}
             >
-              <option value="all">All categories</option>
+              <option value="all">{t('products.allCategories')}</option>
               {categories.map((c) => (
                 <option key={c.id} value={String(c.id)}>{c.name}</option>
               ))}
@@ -499,19 +501,19 @@ export default function ProductsPage() {
               onChange={(e) => { setUnitFilter(e.target.value); setPage(1) }}
               style={{ height: 36, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--background)', padding: '0 10px', fontSize: 13 }}
               disabled={units.length === 0}
-              title={units.length === 0 ? 'No units yet' : 'Filter by unit'}
+              title={units.length === 0 ? t('products.noUnitsYet') : undefined}
             >
-              <option value="all">All units</option>
+              <option value="all">{t('products.allUnits')}</option>
               {units.map((u) => (
                 <option key={u.id} value={String(u.id)}>{u.name}</option>
               ))}
             </select>
-            <Button variant="ghost" size="sm" onClick={clearFilters}>Clear filters</Button>
+            <Button variant="ghost" size="sm" onClick={clearFilters}>{t('common.clearFilters')}</Button>
           </div>
           {selected.size > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: '#eff6ff', borderRadius: 6, fontSize: 13 }}>
-              <strong>{selected.size}</strong> selected
-              <Button variant="outline" size="sm" onClick={() => setSelected(new Set())}>Clear</Button>
+              <strong>{t('common.selected', { count: selected.size })}</strong>
+              <Button variant="outline" size="sm" onClick={() => setSelected(new Set())}>{t('common.clearFilters')}</Button>
             </div>
           )}
         </div>
@@ -525,11 +527,11 @@ export default function ProductsPage() {
         ) : products.length === 0 ? (
           <div className="empty-workspace">
             <div className="empty-icon"><Package size={22} /></div>
-            <strong>No products found</strong>
-            <p>Try adjusting your search or filters.</p>
+            <strong>{t('products.noProductsFound')}</strong>
+            <p>{t('common.tryFilters')}</p>
             <div style={{ display: 'flex', gap: 8 }}>
-              <Button variant="outline" onClick={clearFilters}>Clear filters</Button>
-              {canCreate && <Button onClick={openAdd}>Add product</Button>}
+              <Button variant="outline" onClick={clearFilters}>{t('common.clearFilters')}</Button>
+              {canCreate && <Button onClick={openAdd}>{t('products.addProduct')}</Button>}
             </div>
           </div>
         ) : (
@@ -542,14 +544,14 @@ export default function ProductsPage() {
                     <th style={{ width: 44, padding: '10px 14px' }}>
                       <input type="checkbox" aria-label="Select all" checked={products.length > 0 && products.every((p) => selected.has(p.id))} onChange={toggleAll} />
                     </th>
-                    {([['name', 'Product'], ['code', 'Code'], ['category_id', 'Category'], ['unit_id', 'Unit'], ['selling_price', 'Sell price'], ['purchase_price', 'Cost'], ['on_hand_quantity', 'Stock'], ['is_active', 'Status']] as const).map(([key, label]) => (
+                    {([['name', t('products.product')], ['code', t('common.code')], ['category_id', t('common.category')], ['unit_id', t('common.unit')], ['selling_price', t('products.sellPrice')], ['purchase_price', t('common.cost')], ['on_hand_quantity', t('common.stock')], ['is_active', t('common.status')]] as const).map(([key, label]) => (
                       <th key={key} style={{ padding: '10px 14px' }}>
                         <button onClick={() => handleSort(key)} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 600, background: 'none', border: 0, cursor: 'pointer', color: sortKey === key ? 'var(--primary)' : 'inherit' }}>
                           {label}<ChevronsUpDown size={12} />
                         </button>
                       </th>
                     ))}
-                    <th style={{ padding: '10px 14px' }}>Actions</th>
+                    <th style={{ padding: '10px 14px' }}>{t('common.actions')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -571,11 +573,11 @@ export default function ProductsPage() {
                       <td style={{ padding: '12px 14px' }}>{formatIDR(p.purchase_price)}</td>
                       <td style={{ padding: '12px 14px' }}>
                         <span style={{ color: p.low_stock ? '#dc2626' : 'inherit' }}>{p.on_hand_quantity}</span>
-                        {p.low_stock && <span style={{ marginLeft: 6, fontSize: 10, color: '#dc2626', fontWeight: 600 }}>LOW</span>}
+                        {p.low_stock && <span style={{ marginLeft: 6, fontSize: 10, color: '#dc2626', fontWeight: 600 }}>{t('common.low')}</span>}
                       </td>
                       <td style={{ padding: '12px 14px' }}>
                         <span style={{ display: 'inline-block', padding: '2px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600, background: p.is_active ? '#ecfdf5' : '#f1f5f9', color: p.is_active ? '#059669' : '#64748b' }}>
-                          {statusLabel(p)}
+                          {statusLabel(p) === 'Active' ? t('common.active') : t('common.inactive')}
                         </span>
                       </td>
                       <td style={{ padding: '12px 14px', position: 'relative' }}>
@@ -584,15 +586,15 @@ export default function ProductsPage() {
                         </button>
                         {menuOpen === p.id && (
                           <div style={{ position: 'absolute', right: 14, top: 40, zIndex: 30, width: 190, background: 'white', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 8px 24px rgba(0,0,0,.1)', padding: 4 }}>
-                            <button onClick={() => openView(p)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><Eye size={14} /> View product</button>
+                            <button onClick={() => openView(p)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><Eye size={14} /> {t('products.viewProduct')}</button>
                             {canEdit && (
-                              <button onClick={() => openEdit(p)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><Pencil size={14} /> Edit product</button>
+                              <button onClick={() => openEdit(p)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><Pencil size={14} /> {t('products.editProduct')}</button>
                             )}
                             {canDeactivate && p.is_active && (
-                              <button onClick={() => openDeactivate(p)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#dc2626' }}><Archive size={14} /> Deactivate</button>
+                              <button onClick={() => openDeactivate(p)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#dc2626' }}><Archive size={14} /> {t('products.deactivate')}</button>
                             )}
                             {!canEdit && !canDeactivate && (
-                              <div style={{ padding: '8px 10px', fontSize: 12, color: '#9aa7b8' }}>View only</div>
+                              <div style={{ padding: '8px 10px', fontSize: 12, color: '#9aa7b8' }}>{t('products.viewOnly')}</div>
                             )}
                           </div>
                         )}
@@ -613,29 +615,29 @@ export default function ProductsPage() {
                       <div style={{ fontSize: 11, color: '#718198', fontFamily: 'monospace' }}>{p.code ?? '—'}</div>
                     </div>
                     <span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600, background: p.is_active ? '#ecfdf5' : '#f1f5f9', color: p.is_active ? '#059669' : '#64748b' }}>
-                      {statusLabel(p)}
+                      {statusLabel(p) === 'Active' ? t('common.active') : t('common.inactive')}
                     </span>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 12, fontSize: 13 }}>
-                    <div><span style={{ fontSize: 11, color: '#718198' }}>Sell price</span><div style={{ fontWeight: 600 }}>{formatIDR(p.selling_price)}</div></div>
-                    <div><span style={{ fontSize: 11, color: '#718198' }}>Stock</span><div>{p.on_hand_quantity}{p.low_stock && ' ⚠'}</div></div>
+                    <div><span style={{ fontSize: 11, color: '#718198' }}>{t('products.sellPrice')}</span><div style={{ fontWeight: 600 }}>{formatIDR(p.selling_price)}</div></div>
+                    <div><span style={{ fontSize: 11, color: '#718198' }}>{t('common.stock')}</span><div>{p.on_hand_quantity}{p.low_stock && ' ⚠'}</div></div>
                   </div>
-                  <Button variant="outline" size="sm" style={{ width: '100%', marginTop: 12 }} onClick={() => openView(p)}>View product</Button>
+                  <Button variant="outline" size="sm" style={{ width: '100%', marginTop: 12 }} onClick={() => openView(p)}>{t('products.viewProduct')}</Button>
                 </article>
               ))}
             </div>
 
             {/* Pagination */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderTop: '1px solid var(--border)', fontSize: 13, color: '#718198', flexWrap: 'wrap', gap: 8 }}>
-              <span>Showing {products.length > 0 ? (pagination.page - 1) * pagination.per_page + 1 : 0}–{Math.min(pagination.page * pagination.per_page, pagination.total)} of {pagination.total}</span>
+              <span>{t('common.showing', { start: products.length > 0 ? (pagination.page - 1) * pagination.per_page + 1 : 0, end: Math.min(pagination.page * pagination.per_page, pagination.total), total: pagination.total })}</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <select value={perPage} onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1) }} style={{ height: 32, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--background)', padding: '0 8px', fontSize: 12 }} aria-label="Rows per page">
-                  <option value={10}>10 / page</option>
-                  <option value={25}>25 / page</option>
-                  <option value={50}>50 / page</option>
+                  <option value={10}>{t('common.perPage', { n: 10 })}</option>
+                  <option value={25}>{t('common.perPage', { n: 25 })}</option>
+                  <option value={50}>{t('common.perPage', { n: 50 })}</option>
                 </select>
                 <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}><ChevronLeft size={14} /></Button>
-                <span style={{ fontSize: 12, padding: '0 6px' }}>Page {pagination.page} of {pagination.total_pages}</span>
+                <span style={{ fontSize: 12, padding: '0 6px' }}>{t('common.pageOf', { page: pagination.page, total: pagination.total_pages })}</span>
                 <Button variant="outline" size="sm" disabled={page >= pagination.total_pages} onClick={() => setPage((p) => p + 1)}><ChevronRight size={14} /></Button>
               </div>
             </div>
@@ -700,14 +702,14 @@ export default function ProductsPage() {
       {dialog === 'confirm-deactivate' && activeProduct && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,.35)', padding: 16 }} onMouseDown={(e) => { if (e.target === e.currentTarget) closeDialog() }}>
           <div style={{ width: '100%', maxWidth: 420, background: 'white', borderRadius: 14, border: '1px solid var(--border)', padding: 24, boxShadow: '0 20px 48px rgba(0,0,0,.12)' }}>
-            <h2 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 8px' }}>Deactivate product?</h2>
+            <h2 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 8px' }}>{t('products.deactivateTitle')}</h2>
             <p style={{ fontSize: 13, color: '#718198', margin: '0 0 20px' }}>
-              <strong>{activeProduct.name}</strong> will be marked inactive. Existing transactions and inventory records are preserved.
+              {t('products.deactivateText', { name: activeProduct.name })}
             </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <Button variant="outline" onClick={closeDialog} disabled={actionLoading}>Cancel</Button>
+              <Button variant="outline" onClick={closeDialog} disabled={actionLoading}>{t('common.cancel')}</Button>
               <Button variant="destructive" onClick={handleDeactivate} disabled={actionLoading}>
-                {actionLoading ? 'Deactivating...' : 'Deactivate'}
+                {actionLoading ? t('products.deactivating') : t('products.deactivate')}
               </Button>
             </div>
           </div>
@@ -785,6 +787,7 @@ function ProductFormDialog({
   onSave,
   onClose,
 }: ProductFormDialogProps) {
+  const { t } = useLanguage()
   const [form, setForm] = useState<ProductFormValues>(() => {
     if (mode === 'add') return emptyForm()
     if (product) {
@@ -848,25 +851,25 @@ function ProductFormDialog({
         <div style={{ width: '100%', maxWidth: 620, maxHeight: '90vh', overflowY: 'auto', background: 'white', borderRadius: 14, border: '1px solid var(--border)', padding: 24, boxShadow: '0 20px 48px rgba(0,0,0,.12)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
             <div>
-              <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Product details</h2>
-              <p style={{ fontSize: 13, color: '#718198', marginTop: 4 }}>Master information and metadata.</p>
+              <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>{t('products.productDetails')}</h2>
+              <p style={{ fontSize: 13, color: '#718198', marginTop: 4 }}>{t('products.masterInfo')}</p>
             </div>
             <button onClick={onClose} aria-label="Close" style={{ background: 'none', border: 0, cursor: 'pointer', padding: 4 }}><X size={18} /></button>
           </div>
           <div style={{ display: 'grid', gap: 12, gridTemplateColumns: '1fr 1fr' }}>
             {([
-              ['Name', product?.name ?? '—'],
-              ['Code', product?.code ?? '—'],
-              ['Category', product?.category_id != null ? (categoryName.get(product.category_id) ?? '—') : '—'],
-              ['Unit', product?.unit_id != null ? (unitName.get(product.unit_id) ?? '—') : '—'],
-              ['Sell price', formatIDR(product?.selling_price)],
-              ['Purchase price', formatIDR(product?.purchase_price)],
-              ['On hand', String(product?.on_hand_quantity ?? 0)],
-              ['Low stock threshold', product?.low_stock_threshold != null ? formatIDR(product.low_stock_threshold) : '—'],
-              ['Inventory value', formatIDR(product?.inventory_value)],
-              ['Avg unit cost', product?.moving_average_unit_cost != null ? formatIDR(product.moving_average_unit_cost) : '—'],
-              ['Status', product ? statusLabel(product) : '—'],
-              ['Flags', product ? [product.is_sellable && 'Sellable', product.is_purchasable && 'Purchasable', product.is_producible && 'Producible'].filter(Boolean).join(', ') || '—' : '—'],
+              [t('common.name'), product?.name ?? '—'],
+              [t('common.code'), product?.code ?? '—'],
+              [t('common.category'), product?.category_id != null ? (categoryName.get(product.category_id) ?? '—') : '—'],
+              [t('common.unit'), product?.unit_id != null ? (unitName.get(product.unit_id) ?? '—') : '—'],
+              [t('common.sellPrice'), formatIDR(product?.selling_price)],
+              [t('common.purchasePrice'), formatIDR(product?.purchase_price)],
+              [t('common.onHand'), String(product?.on_hand_quantity ?? 0)],
+              [t('common.lowStockThreshold'), product?.low_stock_threshold != null ? formatIDR(product.low_stock_threshold) : '—'],
+              [t('common.inventoryValue'), formatIDR(product?.inventory_value)],
+              [t('common.avgUnitCost'), product?.moving_average_unit_cost != null ? formatIDR(product.moving_average_unit_cost) : '—'],
+              [t('common.status'), product ? (statusLabel(product) === 'Active' ? t('common.active') : t('common.inactive')) : '—'],
+              [t('common.flags'), product ? [product.is_sellable && t('common.sellable'), product.is_purchasable && t('common.purchasable'), product.is_producible && t('common.producible')].filter(Boolean).join(', ') || '—' : '—'],
             ] as const).map(([label, value]) => (
               <div key={label} style={{ background: '#f8fafc', borderRadius: 8, padding: 12 }}>
                 <div style={{ fontSize: 11, color: '#718198', marginBottom: 4 }}>{label}</div>
@@ -875,15 +878,15 @@ function ProductFormDialog({
             ))}
             {product?.notes && (
               <div style={{ gridColumn: '1 / -1', background: '#f8fafc', borderRadius: 8, padding: 12 }}>
-                <div style={{ fontSize: 11, color: '#718198', marginBottom: 4 }}>Notes</div>
+                <div style={{ fontSize: 11, color: '#718198', marginBottom: 4 }}>{t('common.notes')}</div>
                 <div style={{ fontSize: 13 }}>{product.notes}</div>
               </div>
             )}
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
-            <Button variant="outline" onClick={onClose}>Close</Button>
+            <Button variant="outline" onClick={onClose}>{t('common.close')}</Button>
             {canEdit && onEdit && (
-              <Button onClick={onEdit}>Edit product</Button>
+              <Button onClick={onEdit}>{t('products.editProduct')}</Button>
             )}
           </div>
         </div>
@@ -896,29 +899,29 @@ function ProductFormDialog({
       <form onSubmit={submit} style={{ width: '100%', maxWidth: 620, maxHeight: '90vh', overflowY: 'auto', background: 'white', borderRadius: 14, border: '1px solid var(--border)', padding: 24, boxShadow: '0 20px 48px rgba(0,0,0,.12)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
           <div>
-            <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>{editing ? 'Edit product' : 'Add product'}</h2>
-            <p style={{ fontSize: 13, color: '#718198', marginTop: 4 }}>{editing ? 'Update product master information.' : 'Create a new product in your catalog.'}</p>
+            <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>{editing ? t('products.editProductTitle') : t('products.addProductTitle')}</h2>
+            <p style={{ fontSize: 13, color: '#718198', marginTop: 4 }}>{editing ? t('products.editProductSubtitle') : t('products.addProductSubtitle')}</p>
           </div>
           <button type="button" onClick={onClose} disabled={busy} aria-label="Close" style={{ background: 'none', border: 0, cursor: busy ? 'not-allowed' : 'pointer', padding: 4 }}><X size={18} /></button>
         </div>
 
         <div style={{ display: 'grid', gap: 14, gridTemplateColumns: '1fr 1fr' }}>
           <label style={{ ...labelStyle, gridColumn: '1 / -1' }}>
-            Product name *
+            {t('products.productName')}
             <input required value={form.name} onChange={(e) => set('name', e.target.value)} style={inputStyle} maxLength={200} />
           </label>
 
           {mode === 'add' && (
             <label style={labelStyle}>
-              Code (SKU)
+              {t('common.codeSku')}
               <input value={form.code} onChange={(e) => set('code', e.target.value)} style={{ ...inputStyle, fontFamily: 'monospace' }} maxLength={64} placeholder="e.g. FSH-001" title="Alphanumeric, dot, underscore, hyphen. Immutable after creation." />
             </label>
           )}
 
           <label style={labelStyle}>
-            Category
+            {t('common.category')}
             <select value={form.category_id} onChange={(e) => set('category_id', e.target.value)} style={inputStyle} disabled={categories.length === 0}>
-              <option value="">{categories.length === 0 ? 'No categories yet' : 'No category'}</option>
+              <option value="">{categories.length === 0 ? t('products.noCategoriesYet') : t('products.noCategory')}</option>
               {categories.map((c) => (
                 <option key={c.id} value={String(c.id)}>{c.name}</option>
               ))}
@@ -926,9 +929,9 @@ function ProductFormDialog({
           </label>
 
           <label style={labelStyle}>
-            Unit
+            {t('common.unit')}
             <select value={form.unit_id} onChange={(e) => set('unit_id', e.target.value)} style={inputStyle} disabled={units.length === 0}>
-              <option value="">{units.length === 0 ? 'No units yet' : 'No unit'}</option>
+              <option value="">{units.length === 0 ? t('products.noUnitsYet') : t('products.noUnit')}</option>
               {units.map((u) => (
                 <option key={u.id} value={String(u.id)}>{u.name}</option>
               ))}
@@ -936,27 +939,27 @@ function ProductFormDialog({
           </label>
 
           <label style={labelStyle}>
-            Sell price (Rp)
+            {t('common.sellPrice')} (Rp)
             <input type="number" min={0} step="any" value={form.selling_price} onChange={(e) => set('selling_price', e.target.value)} style={inputStyle} />
           </label>
 
           <label style={labelStyle}>
-            Cost / purchase price (Rp)
+            {t('common.purchasePrice')} (Rp)
             <input type="number" min={0} step="any" value={form.purchase_price} onChange={(e) => set('purchase_price', e.target.value)} style={inputStyle} />
           </label>
 
           <label style={{ ...labelStyle, gridColumn: '1 / -1' }}>
-            Low stock threshold
-            <input type="number" min={0} step="any" value={form.low_stock_threshold} onChange={(e) => set('low_stock_threshold', e.target.value)} style={inputStyle} placeholder="Optional — stock at or below this triggers the LOW badge" />
+            {t('common.lowStockThreshold')}
+            <input type="number" min={0} step="any" value={form.low_stock_threshold} onChange={(e) => set('low_stock_threshold', e.target.value)} style={inputStyle} placeholder={t('products.lowStockPlaceholder')} />
           </label>
 
           <label style={{ ...labelStyle, gridColumn: '1 / -1' }}>
-            Notes
+            {t('common.notes')}
             <textarea value={form.notes} onChange={(e) => set('notes', e.target.value)} style={{ ...inputStyle, height: 70, paddingTop: 8, resize: 'vertical' }} maxLength={2000} />
           </label>
 
           <div style={{ gridColumn: '1 / -1', display: 'flex', flexWrap: 'wrap', gap: 16, paddingTop: 2 }}>
-            {([['is_sellable', 'Sellable'], ['is_purchasable', 'Purchasable'], ['is_producible', 'Producible'], ['is_active', 'Active']] as const).map(([key, label]) => (
+            {([['is_sellable', t('common.sellable')], ['is_purchasable', t('common.purchasable')], ['is_producible', t('common.producible')], ['is_active', t('common.active')]] as const).map(([key, label]) => (
               <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
                 <input type="checkbox" checked={form[key]} onChange={(e) => set(key, e.target.checked)} />
                 {label}
@@ -967,14 +970,14 @@ function ProductFormDialog({
 
         {editing && product && (
           <p style={{ fontSize: 12, color: '#9aa7b8', margin: '14px 0 0' }}>
-            Code is immutable after creation. Updates use optimistic concurrency (If-Match).
+            {t('products.codeImmutable')}
           </p>
         )}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
-          <Button type="button" variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button type="button" variant="outline" onClick={onClose} disabled={busy}>{t('common.cancel')}</Button>
           <Button type="submit" disabled={busy}>
-            {busy ? (editing ? 'Saving...' : 'Creating...') : (editing ? 'Save changes' : 'Create product')}
+            {busy ? (editing ? t('common.saving') : t('common.creating')) : (editing ? t('common.save') : t('products.createProduct'))}
           </Button>
         </div>
       </form>

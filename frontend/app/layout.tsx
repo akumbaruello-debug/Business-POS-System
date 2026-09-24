@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
+import { RootProviders } from '@/components/providers'
 
 export const metadata: Metadata = {
   title: 'Perikanan Indonesia | Business Operations',
@@ -15,7 +16,9 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className="bg-background">
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">
+        <RootProviders>{children}</RootProviders>
+      </body>
     </html>
   )
 }

@@ -27,6 +27,7 @@ import type {
 import { formatIDR } from '@/lib/format'
 import { Button } from '@/components/ui/button'
 import { useSession } from '@/lib/session'
+import { useLanguage } from '@/lib/i18n'
 import StockAdjustmentDialog from './_adjust-dialog'
 import StockHistoryDialog from './_stock-history-dialog'
 
@@ -60,6 +61,7 @@ function fmtDate(iso: string): string {
 }
 
 export default function InventoryPage() {
+  const { t } = useLanguage()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [rows, setRows] = useState<InventorySummary[]>([])
@@ -173,21 +175,27 @@ export default function InventoryPage() {
   const stockValue = summary?.inventory_value ?? 0
   const totalUnits = summary?.total_units ?? 0
 
+  const statusLabel = (s: StockStatus) => {
+    if (s === 'In stock') return t('status.inStock')
+    if (s === 'Low stock') return t('status.lowStock')
+    return t('status.outOfStock')
+  }
+
   if (error && !loading) {
     return (
       <div className="content">
         <div className="page-heading">
           <div>
-            <div className="eyebrow">Inventory / Stock</div>
-            <h1>Inventory</h1>
-            <p>Monitor stock levels, movements, and replenishment needs.</p>
+            <div className="eyebrow">{t('inventory.eyebrow')}</div>
+            <h1>{t('inventory.title')}</h1>
+            <p>{t('inventory.subtitle')}</p>
           </div>
         </div>
         <div className="error-state">
           <div className="error-icon"><AlertTriangle size={32} /></div>
-          <strong>Failed to load inventory</strong>
+          <strong>{t('common.failedToLoad', { resource: t('inventory.title') })}</strong>
           <p>{error}</p>
-          <Button variant="outline" onClick={fetchInventory}>Retry</Button>
+          <Button variant="outline" onClick={fetchInventory}>{t('common.retry')}</Button>
         </div>
       </div>
     )
@@ -198,15 +206,15 @@ export default function InventoryPage() {
       {/* Page heading */}
       <div className="page-heading">
         <div>
-          <div className="eyebrow">Inventory / Stock</div>
-          <h1>Inventory</h1>
-          <p>Monitor stock levels, movements, and replenishment needs.</p>
+          <div className="eyebrow">{t('inventory.eyebrow')}</div>
+          <h1>{t('inventory.title')}</h1>
+          <p>{t('inventory.subtitle')}</p>
         </div>
         <div className="heading-actions">
           {canAdjust && (
             <Button variant="outline" size="sm" onClick={() => { setAdjustOpen(true); setAdjustRow(null) }}>
               <Settings2 size={14} className="mr-1" />
-              Stock adjustment
+              {t('inventory.stockAdjustment')}
             </Button>
           )}
         </div>
@@ -216,35 +224,35 @@ export default function InventoryPage() {
       <section className="metrics">
         <article className="metric-card">
           <div className="metric-top">
-            <span className="metric-label">Total stock units</span>
+            <span className="metric-label">{t('inventory.totalStockUnits')}</span>
             <span className="metric-icon"><Boxes size={18} /></span>
           </div>
           <div className="metric-value">{loading ? '—' : totalUnits.toLocaleString('id-ID')}</div>
-          <div className="metric-change positive"><span className="change-note">Across active stock items</span></div>
+          <div className="metric-change positive"><span className="change-note">{t('inventory.acrossActiveStockItems')}</span></div>
         </article>
         <article className="metric-card">
           <div className="metric-top">
-            <span className="metric-label">Low stock</span>
+            <span className="metric-label">{t('inventory.lowStock')}</span>
             <span className="metric-icon"><AlertTriangle size={18} /></span>
           </div>
-          <div className="metric-value">{loading ? '—' : `${lowStockCount} items`}</div>
-          <div className="metric-change positive"><span className="change-note">Needs replenishment review</span></div>
+          <div className="metric-value">{loading ? '—' : t('inventory.items', { count: lowStockCount })}</div>
+          <div className="metric-change positive"><span className="change-note">{t('inventory.needsReplenishment')}</span></div>
         </article>
         <article className="metric-card">
           <div className="metric-top">
-            <span className="metric-label">Out of stock</span>
+            <span className="metric-label">{t('inventory.outOfStock')}</span>
             <span className="metric-icon"><Package size={18} /></span>
           </div>
-          <div className="metric-value">{loading ? '—' : `${outOfStockCount} items`}</div>
-          <div className="metric-change positive"><span className="change-note">Requires immediate action</span></div>
+          <div className="metric-value">{loading ? '—' : t('inventory.items', { count: outOfStockCount })}</div>
+          <div className="metric-change positive"><span className="change-note">{t('inventory.requiresImmediateAction')}</span></div>
         </article>
         <article className="metric-card">
           <div className="metric-top">
-            <span className="metric-label">Stock value</span>
+            <span className="metric-label">{t('inventory.stockValue')}</span>
             <span className="metric-icon"><CircleDollarSign size={18} /></span>
           </div>
           <div className="metric-value">{loading ? '—' : formatIDR(stockValue)}</div>
-          <div className="metric-change positive"><span className="change-note">On this page</span></div>
+          <div className="metric-change positive"><span className="change-note">{t('inventory.onThisPage')}</span></div>
         </article>
       </section>
 
@@ -258,7 +266,7 @@ export default function InventoryPage() {
                 aria-label="Search inventory"
                 value={query}
                 onChange={(e) => { setQuery(e.target.value); setPage(1) }}
-                placeholder="Search product..."
+                placeholder={t('inventory.searchPlaceholder')}
                 style={{ width: '100%', height: 36, paddingLeft: 32, paddingRight: 12, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--background)', fontSize: 13, outline: 'none' }}
               />
             </div>
@@ -268,21 +276,21 @@ export default function InventoryPage() {
               onChange={(e) => { setStatusFilter(e.target.value as typeof statusFilter); setPage(1) }}
               style={{ height: 36, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--background)', padding: '0 10px', fontSize: 13 }}
             >
-              <option value="all">All statuses</option>
-              <option value="in">In stock</option>
-              <option value="low">Low stock</option>
-              <option value="out">Out of stock</option>
+              <option value="all">{t('inventory.allStatuses')}</option>
+              <option value="in">{t('status.inStock')}</option>
+              <option value="low">{t('status.lowStock')}</option>
+              <option value="out">{t('status.outOfStock')}</option>
             </select>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#4b5c72', height: 36 }}>
               <input type="checkbox" checked={activeOnly} onChange={(e) => { setActiveOnly(e.target.checked); setPage(1) }} aria-label="Active products only" />
-              Active only
+              {t('inventory.activeOnly')}
             </label>
-            <Button variant="ghost" size="sm" onClick={() => { setQuery(''); setStatusFilter('all'); setActiveOnly(true); setPage(1) }}>Clear filters</Button>
+            <Button variant="ghost" size="sm" onClick={() => { setQuery(''); setStatusFilter('all'); setActiveOnly(true); setPage(1) }}>{t('common.clearFilters')}</Button>
           </div>
           {selected.size > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: '#eff6ff', borderRadius: 6, fontSize: 13 }}>
-              <strong>{selected.size}</strong> selected
-              <Button variant="outline" size="sm" onClick={() => setSelected(new Set())}>Clear</Button>
+              <strong>{t('common.selected', { count: selected.size })}</strong>
+              <Button variant="outline" size="sm" onClick={() => setSelected(new Set())}>{t('common.clearFilters')}</Button>
             </div>
           )}
         </div>
@@ -296,9 +304,9 @@ export default function InventoryPage() {
         ) : filteredRows.length === 0 ? (
           <div className="empty-workspace">
             <div className="empty-icon"><Package size={22} /></div>
-            <strong>No stock items found</strong>
-            <p>Try adjusting your search or filters.</p>
-            <Button variant="outline" onClick={() => { setQuery(''); setStatusFilter('all'); setActiveOnly(true); setPage(1) }}>Clear filters</Button>
+            <strong>{t('inventory.noStockItemsFound')}</strong>
+            <p>{t('common.tryFilters')}</p>
+            <Button variant="outline" onClick={() => { setQuery(''); setStatusFilter('all'); setActiveOnly(true); setPage(1) }}>{t('common.clearFilters')}</Button>
           </div>
         ) : (
           <>
@@ -310,15 +318,15 @@ export default function InventoryPage() {
                     <th style={{ width: 44, padding: '10px 14px' }}>
                       <input type="checkbox" aria-label="Select all stock items" checked={filteredRows.length > 0 && filteredRows.every((r) => selected.has(r.product_id))} onChange={toggleAll} />
                     </th>
-                    {([['product_id', 'Product ID'], ['product_name', 'Name'], ['product_code', 'Code'], ['on_hand_quantity', 'Stock'], ['moving_average_unit_cost', 'Avg unit cost'], ['inventory_value', 'Inventory value'], ['low_stock', 'Status']] as const).map(([key, label]) => (
+                    {([['product_id', t('inventory.productId')], ['product_name', t('common.name')], ['product_code', t('common.code')], ['on_hand_quantity', t('common.stock')], ['moving_average_unit_cost', t('inventory.avgUnitCost')], ['inventory_value', t('common.inventoryValue')], ['low_stock', t('common.status')]] as const).map(([key, label]) => (
                       <th key={key} style={{ padding: '10px 14px' }}>
                         <button onClick={() => handleSort(key)} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 600, background: 'none', border: 0, cursor: 'pointer', color: sortKey === key ? 'var(--primary)' : 'inherit' }}>
                           {label}<ChevronsUpDown size={12} />
                         </button>
                       </th>
                     ))}
-                    <th style={{ padding: '10px 14px' }}>As of</th>
-                    <th style={{ padding: '10px 14px', textAlign: 'right' }}>Actions</th>
+                    <th style={{ padding: '10px 14px' }}>{t('inventory.asOf')}</th>
+                    <th style={{ padding: '10px 14px', textAlign: 'right' }}>{t('common.actions')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -330,9 +338,9 @@ export default function InventoryPage() {
                           <input type="checkbox" aria-label={`Select product ${r.product_id}`} checked={selected.has(r.product_id)} onChange={() => toggleSelect(r.product_id)} />
                         </td>
                         <td style={{ padding: '12px 14px' }}>
-                          <div style={{ fontWeight: 600 }}>{r.product_name || `Product #${r.product_id}`}</div>
+                          <div style={{ fontWeight: 600 }}>{r.product_name || t('inventory.productNumber', { id: r.product_id })}</div>
                           <div style={{ fontSize: 11, color: '#718198', marginTop: 2 }}>
-                            {r.product_code ? `${r.product_code} · ` : ''}#{r.product_id} · {r.on_hand_quantity <= 0 ? 'Out of stock' : r.low_stock ? 'Below reorder point' : 'Healthy level'}
+                            {r.product_code ? `${r.product_code} · ` : ''}#{r.product_id} · {r.on_hand_quantity <= 0 ? t('status.outOfStock') : r.low_stock ? t('inventory.belowReorderPoint') : t('inventory.healthyLevel')}
                           </div>
                         </td>
                         <td style={{ padding: '12px 14px', fontWeight: 600 }}>{Number(r.on_hand_quantity).toLocaleString('id-ID')}</td>
@@ -344,7 +352,7 @@ export default function InventoryPage() {
                             background: s === 'In stock' ? '#ecfdf5' : s === 'Low stock' ? '#fff7ed' : '#f1f5f9',
                             color: s === 'In stock' ? '#059669' : s === 'Low stock' ? '#d97706' : '#64748b',
                           }}>
-                            {s}
+                            {statusLabel(s)}
                           </span>
                         </td>
                         <td style={{ padding: '12px 14px' }}>{fmtDate(r.as_of)}</td>
@@ -372,21 +380,21 @@ export default function InventoryPage() {
                 return (
                   <article key={r.product_id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 14 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div style={{ fontWeight: 600 }}>{r.product_name || `Product #${r.product_id}`}</div>
+                      <div style={{ fontWeight: 600 }}>{r.product_name || t('inventory.productNumber', { id: r.product_id })}</div>
                       <span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600, background: s === 'In stock' ? '#ecfdf5' : s === 'Low stock' ? '#fff7ed' : '#f1f5f9', color: s === 'In stock' ? '#059669' : s === 'Low stock' ? '#d97706' : '#64748b' }}>
-                        {s}
+                        {statusLabel(s)}
                       </span>
                     </div>
                     <div style={{ fontSize: 11, color: '#718198', marginTop: 4 }}>
                       {r.product_code ? `${r.product_code} · ` : ''}#{r.product_id}
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 12, fontSize: 13 }}>
-                      <div><span style={{ fontSize: 11, color: '#718198' }}>Stock</span><div style={{ fontWeight: 600 }}>{Number(r.on_hand_quantity).toLocaleString('id-ID')}</div></div>
-                      <div><span style={{ fontSize: 11, color: '#718198' }}>Value</span><div style={{ fontWeight: 600 }}>{formatIDR(r.inventory_value)}</div></div>
+                      <div><span style={{ fontSize: 11, color: '#718198' }}>{t('common.stock')}</span><div style={{ fontWeight: 600 }}>{Number(r.on_hand_quantity).toLocaleString('id-ID')}</div></div>
+                      <div><span style={{ fontSize: 11, color: '#718198' }}>{t('common.value')}</span><div style={{ fontWeight: 600 }}>{formatIDR(r.inventory_value)}</div></div>
                     </div>
                     <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                      <Button variant="outline" size="sm" style={{ flex: 1 }} onClick={() => { setHistoryRow(r); setHistoryOpen(true) }}>View history</Button>
-                      {canAdjust && <Button size="sm" style={{ flex: 1 }} onClick={() => handleAdjustRow(r)}>Adjust stock</Button>}
+                      <Button variant="outline" size="sm" style={{ flex: 1 }} onClick={() => { setHistoryRow(r); setHistoryOpen(true) }}>{t('inventory.viewHistory')}</Button>
+                      {canAdjust && <Button size="sm" style={{ flex: 1 }} onClick={() => handleAdjustRow(r)}>{t('inventory.adjustStock')}</Button>}
                     </div>
                   </article>
                 )
@@ -395,15 +403,15 @@ export default function InventoryPage() {
 
             {/* Pagination */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderTop: '1px solid var(--border)', fontSize: 13, color: '#718198', flexWrap: 'wrap', gap: 8 }}>
-              <span>Showing {filteredRows.length > 0 ? (pagination.page - 1) * pagination.per_page + 1 : 0}–{Math.min(pagination.page * pagination.per_page, pagination.total)} of {pagination.total} stock items</span>
+              <span>{t('common.showing', { start: filteredRows.length > 0 ? (pagination.page - 1) * pagination.per_page + 1 : 0, end: Math.min(pagination.page * pagination.per_page, pagination.total), total: pagination.total })}</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <select value={perPage} onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1) }} style={{ height: 32, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--background)', padding: '0 8px', fontSize: 12 }}>
-                  <option value={10}>10 / page</option>
-                  <option value={25}>25 / page</option>
-                  <option value={50}>50 / page</option>
+                  <option value={10}>{t('common.perPage', { n: 10 })}</option>
+                  <option value={25}>{t('common.perPage', { n: 25 })}</option>
+                  <option value={50}>{t('common.perPage', { n: 50 })}</option>
                 </select>
                 <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}><ChevronLeft size={14} /></Button>
-                <span style={{ fontSize: 12, padding: '0 6px' }}>Page {pagination.page} of {pagination.total_pages}</span>
+                <span style={{ fontSize: 12, padding: '0 6px' }}>{t('common.pageOf', { page: pagination.page, total: pagination.total_pages })}</span>
                 <Button variant="outline" size="sm" disabled={page >= pagination.total_pages} onClick={() => setPage((p) => p + 1)}><ChevronRight size={14} /></Button>
               </div>
             </div>
@@ -437,7 +445,7 @@ export default function InventoryPage() {
         open={historyOpen}
         onClose={() => { setHistoryOpen(false); setHistoryRow(null) }}
         productId={historyRow?.product_id ?? null}
-        productName={historyRow?.product_name || `Product #${historyRow?.product_id ?? ''}`}
+        productName={historyRow?.product_name || t('inventory.productNumber', { id: historyRow?.product_id ?? '' })}
       />
     </div>
   )

@@ -6,7 +6,6 @@ import {
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
-  ChevronsUpDown,
   ClipboardList,
   RotateCcw,
   Search,
@@ -14,10 +13,15 @@ import {
 } from 'lucide-react'
 import { api } from '@/lib/api-client'
 import type { Pagination, Refund, SalesReturn, SaleListResponse } from '@/lib/sale-types'
+import type { PaymentMethod } from '@/lib/sale-types'
 import type { Contact, ContactListResponse } from '@/lib/contact-types'
+import { fmtDate } from '@/lib/sale-ui'
 import { formatIDR } from '@/lib/format'
 import { Button } from '@/components/ui/button'
 import { useSession } from '@/lib/session'
+import { LifecycleBadge } from '@/components/sales/sale-badges'
+import { SortButton } from '@/components/sales/sort-button'
+import { useLanguage } from '@/lib/i18n'
 
 // -----------------------------------------------------------------------------
 // Returns / Refunds workspace (V1)
@@ -53,60 +57,9 @@ const DEFAULT_PAGINATION: Pagination = {
   has_prev: false,
 }
 
-function fmtDate(iso: string | null | undefined): string {
-  if (!iso) return '—'
-  try {
-    return new Date(iso).toLocaleDateString('id-ID', {
-      year: 'numeric',
-      month: 'short',
-      day: '2-digit',
-    })
-  } catch {
-    return iso
-  }
-}
-
-function lifecycleLabel(s: string): string {
-  if (s === 'partially_returned') return 'Partially returned'
-  return s.charAt(0).toUpperCase() + s.slice(1)
-}
-
-function LifecycleBadge({ status }: { status: string }) {
-  const tone: Record<string, string> = {
-    posted: 'background:#eff6ff;color:#2563eb;border:1px solid #dbeafe',
-    cancelled: 'background:#fef2f2;color:#dc2626;border:1px solid #fecaca',
-  }
-  const style = tone[status] ?? tone.posted
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        padding: '3px 8px',
-        borderRadius: 999,
-        fontSize: 11,
-        fontWeight: 700,
-        textTransform: 'capitalize',
-        whiteSpace: 'nowrap',
-        ...parseStyle(style),
-      }}
-    >
-      {lifecycleLabel(status)}
-    </span>
-  )
-}
-
-function parseStyle(s: string): Record<string, string> {
-  const out: Record<string, string> = {}
-  s.split(';').forEach((part) => {
-    const [k, v] = part.split(':').map((x) => x?.trim())
-    if (k && v) out[k.replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = v
-  })
-  return out
-}
-
 export default function ReturnsPage() {
   const user = useSession()
+  const { t } = useLanguage()
   const canView = user.capabilities.includes('sale.view')
 
   // Tabs: returns or refunds
@@ -138,7 +91,7 @@ export default function ReturnsPage() {
   const [pagination, setPagination] = useState<Pagination>(DEFAULT_PAGINATION)
   const [customers, setCustomers] = useState<Contact[]>([])
   const [sales, setSales] = useState<SaleListResponse['data']>([])
-  const [paymentMethods, setPaymentMethods] = useState<{ id: number; name: string }[]>([])
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([])
 
   const [notice, setNotice] = useState('')
   const toast = (msg: string) => {
@@ -148,15 +101,22 @@ export default function ReturnsPage() {
 
   const customerName = useMemo(() => {
     const m = new Map<number, string>()
-    customers.forEach((c) => m.set(c.id, c.name ?? `Customer #${c.id}`))
+    customers.forEach((c) => m.set(c.id, c.name ?? `${t('sales.customer')} #${c.id}`))
     return m
-  }, [customers])
+  }, [customers, t])
+
+  // Task 1 fix: sale_id → customer_id mapping for correct name lookup
+  const saleCustomerMap = useMemo(() => {
+    const m = new Map<number, number | null>()
+    sales.forEach((s) => m.set(s.id, s.customer_id ?? null))
+    return m
+  }, [sales])
 
   const saleReference = useMemo(() => {
     const m = new Map<number, string>()
-    sales.forEach((s) => m.set(s.id, s.reference_no ?? `Sale #${s.id}`))
+    sales.forEach((s) => m.set(s.id, s.reference_no ?? `${t('returns.sale')} #${s.id}`))
     return m
-  }, [sales])
+  }, [sales, t])
 
   const fetchCustomers = useCallback(async () => {
     try {
@@ -182,7 +142,7 @@ export default function ReturnsPage() {
 
   const fetchPaymentMethods = useCallback(async () => {
     try {
-      const res = await api.get<{ data: { id: number; name: string }[] }>('/payment-methods', {
+      const res = await api.get<{ data: PaymentMethod[] }>('/payment-methods', {
         params: { per_page: '500' },
       })
       setPaymentMethods(res.data ?? [])
@@ -206,7 +166,7 @@ export default function ReturnsPage() {
       if (saleFilter.trim()) params['filter[sale_id]'] = saleFilter.trim()
       return params
     },
-    [query, fromDate, toDate, saleFilter]
+    [query, fromDate, toDate, saleFilter],
   )
 
   const fetchReturns = useCallback(async () => {
@@ -230,7 +190,7 @@ export default function ReturnsPage() {
       setReturns(res.data)
       setPagination(res.pagination)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load returns')
+      setError(err instanceof Error ? err.message : t('returns.failedToLoad', { tab: 'returns' }))
     } finally {
       setLoading(false)
     }
@@ -256,7 +216,7 @@ export default function ReturnsPage() {
       setRefunds(res.data)
       setPagination(res.pagination)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load refunds')
+      setError(err instanceof Error ? err.message : t('returns.failedToLoad', { tab: 'refunds' }))
     } finally {
       setLoading(false)
     }
@@ -308,20 +268,27 @@ export default function ReturnsPage() {
       <div className="content">
         <div className="page-heading">
           <div>
-            <div className="eyebrow">Sales / Returns</div>
-            <h1>Returns &amp; refunds</h1>
-            <p>View sales returns and customer refunds.</p>
+            <div className="eyebrow">{t('returns.eyebrow')}</div>
+            <h1>{t('returns.title')}</h1>
+            <p>{t('returns.subtitle')}</p>
           </div>
         </div>
         <div className="error-state">
           <div className="error-icon">
             <AlertTriangle size={32} />
           </div>
-          <strong>Forbidden</strong>
-          <p>Your account lacks the sale.view capability.</p>
+          <strong>{t('errors.forbidden')}</strong>
+          <p>{t('errors.lacksCapability', { capability: 'sale.view' })}</p>
         </div>
       </div>
     )
+  }
+
+  // Helper: resolve customer name from a sale_id
+  const customerForSale = (saleId: number): string => {
+    const customerId = saleCustomerMap.get(saleId)
+    if (customerId == null) return t('sales.walkInCustomer')
+    return customerName.get(customerId) ?? `${t('sales.customer')} #${customerId}`
   }
 
   return (
@@ -329,13 +296,13 @@ export default function ReturnsPage() {
       {/* Heading */}
       <div className="page-heading">
         <div>
-          <div className="eyebrow">Sales / Returns</div>
-          <h1>Returns &amp; refunds</h1>
-          <p>Track returned goods and customer refund disbursements.</p>
+          <div className="eyebrow">{t('returns.eyebrow')}</div>
+          <h1>{t('returns.title')}</h1>
+          <p>{t('returns.subtitle')}</p>
         </div>
         <div className="heading-actions">
           <Button variant="outline" onClick={() => (tab === 'returns' ? fetchReturns() : fetchRefunds())} disabled={loading}>
-            <RotateCcw size={14} className="mr-1" /> Refresh
+            <RotateCcw size={14} className="mr-1" /> {t('common.refresh')}
           </Button>
         </div>
       </div>
@@ -349,7 +316,7 @@ export default function ReturnsPage() {
           className="sales-tab"
           onClick={() => setTab('returns')}
         >
-          Sales returns
+          {t('returns.salesReturns')}
         </button>
         <button
           type="button"
@@ -358,254 +325,181 @@ export default function ReturnsPage() {
           className="sales-tab"
           onClick={() => setTab('refunds')}
         >
-          Refunds
+          {t('returns.refunds')}
         </button>
       </div>
 
-      {/* Filters */}
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: 10,
-          alignItems: 'flex-end',
-          marginBottom: 16,
-          background: 'white',
-          border: '1px solid var(--border)',
-          borderRadius: 10,
-          padding: 14,
-        }}
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 200px', minWidth: 180 }}>
-          <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#8a98ab' }}>
-            Search
-          </label>
-          <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-            <Search size={14} style={{ position: 'absolute', left: 10, color: '#9aa7b8' }} />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={tab === 'returns' ? 'Search return reason…' : 'Search refund reason…'}
-              style={{
-                width: '100%',
-                height: 34,
-                paddingLeft: 30,
-                paddingRight: 10,
-                borderRadius: 8,
-                border: '1px solid var(--border)',
-                fontSize: 13,
-                outline: 'none',
-                background: 'white',
-              }}
-            />
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#8a98ab' }}>
-            Sale
-          </label>
-          <select
-            value={saleFilter}
-            onChange={(e) => setSaleFilter(e.target.value)}
-            style={{ height: 34, borderRadius: 8, border: '1px solid var(--border)', background: 'white', padding: '0 10px', fontSize: 13, minWidth: 160 }}
-          >
-            <option value="">All sales</option>
-            {sales.map((s) => (
-              <option key={s.id} value={String(s.id)}>
-                {s.reference_no ?? `Sale #${s.id}`}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {tab === 'returns' && (
-          <>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#8a98ab' }}>
-                Status
-              </label>
-              <select
-                value={lifecycleFilter}
-                onChange={(e) => setLifecycleFilter(e.target.value)}
-                style={{ height: 34, borderRadius: 8, border: '1px solid var(--border)', background: 'white', padding: '0 10px', fontSize: 13 }}
-              >
-                <option value="all">All statuses</option>
-                <option value="posted">Posted</option>
-                <option value="cancelled">Cancelled</option>
-              </select>
+      {/* Filters — using shared CSS classes from the list page */}
+      <div className="sales-toolbar">
+        <div className="sales-toolbar-row">
+          <div className="sales-toolbar-fields">
+            <div className="sales-field sales-field-grow">
+              <span className="sales-field-label">{t('common.search')}</span>
+              <div className="sales-search">
+                <Search size={15} />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={tab === 'returns' ? t('returns.searchReturnsPlaceholder') : t('returns.searchRefundsPlaceholder')}
+                />
+              </div>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#8a98ab' }}>
-                Customer
-              </label>
-              <select
-                value={customerFilter}
-                onChange={(e) => setCustomerFilter(e.target.value)}
-                style={{ height: 34, borderRadius: 8, border: '1px solid var(--border)', background: 'white', padding: '0 10px', fontSize: 13, minWidth: 150 }}
-              >
-                <option value="all">All customers</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={String(c.id)}>
-                    {c.name ?? `Customer #${c.id}`}
-                  </option>
-                ))}
-              </select>
+            <div className="sales-field">
+              <span className="sales-field-label">{t('returns.sale')}</span>
+              <div className="sales-select">
+                <select value={saleFilter} onChange={(e) => setSaleFilter(e.target.value)}>
+                  <option value="">{t('returns.allSales')}</option>
+                  {sales.map((s) => (
+                    <option key={s.id} value={String(s.id)}>
+                      {s.reference_no ?? `Sale #${s.id}`}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
-          </>
-        )}
 
-        {tab === 'refunds' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#8a98ab' }}>
-              Payment method
-            </label>
-            <select
-              value={paymentMethodFilter}
-              onChange={(e) => setPaymentMethodFilter(e.target.value)}
-              style={{ height: 34, borderRadius: 8, border: '1px solid var(--border)', background: 'white', padding: '0 10px', fontSize: 13, minWidth: 150 }}
-            >
-              <option value="all">All methods</option>
-              {paymentMethods.map((m) => (
-                <option key={m.id} value={String(m.id)}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
+            {tab === 'returns' && (
+              <>
+                <div className="sales-field">
+                  <span className="sales-field-label">{t('common.status')}</span>
+                  <div className="sales-select">
+                    <select value={lifecycleFilter} onChange={(e) => setLifecycleFilter(e.target.value)}>
+                      <option value="all">{t('returns.allStatuses')}</option>
+                      <option value="posted">{t('status.posted')}</option>
+                      <option value="cancelled">{t('status.cancelled')}</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="sales-field">
+                  <span className="sales-field-label">{t('sales.customer')}</span>
+                  <div className="sales-select">
+                    <select value={customerFilter} onChange={(e) => setCustomerFilter(e.target.value)}>
+                      <option value="all">{t('sales.allCustomers')}</option>
+                      {customers.map((c) => (
+                        <option key={c.id} value={String(c.id)}>
+                          {c.name ?? `${t('sales.customer')} #${c.id}`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {tab === 'refunds' && (
+              <div className="sales-field">
+                <span className="sales-field-label">{t('returns.paymentMethod')}</span>
+                <div className="sales-select">
+                  <select value={paymentMethodFilter} onChange={(e) => setPaymentMethodFilter(e.target.value)}>
+                    <option value="all">{t('returns.allMethods')}</option>
+                    {paymentMethods.map((m) => (
+                      <option key={m.id} value={String(m.id)}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            <div className="sales-field">
+              <span className="sales-field-label">{t('returns.dateRange')}</span>
+              <div className="sales-date-range">
+                <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} aria-label="From date" />
+                <span className="sales-date-dash">–</span>
+                <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} aria-label="To date" />
+              </div>
+            </div>
           </div>
-        )}
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#8a98ab' }}>
-            From
-          </label>
-          <input
-            type="date"
-            value={fromDate}
-            onChange={(e) => setFromDate(e.target.value)}
-            style={{ height: 34, borderRadius: 8, border: '1px solid var(--border)', background: 'white', padding: '0 10px', fontSize: 13 }}
-          />
+          <div className="sales-toolbar-actions">
+            {activeFiltersCount > 0 && (
+              <Button variant="outline" onClick={clearFilters}>
+                <X size={14} />
+                {t('common.clearFilters')}
+              </Button>
+            )}
+          </div>
         </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#8a98ab' }}>
-            To
-          </label>
-          <input
-            type="date"
-            value={toDate}
-            onChange={(e) => setToDate(e.target.value)}
-            style={{ height: 34, borderRadius: 8, border: '1px solid var(--border)', background: 'white', padding: '0 10px', fontSize: 13 }}
-          />
-        </div>
-
-        {activeFiltersCount > 0 && (
-          <Button variant="outline" size="sm" onClick={clearFilters} style={{ height: 34 }}>
-            <X size={13} className="mr-1" /> Clear
-          </Button>
-        )}
       </div>
 
       {/* Table */}
-      <section
-        style={{
-          background: 'white',
-          border: '1px solid var(--border)',
-          borderRadius: 10,
-          overflow: 'hidden',
-        }}
-      >
+      <section className="sales-card">
         {loading ? (
           <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
             {[1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="skeleton" style={{ height: 46, borderRadius: 8 }} />
+              <div key={i} className="skeleton" style={{ height: 46 }} />
             ))}
           </div>
         ) : error ? (
-          <div className="error-state" style={{ padding: 48 }}>
+          <div className="error-state">
             <div className="error-icon">
-              <AlertTriangle size={32} />
+              <AlertTriangle size={28} />
             </div>
-            <strong>Failed to load {tab}</strong>
-            <p style={{ maxWidth: 420, color: '#718198', fontSize: 13, textAlign: 'center' }}>{error}</p>
+            <strong>{t('returns.failedToLoad', { tab })}</strong>
+            <p style={{ maxWidth: 440, fontSize: 13 }}>{error}</p>
             <Button variant="outline" onClick={() => (tab === 'returns' ? fetchReturns() : fetchRefunds())}>
-              Retry
+              <RotateCcw size={14} />
+              {t('common.tryAgain')}
             </Button>
           </div>
         ) : tab === 'returns' ? (
           returns.length === 0 ? (
             <EmptyState
               icon={<ClipboardList size={28} />}
-              title="No returns found"
+              title={t('returns.noReturnsFound')}
               message={
                 activeFiltersCount > 0
-                  ? 'No returns match the current filters.'
-                  : 'No sales returns have been recorded yet.'
+                  ? t('returns.noReturnsMatchFilters')
+                  : t('returns.noReturnsRecorded')
               }
               onClear={activeFiltersCount > 0 ? clearFilters : undefined}
+              t={t}
             />
           ) : (
             <>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <div className="sales-table-wrap">
+                <table className="sales-table">
                   <thead>
-                    <tr style={{ background: '#f8fafc', textAlign: 'left', fontSize: 11, letterSpacing: 0.6, textTransform: 'uppercase', color: '#64748b' }}>
-                      <th style={{ padding: '10px 14px', fontWeight: 700, whiteSpace: 'nowrap' }}>
-                        <SortButton label="Return" active={sortKey === 'id'} onClick={() => handleSort('id')} sortDir={sortDir} />
+                    <tr>
+                      <th>
+                        <SortButton label={t('returns.return')} active={sortKey === 'id'} onClick={() => handleSort('id')} sortDir={sortDir} />
                       </th>
-                      <th style={{ padding: '10px 14px', fontWeight: 700 }}>Sale</th>
-                      <th style={{ padding: '10px 14px', fontWeight: 700 }}>Customer</th>
-                      <th style={{ padding: '10px 14px', fontWeight: 700, whiteSpace: 'nowrap' }}>
-                        <SortButton label="Date" active={sortKey === 'return_date'} onClick={() => handleSort('return_date')} sortDir={sortDir} />
+                      <th>{t('returns.sale')}</th>
+                      <th>{t('sales.customer')}</th>
+                      <th>
+                        <SortButton label={t('common.date')} active={sortKey === 'return_date'} onClick={() => handleSort('return_date')} sortDir={sortDir} />
                       </th>
-                      <th style={{ padding: '10px 14px', fontWeight: 700, textAlign: 'right' }}>
-                        <SortButton label="Value" active={sortKey === 'total_selling_price_returned'} onClick={() => handleSort('total_selling_price_returned')} sortDir={sortDir} align="right" />
+                      <th className="sales-th-right">
+                        <SortButton label={t('returns.value')} active={sortKey === 'total_selling_price_returned'} onClick={() => handleSort('total_selling_price_returned')} sortDir={sortDir} align="right" />
                       </th>
-                      <th style={{ padding: '10px 14px', fontWeight: 700 }}>Status</th>
-                      <th style={{ padding: '10px 14px', fontWeight: 700, textAlign: 'right' }}>Actions</th>
+                      <th>{t('common.status')}</th>
+                      <th className="sales-th-actions">
+                        <span className="sr-only">{t('common.actions')}</span>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     {returns.map((r) => (
-                      <tr key={r.id} style={{ borderTop: '1px solid #f0f4f9' }}>
-                        <td style={{ padding: '12px 14px' }}>
-                          <span style={{ fontWeight: 600 }}>Return #{r.id}</span>
-                          {r.reason && <div style={{ fontSize: 11, color: '#8a98ab', marginTop: 2 }}>{r.reason}</div>}
+                      <tr key={r.id}>
+                        <td>
+                          <span style={{ fontWeight: 600 }}>{t('returns.return')} #{r.id}</span>
+                          {r.reason && <div className="sales-muted" style={{ fontSize: 11, marginTop: 2 }}>{r.reason}</div>}
                         </td>
-                        <td style={{ padding: '12px 14px' }}>
-                          <Link href={`/sales/${r.sale_id}`} style={{ color: 'var(--primary)', fontWeight: 600, textDecoration: 'none' }}>
-                            {saleReference.get(r.sale_id) ?? `Sale #${r.sale_id}`}
+                        <td>
+                          <Link href={`/sales/${r.sale_id}`} className="sales-ref">
+                            {saleReference.get(r.sale_id) ?? `${t('returns.sale')} #${r.sale_id}`}
                           </Link>
                         </td>
-                        <td style={{ padding: '12px 14px', color: '#334155' }}>
-                          {customerName.get(r.sale_id) ?? '—'}
-                        </td>
-                        <td style={{ padding: '12px 14px', color: '#475569', whiteSpace: 'nowrap' }}>{fmtDate(r.return_date)}</td>
-                        <td style={{ padding: '12px 14px', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>
-                          {formatIDR(r.total_selling_price_returned)}
-                        </td>
-                        <td style={{ padding: '12px 14px' }}>
-                          <LifecycleBadge status={r.lifecycle_status} />
-                        </td>
-                        <td style={{ padding: '12px 14px', textAlign: 'right' }}>
-                          <Link
-                            href={`/sales/${r.sale_id}`}
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: 6,
-                              padding: '6px 10px',
-                              borderRadius: 6,
-                              border: '1px solid var(--border)',
-                              background: 'white',
-                              color: '#334155',
-                              fontSize: 12,
-                              fontWeight: 600,
-                              textDecoration: 'none',
-                            }}
-                          >
-                            View sale
+                        <td className="sales-muted">{customerForSale(r.sale_id)}</td>
+                        <td className="sales-muted" style={{ whiteSpace: 'nowrap' }}>{fmtDate(r.return_date)}</td>
+                        <td className="sales-td-right sales-num">{formatIDR(r.total_selling_price_returned)}</td>
+                        <td><LifecycleBadge status={r.lifecycle_status} /></td>
+                        <td className="sales-td-actions">
+                          <Link href={`/sales/${r.sale_id}`} className="sales-ref" style={{ fontSize: 12 }}>
+                            {t('returns.viewSale')}
                           </Link>
                         </td>
                       </tr>
@@ -619,81 +513,66 @@ export default function ReturnsPage() {
                 perPage={perPage}
                 onPageChange={setPage}
                 onPerPageChange={setPerPage}
+                t={t}
               />
             </>
           )
         ) : refunds.length === 0 ? (
           <EmptyState
             icon={<ClipboardList size={28} />}
-            title="No refunds found"
+            title={t('returns.noRefundsFound')}
             message={
               activeFiltersCount > 0
-                ? 'No refunds match the current filters.'
-                : 'No customer refunds have been recorded yet.'
+                ? t('returns.noRefundsMatchFilters')
+                : t('returns.noRefundsRecorded')
             }
             onClear={activeFiltersCount > 0 ? clearFilters : undefined}
+            t={t}
           />
         ) : (
           <>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <div className="sales-table-wrap">
+              <table className="sales-table">
                 <thead>
-                  <tr style={{ background: '#f8fafc', textAlign: 'left', fontSize: 11, letterSpacing: 0.6, textTransform: 'uppercase', color: '#64748b' }}>
-                    <th style={{ padding: '10px 14px', fontWeight: 700, whiteSpace: 'nowrap' }}>
-                      <SortButton label="Refund" active={sortKey === 'id'} onClick={() => handleSort('id')} sortDir={sortDir} />
+                  <tr>
+                    <th>
+                      <SortButton label={t('returns.refund')} active={sortKey === 'id'} onClick={() => handleSort('id')} sortDir={sortDir} />
                     </th>
-                    <th style={{ padding: '10px 14px', fontWeight: 700 }}>Sale</th>
-                    <th style={{ padding: '10px 14px', fontWeight: 700 }}>Customer</th>
-                    <th style={{ padding: '10px 14px', fontWeight: 700, whiteSpace: 'nowrap' }}>
-                      <SortButton label="Date" active={sortKey === 'refund_date'} onClick={() => handleSort('refund_date')} sortDir={sortDir} />
+                    <th>{t('returns.sale')}</th>
+                    <th>{t('sales.customer')}</th>
+                    <th>
+                      <SortButton label={t('common.date')} active={sortKey === 'refund_date'} onClick={() => handleSort('refund_date')} sortDir={sortDir} />
                     </th>
-                    <th style={{ padding: '10px 14px', fontWeight: 700 }}>Method</th>
-                    <th style={{ padding: '10px 14px', fontWeight: 700, textAlign: 'right' }}>
-                      <SortButton label="Amount" active={sortKey === 'amount'} onClick={() => handleSort('amount')} sortDir={sortDir} align="right" />
+                    <th>{t('returns.method')}</th>
+                    <th className="sales-th-right">
+                      <SortButton label={t('sales.amount')} active={sortKey === 'amount'} onClick={() => handleSort('amount')} sortDir={sortDir} align="right" />
                     </th>
-                    <th style={{ padding: '10px 14px', fontWeight: 700, textAlign: 'right' }}>Actions</th>
+                    <th className="sales-th-actions">
+                      <span className="sr-only">{t('common.actions')}</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {refunds.map((r) => (
-                    <tr key={r.id} style={{ borderTop: '1px solid #f0f4f9' }}>
-                      <td style={{ padding: '12px 14px' }}>
-                        <span style={{ fontWeight: 600 }}>Refund #{r.id}</span>
-                        {r.reason && <div style={{ fontSize: 11, color: '#8a98ab', marginTop: 2 }}>{r.reason}</div>}
+                    <tr key={r.id}>
+                      <td>
+                        <span style={{ fontWeight: 600 }}>{t('returns.refund')} #{r.id}</span>
+                        {r.reason && <div className="sales-muted" style={{ fontSize: 11, marginTop: 2 }}>{r.reason}</div>}
                       </td>
-                      <td style={{ padding: '12px 14px' }}>
-                        <Link href={`/sales/${r.sale_id}`} style={{ color: 'var(--primary)', fontWeight: 600, textDecoration: 'none' }}>
-                          {saleReference.get(r.sale_id) ?? `Sale #${r.sale_id}`}
+                      <td>
+                        <Link href={`/sales/${r.sale_id}`} className="sales-ref">
+                          {saleReference.get(r.sale_id) ?? `${t('returns.sale')} #${r.sale_id}`}
                         </Link>
                       </td>
-                      <td style={{ padding: '12px 14px', color: '#334155' }}>
-                        {customerName.get(r.sale_id) ?? '—'}
+                      <td className="sales-muted">{customerForSale(r.sale_id)}</td>
+                      <td className="sales-muted" style={{ whiteSpace: 'nowrap' }}>{fmtDate(r.refund_date)}</td>
+                      <td className="sales-muted">
+                        {paymentMethods.find((m) => m.id === r.payment_method_id)?.name ?? `${t('returns.method')} #${r.payment_method_id}`}
                       </td>
-                      <td style={{ padding: '12px 14px', color: '#475569', whiteSpace: 'nowrap' }}>{fmtDate(r.refund_date)}</td>
-                      <td style={{ padding: '12px 14px', color: '#334155' }}>
-                        {paymentMethods.find((m) => m.id === r.payment_method_id)?.name ?? `Method #${r.payment_method_id}`}
-                      </td>
-                      <td style={{ padding: '12px 14px', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>
-                        {formatIDR(r.amount)}
-                      </td>
-                      <td style={{ padding: '12px 14px', textAlign: 'right' }}>
-                        <Link
-                          href={`/sales/${r.sale_id}`}
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 6,
-                            padding: '6px 10px',
-                            borderRadius: 6,
-                            border: '1px solid var(--border)',
-                            background: 'white',
-                            color: '#334155',
-                            fontSize: 12,
-                            fontWeight: 600,
-                            textDecoration: 'none',
-                          }}
-                        >
-                          View sale
+                      <td className="sales-td-right sales-num">{formatIDR(r.amount)}</td>
+                      <td className="sales-td-actions">
+                        <Link href={`/sales/${r.sale_id}`} className="sales-ref" style={{ fontSize: 12 }}>
+                          {t('returns.viewSale')}
                         </Link>
                       </td>
                     </tr>
@@ -707,74 +586,18 @@ export default function ReturnsPage() {
               perPage={perPage}
               onPageChange={setPage}
               onPerPageChange={setPerPage}
+              t={t}
             />
           </>
         )}
       </section>
 
       {notice && (
-        <div
-          role="status"
-          style={{
-            position: 'fixed',
-            bottom: 20,
-            right: 20,
-            zIndex: 50,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '10px 16px',
-            borderRadius: 10,
-            background: 'var(--foreground)',
-            color: 'white',
-            fontSize: 13,
-            boxShadow: '0 8px 24px rgba(0,0,0,.15)',
-          }}
-        >
+        <div className="sales-toast" role="status">
           {notice}
         </div>
       )}
     </div>
-  )
-}
-
-function SortButton({
-  label,
-  active,
-  onClick,
-  sortDir,
-  align,
-}: {
-  label: string
-  active: boolean
-  onClick: () => void
-  sortDir: 'asc' | 'desc'
-  align?: 'right'
-}) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 4,
-        background: 'none',
-        border: 0,
-        color: 'inherit',
-        font: 'inherit',
-        cursor: 'pointer',
-        flexDirection: align === 'right' ? 'row-reverse' : 'row',
-      }}
-    >
-      {label}
-      <ChevronsUpDown
-        size={12}
-        style={{
-          opacity: active ? 1 : 0.35,
-          transform: active && sortDir === 'asc' ? 'rotate(180deg)' : undefined,
-        }}
-      />
-    </button>
   )
 }
 
@@ -784,54 +607,61 @@ function PaginationFooter({
   perPage,
   onPageChange,
   onPerPageChange,
+  t,
 }: {
   pagination: Pagination
   page: number
   perPage: number
   onPageChange: (p: number) => void
   onPerPageChange: (n: number) => void
+  t: (key: string, params?: Record<string, string | number>) => string
 }) {
+  const rangeStart = pagination.total === 0 ? 0 : (pagination.page - 1) * pagination.per_page + 1
+  const rangeEnd = Math.min(pagination.page * pagination.per_page, pagination.total)
+
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '12px 14px',
-        borderTop: '1px solid var(--border)',
-        fontSize: 13,
-        color: '#718198',
-        flexWrap: 'wrap',
-        gap: 8,
-      }}
-    >
+    <div className="sales-pagination">
       <span>
-        Showing {pagination.total > 0 ? (pagination.page - 1) * pagination.per_page + 1 : 0}–
-        {Math.min(pagination.page * pagination.per_page, pagination.total)} of {pagination.total}
+        {t('common.showing')} {rangeStart}–{rangeEnd} {t('common.of')} {pagination.total}
       </span>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <select
-          value={perPage}
-          onChange={(e) => {
-            onPerPageChange(Number(e.target.value))
-            onPageChange(1)
-          }}
-          style={{ height: 32, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--background)', padding: '0 8px', fontSize: 12 }}
-          aria-label="Rows per page"
+      <div className="sales-pagination-nav">
+        <label className="sales-field" style={{ gap: 0 }}>
+          <span className="sr-only">{t('common.rowsPerPage')}</span>
+          <select
+            className="sales-perpage"
+            aria-label="Rows per page"
+            value={String(perPage)}
+            onChange={(e) => {
+              onPerPageChange(Number(e.target.value))
+              onPageChange(1)
+            }}
+          >
+            <option value={10}>10 / {t('common.page')}</option>
+            <option value={25}>25 / {t('common.page')}</option>
+            <option value={50}>50 / {t('common.page')}</option>
+          </select>
+        </label>
+        <button
+          type="button"
+          className="sales-pager"
+          aria-label="Previous page"
+          disabled={page <= 1}
+          onClick={() => onPageChange(page - 1)}
         >
-          <option value={10}>10 / page</option>
-          <option value={25}>25 / page</option>
-          <option value={50}>50 / page</option>
-        </select>
-        <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>
-          <ChevronLeft size={14} />
-        </Button>
-        <span style={{ fontSize: 12, padding: '0 6px' }}>
-          Page {pagination.page} of {pagination.total_pages}
+          <ChevronLeft size={16} />
+        </button>
+        <span style={{ fontWeight: 600, color: '#475569', fontSize: 13 }}>
+          {pagination.page} / {pagination.total_pages}
         </span>
-        <Button variant="outline" size="sm" disabled={page >= pagination.total_pages} onClick={() => onPageChange(page + 1)}>
-          <ChevronRight size={14} />
-        </Button>
+        <button
+          type="button"
+          className="sales-pager"
+          aria-label="Next page"
+          disabled={page >= pagination.total_pages}
+          onClick={() => onPageChange(page + 1)}
+        >
+          <ChevronRight size={16} />
+        </button>
       </div>
     </div>
   )
@@ -842,22 +672,22 @@ function EmptyState({
   title,
   message,
   onClear,
+  t,
 }: {
   icon: React.ReactNode
   title: string
   message: string
   onClear?: () => void
+  t: (key: string, params?: Record<string, string | number>) => string
 }) {
   return (
-    <div className="error-state" style={{ padding: 48 }}>
-      <div className="error-icon" style={{ background: '#eff6ff', color: 'var(--primary)' }}>
-        {icon}
-      </div>
+    <div className="empty-workspace">
+      <div className="empty-icon">{icon}</div>
       <strong>{title}</strong>
-      <p style={{ maxWidth: 420, color: '#718198', fontSize: 13, textAlign: 'center' }}>{message}</p>
+      <p>{message}</p>
       {onClear && (
         <Button variant="outline" onClick={onClear}>
-          Clear filters
+          {t('common.clearFilters')}
         </Button>
       )}
     </div>

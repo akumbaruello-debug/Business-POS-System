@@ -17,6 +17,7 @@ import {
 import { api } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { useSession } from '@/lib/session'
+import { useLanguage } from '@/lib/i18n'
 import {
   COMPARE_OPTIONS,
   type CompareValue,
@@ -33,7 +34,7 @@ import {
   type Pagination,
   type PeriodComparison,
 } from '@/lib/report-types'
-import { formatIDR, formatInt, formatPct } from '@/lib/format'
+import { formatDate, formatIDR, formatInt, formatPct } from '@/lib/format'
 import { API_BASE_URL } from '@/lib/constants'
 
 // -----------------------------------------------------------------------------
@@ -94,6 +95,7 @@ function isAggregateResponse(body: unknown): body is { data: Record<string, unkn
 export default function ReportsPage() {
   const user = useSession()
   const userCaps = user.capabilities
+  const { t, language } = useLanguage()
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -347,29 +349,29 @@ export default function ReportsPage() {
     if (kind === 'sales') {
       const sd = d as unknown as SalesReportResponse['data']
       metrics.push(
-        { label: 'Revenue', value: formatIDR(sd.revenue) },
-        { label: 'COGS', value: formatIDR(sd.cogs) },
-        { label: 'Gross profit', value: formatIDR(sd.gross_profit) },
-        { label: 'Sales count', value: formatInt(sd.sales_count) },
-        { label: 'Average ticket', value: formatIDR(sd.average_ticket) }
+        { label: t('reports.revenue'), value: formatIDR(sd.revenue, language) },
+        { label: t('reports.cogs'), value: formatIDR(sd.cogs, language) },
+        { label: t('reports.grossProfit'), value: formatIDR(sd.gross_profit, language) },
+        { label: t('reports.salesCount'), value: formatInt(sd.sales_count) },
+        { label: t('reports.averageTicket'), value: formatIDR(sd.average_ticket, language) }
       )
     } else if (kind === 'p-and-l') {
       const pd = d as unknown as PnLReportResponse['data']
       metrics.push(
-        { label: 'Revenue', value: formatIDR(pd.revenue) },
-        { label: 'COGS', value: formatIDR(pd.cogs) },
-        { label: 'Gross profit', value: formatIDR(pd.gross_profit) },
-        { label: 'Other income', value: formatIDR(pd.other_income) },
-        { label: 'Operating expenses', value: formatIDR(pd.operating_expenses) },
-        { label: 'Net profit', value: formatIDR(pd.net_profit) }
+        { label: t('reports.revenue'), value: formatIDR(pd.revenue, language) },
+        { label: t('reports.cogs'), value: formatIDR(pd.cogs, language) },
+        { label: t('reports.grossProfit'), value: formatIDR(pd.gross_profit, language) },
+        { label: t('reports.otherIncome'), value: formatIDR(pd.other_income, language) },
+        { label: t('reports.operatingExpenses'), value: formatIDR(pd.operating_expenses, language) },
+        { label: t('reports.netProfit'), value: formatIDR(pd.net_profit, language) }
       )
     } else if (kind === 'inventory') {
       const id = d as unknown as InventoryReportResponse['data']
       metrics.push(
-        { label: 'Inventory value', value: formatIDR(id.total_inventory_value) },
-        { label: 'Products', value: formatInt(id.products_count) },
-        { label: 'Low stock', value: formatInt(id.low_stock_count) },
-        { label: 'Out of stock', value: formatInt(id.out_of_stock_count) }
+        { label: t('reports.inventoryValue'), value: formatIDR(id.total_inventory_value, language) },
+        { label: t('reports.products'), value: formatInt(id.products_count) },
+        { label: t('reports.lowStock'), value: formatInt(id.low_stock_count) },
+        { label: t('reports.outOfStock'), value: formatInt(id.out_of_stock_count) }
       )
     } else {
       // Fallback for any aggregate we didn't explicitly model.
@@ -390,7 +392,7 @@ export default function ReportsPage() {
             </div>
             <div className="metric-value">{m.value}</div>
             <div className="metric-change">
-              <span className="change-note">Current period</span>
+              <span className="change-note">{t('reports.currentPeriod')}</span>
             </div>
           </article>
         ))}
@@ -411,7 +413,7 @@ export default function ReportsPage() {
           return (
             <article key={k} className="metric-card">
               <div className="metric-top">
-                <span className="metric-label">{humanLabel(k)} change</span>
+                <span className="metric-label">{t('reports.change', { label: humanLabel(k) })}</span>
                 <span className="metric-icon">
                   <BarChart3 size={17} />
                 </span>
@@ -441,11 +443,11 @@ export default function ReportsPage() {
           <div className="empty-icon">
             <FileText size={26} />
           </div>
-          <strong>No records found</strong>
+          <strong>{t('reports.noRecordsFound')}</strong>
           <p>
             {activeFilterCount > 0
-              ? 'No records match the current filters.'
-              : 'Records will appear here once available.'}
+              ? t('reports.noRecordsMatchFilters')
+              : t('reports.recordsAppearHere')}
           </p>
         </div>
       )
@@ -467,7 +469,7 @@ export default function ReportsPage() {
                 <tr key={idx}>
                   {columns.map((col) => (
                     <td key={col} className={isNumeric(row[col]) ? 'sales-td-right sales-num' : ''}>
-                      {formatCell(row[col])}
+                      {formatCell(row[col], language)}
                     </td>
                   ))}
                 </tr>
@@ -533,7 +535,7 @@ export default function ReportsPage() {
       <div className="content">
         <div className="page-heading">
           <div>
-            <h1>Reports</h1>
+            <h1>{t('reports.title')}</h1>
             <p>Business reporting and exports</p>
           </div>
         </div>
@@ -552,9 +554,9 @@ export default function ReportsPage() {
     <div className="content">
       <div className="page-heading">
         <div>
-          <div className="eyebrow">Business insights</div>
-          <h1>Reports</h1>
-          <p>Search, filter, compare periods, and export report data.</p>
+          <div className="eyebrow">{t('reports.eyebrow')}</div>
+          <h1>{t('reports.title')}</h1>
+          <p>{t('reports.subtitle')}</p>
         </div>
         <div className="heading-actions">
           <Button variant="outline" onClick={fetchReport} disabled={loading}>
@@ -564,7 +566,7 @@ export default function ReportsPage() {
           {canExport && (
             <Button onClick={() => setExportOpen(true)}>
               <Download size={14} />
-              Export
+              {t('reports.export')}
             </Button>
           )}
         </div>
@@ -574,7 +576,7 @@ export default function ReportsPage() {
         <div className="reports-toolbar-row">
           <div className="reports-toolbar-fields">
             <div className="sales-field">
-              <span className="sales-field-label">Report</span>
+              <span className="sales-field-label">{t('reports.report')}</span>
               <div className="sales-select">
                 <select
                   aria-label="Select report"
@@ -589,7 +591,7 @@ export default function ReportsPage() {
                 >
                   {availableReports.map((r) => (
                     <option key={r.kind} value={r.kind}>
-                      {r.label}
+                      {t(r.labelKey) || r.label}
                     </option>
                   ))}
                 </select>
@@ -598,7 +600,7 @@ export default function ReportsPage() {
             </div>
 
             <div className="sales-field">
-              <span className="sales-field-label">Period</span>
+              <span className="sales-field-label">{t('reports.period')}</span>
               <div className="sales-select">
                 <select
                   aria-label="Period"
@@ -607,7 +609,7 @@ export default function ReportsPage() {
                 >
                   {PERIOD_OPTIONS.map((o) => (
                     <option key={o.value} value={o.value}>
-                      {o.label}
+                      {t(o.labelKey) || o.label}
                     </option>
                   ))}
                 </select>
@@ -617,7 +619,7 @@ export default function ReportsPage() {
 
             {period === 'custom' && (
               <div className="sales-field">
-                <span className="sales-field-label">Date range</span>
+                <span className="sales-field-label">{t('reports.dateRange')}</span>
                 <div className="sales-date-range">
                   <CalendarIcon />
                   <input
@@ -641,7 +643,7 @@ export default function ReportsPage() {
 
             {supportsComparison(kind) && (
               <div className="sales-field">
-                <span className="sales-field-label">Compare</span>
+                <span className="sales-field-label">{t('reports.compare')}</span>
                 <div className="sales-select">
                   <select
                     aria-label="Compare to previous period"
@@ -668,7 +670,7 @@ export default function ReportsPage() {
                     aria-label="Search report"
                     value={searchInput}
                     onChange={(e) => setSearchInput(e.target.value)}
-                    placeholder="Search records…"
+                    placeholder={t('reports.searchPlaceholder')}
                   />
                 </div>
               </div>
@@ -676,7 +678,7 @@ export default function ReportsPage() {
 
             {hasSort(kind) && (
               <div className="sales-field">
-                <span className="sales-field-label">Sort</span>
+                <span className="sales-field-label">{t('reports.sort')}</span>
                 <div className="sales-select">
                   <select
                     aria-label="Sort by"
@@ -722,7 +724,7 @@ export default function ReportsPage() {
         </div>
         {customInvalid && (
           <div style={{ marginTop: 8, fontSize: 12, color: '#dc2626' }}>
-            Pick a valid from/to date range.
+            {t('reports.customRangeInvalid')}
           </div>
         )}
       </div>
@@ -755,7 +757,7 @@ export default function ReportsPage() {
 
       {exportOpen && (
         <ExportDialog
-          reportLabel={currentOption.label}
+          reportLabel={t(currentOption.labelKey) || currentOption.label}
           format={exportFormat}
           setFormat={setExportFormat}
           job={exportJob}
@@ -763,6 +765,7 @@ export default function ReportsPage() {
           downloading={exportDownloading}
           onSubmit={handleExport}
           onDownload={handleDownload}
+          t={t}
           onClose={() => {
             if (exportSubmitting || exportDownloading) return
             setExportOpen(false)
@@ -788,6 +791,7 @@ function ExportDialog({
   onSubmit,
   onDownload,
   onClose,
+  t,
 }: {
   reportLabel: string
   format: 'pdf' | 'xlsx'
@@ -798,6 +802,7 @@ function ExportDialog({
   onSubmit: () => void
   onDownload: () => void
   onClose: () => void
+  t: (key: string, params?: Record<string, string | number>) => string
 }) {
   return (
     <div
@@ -841,8 +846,8 @@ function ExportDialog({
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <Download size={18} color="var(--primary)" />
             <div>
-              <div style={{ fontSize: 16, fontWeight: 700 }}>Export {reportLabel}</div>
-              <div style={{ fontSize: 12, color: 'var(--muted)' }}>PDF or Excel report</div>
+              <div style={{ fontSize: 16, fontWeight: 700 }}>{t('reports.exportTitle', { report: reportLabel })}</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)' }}>{t('reports.exportSubtitle')}</div>
             </div>
           </div>
           <button
@@ -860,7 +865,7 @@ function ExportDialog({
             <>
               <div>
                 <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                  Format
+                  {t('reports.format')}
                 </label>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   {(['pdf', 'xlsx'] as const).map((f) => {
@@ -890,7 +895,7 @@ function ExportDialog({
                 </div>
               </div>
               <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-                The export will use the current report filters.
+                {t('reports.exportUsesFilters')}
               </div>
             </>
           )}
@@ -910,9 +915,9 @@ function ExportDialog({
               <Loader2 size={20} color="var(--primary)" className="spin" />
               <div>
                 <div style={{ fontSize: 13, fontWeight: 600 }}>
-                  {job.status === 'queued' ? 'Queued…' : 'Generating export…'}
+                  {job.status === 'queued' ? t('reports.queued') : t('reports.generating')}
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--muted)' }}>Job {job.export_id}</div>
+                <div style={{ fontSize: 11, color: 'var(--muted)' }}>{t('reports.job', { id: job.export_id })}</div>
               </div>
             </div>
           )}
@@ -931,8 +936,8 @@ function ExportDialog({
             >
               <div style={{ color: '#059669' }}>✓</div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#065f46' }}>Export ready</div>
-                <div style={{ fontSize: 11, color: '#047857' }}>Job {job.export_id}</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#065f46' }}>{t('reports.exportReady')}</div>
+                <div style={{ fontSize: 11, color: '#047857' }}>{t('reports.job', { id: job.export_id })}</div>
               </div>
             </div>
           )}
@@ -951,8 +956,8 @@ function ExportDialog({
             >
               <X size={20} color="#dc2626" />
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#991b1b' }}>Export failed</div>
-                <div style={{ fontSize: 12, color: '#b91c1c' }}>{job.error || 'Unknown error'}</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#991b1b' }}>{t('reports.exportFailed')}</div>
+                <div style={{ fontSize: 12, color: '#b91c1c' }}>{job.error || t('reports.unknownError')}</div>
               </div>
             </div>
           )}
@@ -975,10 +980,10 @@ function ExportDialog({
               <Button onClick={onSubmit} disabled={submitting}>
                 {submitting ? (
                   <>
-                    <Loader2 size={14} className="spin" /> Submitting…
+                    <Loader2 size={14} className="spin" /> {t('reports.submitting')}
                   </>
                 ) : (
-                  <>Generate {format.toUpperCase()}</>
+                  <>{t('reports.generate', { format: format.toUpperCase() })}</>
                 )}
               </Button>
             </>
@@ -991,11 +996,11 @@ function ExportDialog({
               <Button onClick={onDownload} disabled={downloading}>
                 {downloading ? (
                   <>
-                    <Loader2 size={14} className="spin" /> Downloading…
+                    <Loader2 size={14} className="spin" /> {t('reports.downloading')}
                   </>
                 ) : (
                   <>
-                    <Download size={14} /> Download
+                    <Download size={14} /> {t('reports.download')}
                   </>
                 )}
               </Button>
@@ -1011,7 +1016,7 @@ function ExportDialog({
                   onSubmit()
                 }}
               >
-                Try again
+                {t('reports.tryAgain')}
               </Button>
               <Button onClick={onClose}>Close</Button>
             </>
@@ -1048,15 +1053,15 @@ function isDateLike(value: unknown): boolean {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value)
 }
 
-function formatCell(value: unknown): string {
+function formatCell(value: unknown, locale = 'id-ID'): string {
   if (value === null || value === undefined) return '—'
   if (isDateLike(value)) {
     const d = new Date(value as string)
-    return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleDateString('id-ID')
+    return Number.isNaN(d.getTime()) ? String(value) : formatDate(d, locale)
   }
   if (isNumeric(value)) {
     const n = typeof value === 'number' ? value : Number(value)
-    return formatIDR(n)
+    return formatIDR(n, locale)
   }
   return String(value)
 }

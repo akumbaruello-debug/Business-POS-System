@@ -7,47 +7,56 @@ import {
   LayoutDashboard,
   Package,
   PieChart,
+  Settings,
   Store,
   Truck,
   Users,
 } from 'lucide-react'
 import { useSession, initialsFor } from '@/lib/session'
+import { useLanguage } from '@/lib/i18n'
 
 // Only routes with implemented pages ship. Dead sections have no page yet,
 // so their links are withheld rather than 404ing. Reintroduce a group when
 // its first page lands.
-const navigation = [
-  { label: 'Overview', items: [{ label: 'Dashboard', icon: LayoutDashboard, href: '/dashboard' }] },
-  {
-    label: 'Inventory',
-    items: [
-      { label: 'Products', icon: Package, href: '/products' },
-      { label: 'Inventory', icon: Boxes, href: '/inventory' },
-    ],
-  },
-  {
-    label: 'Customers',
-    items: [{ label: 'Customers', icon: Users, href: '/customers' }],
-  },
-  {
-    label: 'Sales',
-    items: [
-      { label: 'Sales', icon: FileText, href: '/sales' },
-      { label: 'Returns & refunds', icon: ClipboardList, href: '/sales/returns' },
-    ],
-  },
-  {
-    label: 'Purchasing',
-    items: [
-      { label: 'Purchases', icon: ClipboardList, href: '/purchases' },
-      { label: 'Suppliers', icon: Truck, href: '/suppliers' },
-    ],
-  },
-  {
-    label: 'Reports',
-    items: [{ label: 'Reports', icon: PieChart, href: '/reports' }],
-  },
-] as const
+function useNavigation() {
+  const { t } = useLanguage()
+  return [
+    { label: t('nav.overview'), items: [{ label: t('nav.dashboard'), icon: LayoutDashboard, href: '/dashboard' }] },
+    {
+      label: t('nav.inventory'),
+      items: [
+        { label: t('nav.products'), icon: Package, href: '/products' },
+        { label: t('nav.inventory'), icon: Boxes, href: '/inventory' },
+      ],
+    },
+    {
+      label: t('nav.customers'),
+      items: [{ label: t('nav.customers'), icon: Users, href: '/customers' }],
+    },
+    {
+      label: t('nav.sales'),
+      items: [
+        { label: t('nav.sales'), icon: FileText, href: '/sales' },
+        { label: t('nav.returnsRefunds'), icon: ClipboardList, href: '/sales/returns' },
+      ],
+    },
+    {
+      label: t('nav.purchasing'),
+      items: [
+        { label: t('nav.purchases'), icon: ClipboardList, href: '/purchases' },
+        { label: t('nav.suppliers'), icon: Truck, href: '/suppliers' },
+      ],
+    },
+    {
+      label: t('nav.reports'),
+      items: [{ label: t('nav.reports'), icon: PieChart, href: '/reports' }],
+    },
+    {
+      label: t('nav.settings'),
+      items: [{ label: t('nav.settings'), icon: Settings, href: '/settings' }],
+    },
+  ] as const
+}
 
 export function Sidebar({
   collapsed,
@@ -62,6 +71,7 @@ export function Sidebar({
 }) {
   const user = useSession()
   const initials = initialsFor(user)
+  const navigation = useNavigation()
   return (
     <aside
       className={`sidebar ${collapsed ? 'sidebar-collapsed' : ''} ${mobileOpen ? 'sidebar-mobile-open' : ''}`}

@@ -3,10 +3,12 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { login } from '@/lib/auth'
+import { useLanguage } from '@/lib/i18n'
 import { Button } from '@/components/ui/button'
 
 export default function LoginPage() {
   const router = useRouter()
+  const { t } = useLanguage()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -21,7 +23,7 @@ export default function LoginPage() {
       await login(username, password)
       router.push('/dashboard')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed')
+      setError(err instanceof Error ? err.message : t('login.failed'))
       setLoading(false)
     }
   }
@@ -33,14 +35,14 @@ export default function LoginPage() {
           <div className="inline-flex items-center justify-center w-12 h-12 bg-primary rounded-lg text-white font-bold text-xl mb-3">
             <span>🐟</span>
           </div>
-          <h1 className="text-2xl font-bold text-foreground">Perikanan Indonesia</h1>
-          <p className="text-muted-foreground text-sm mt-1">Sign in to your account</p>
+          <h1 className="text-2xl font-bold text-foreground">{t('login.title')}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{t('login.subtitle')}</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label htmlFor="username" className="block text-sm font-medium text-foreground mb-1">
-              Username
+              {t('login.username')}
             </label>
             <input
               id="username"
@@ -54,7 +56,7 @@ export default function LoginPage() {
           </div>
           <div>
             <label htmlFor="password" className="block text-sm font-medium text-foreground mb-1">
-              Password
+              {t('login.password')}
             </label>
             <input
               id="password"
@@ -74,7 +76,7 @@ export default function LoginPage() {
           )}
 
           <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? 'Signing in...' : 'Sign in'}
+            {loading ? t('login.signingIn') : t('login.signIn')}
           </Button>
         </form>
       </div>
