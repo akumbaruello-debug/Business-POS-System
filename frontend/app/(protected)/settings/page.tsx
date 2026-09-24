@@ -1,5 +1,7 @@
 'use client'
 
+import Link from 'next/link'
+import { useSession } from '@/lib/session'
 import { useLanguage, type Language } from '@/lib/i18n'
 
 const LANGUAGES: { value: Language; labelKey: string }[] = [
@@ -9,6 +11,8 @@ const LANGUAGES: { value: Language; labelKey: string }[] = [
 
 export default function SettingsPage() {
   const { language, setLanguage, t } = useLanguage()
+  const user = useSession()
+  const canManageCostTypes = user.capabilities.includes('cost_type.manage')
 
   return (
     <div className="p-6 space-y-6 max-w-2xl">
@@ -57,6 +61,27 @@ export default function SettingsPage() {
           </p>
         </div>
       </div>
+
+      {canManageCostTypes && (
+        <div className="rounded-lg border bg-card text-card-foreground shadow-sm">
+          <div className="flex flex-col space-y-1.5 p-6 pb-3">
+            <h3 className="text-base font-semibold leading-none tracking-tight">
+              {t('costTypes.title')}
+            </h3>
+          </div>
+          <div className="p-6 pt-0 space-y-4">
+            <p className="text-sm text-muted-foreground">
+              {t('costTypes.settingsDescription')}
+            </p>
+            <Link
+              href="/settings/cost-types"
+              className="inline-flex items-center text-sm font-medium text-primary hover:underline"
+            >
+              {t('costTypes.manageLink')} →
+            </Link>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
