@@ -3,6 +3,7 @@
 import {
   Boxes,
   ClipboardList,
+  Factory,
   FileText,
   LayoutDashboard,
   Package,
@@ -63,6 +64,10 @@ function useNavigation(): NavGroup[] {
     {
       label: t('nav.reports'),
       items: [{ label: t('nav.reports'), icon: PieChart, href: '/reports' }],
+    },
+    {
+      label: t('nav.production'),
+      items: [{ label: t('nav.production'), icon: Factory, href: '/production', required: 'production.view' }],
     },
     {
       label: t('nav.administration'),

@@ -25,6 +25,7 @@ import {
   PERIOD_OPTIONS,
   type PeriodValue,
   type PnLReportResponse,
+  type ProductionReportResponse,
   type ReportKind,
   type ReportOption,
   REPORT_OPTIONS,

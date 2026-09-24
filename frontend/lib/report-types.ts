@@ -73,6 +73,22 @@ export interface PnLData {
 
 export type PnLReportResponse = AggregateReportResponse<PnLData>
 
+export interface ProductionReportRow {
+  run_id: number
+  run_date: string
+  lifecycle_status: string
+  output_product_id: number
+  output_product_name: string
+  output_quantity: number
+  finished_unit_cost: number
+  total_raw_cost: number
+  total_overhead_cost: number
+  created_at: string
+  posted_at: string | null
+}
+
+export type ProductionReportResponse = PagedReportResponse<ProductionReportRow>
+
 /** Untyped row for list-based reports. Backend row shapes are stable but vary per report. */
 export type ReportRow = Record<string, unknown>
 
