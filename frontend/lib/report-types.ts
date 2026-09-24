@@ -101,46 +101,47 @@ export type ReportKind =
 export interface ReportOption {
   kind: ReportKind
   label: string
+  labelKey: string
   /** Capability required beyond report.view. */
   extraCapability?: 'finance.view_profit' | 'finance.view_payables_receivables'
 }
 
 export const REPORT_OPTIONS: ReportOption[] = [
-  { kind: 'sales', label: 'Sales' },
-  { kind: 'purchases', label: 'Purchases' },
-  { kind: 'inventory', label: 'Inventory' },
-  { kind: 'inventory-movements', label: 'Inventory movements' },
-  { kind: 'sales-returns', label: 'Sales returns' },
-  { kind: 'purchase-returns', label: 'Purchase returns' },
-  { kind: 'production', label: 'Production' },
-  { kind: 'manual-income', label: 'Manual income' },
-  { kind: 'manual-expense', label: 'Manual expense' },
-  { kind: 'refunds', label: 'Refunds' },
-  { kind: 'supplier-repayments', label: 'Supplier repayments' },
-  { kind: 'cash-flow', label: 'Cash flow' },
-  { kind: 'p-and-l', label: 'P&L', extraCapability: 'finance.view_profit' },
-  { kind: 'receivables', label: 'Receivables', extraCapability: 'finance.view_payables_receivables' },
-  { kind: 'payables', label: 'Payables', extraCapability: 'finance.view_payables_receivables' },
-  { kind: 'supplier-receivables', label: 'Supplier receivables', extraCapability: 'finance.view_payables_receivables' },
-  { kind: 'customer-refund-liabilities', label: 'Customer refund liabilities', extraCapability: 'finance.view_payables_receivables' },
+  { kind: 'sales', label: 'Sales', labelKey: 'reports.kind.sales' },
+  { kind: 'purchases', label: 'Purchases', labelKey: 'reports.kind.purchases' },
+  { kind: 'inventory', label: 'Inventory', labelKey: 'reports.kind.inventory' },
+  { kind: 'inventory-movements', label: 'Inventory movements', labelKey: 'reports.kind.inventoryMovements' },
+  { kind: 'sales-returns', label: 'Sales returns', labelKey: 'reports.kind.salesReturns' },
+  { kind: 'purchase-returns', label: 'Purchase returns', labelKey: 'reports.kind.purchaseReturns' },
+  { kind: 'production', label: 'Production', labelKey: 'reports.kind.production' },
+  { kind: 'manual-income', label: 'Manual income', labelKey: 'reports.kind.manualIncome' },
+  { kind: 'manual-expense', label: 'Manual expense', labelKey: 'reports.kind.manualExpense' },
+  { kind: 'refunds', label: 'Refunds', labelKey: 'reports.kind.refunds' },
+  { kind: 'supplier-repayments', label: 'Supplier repayments', labelKey: 'reports.kind.supplierRepayments' },
+  { kind: 'cash-flow', label: 'Cash flow', labelKey: 'reports.kind.cashFlow' },
+  { kind: 'p-and-l', label: 'P&L', labelKey: 'reports.kind.profitAndLoss', extraCapability: 'finance.view_profit' },
+  { kind: 'receivables', label: 'Receivables', labelKey: 'reports.kind.receivables', extraCapability: 'finance.view_payables_receivables' },
+  { kind: 'payables', label: 'Payables', labelKey: 'reports.kind.payables', extraCapability: 'finance.view_payables_receivables' },
+  { kind: 'supplier-receivables', label: 'Supplier receivables', labelKey: 'reports.kind.supplierReceivables', extraCapability: 'finance.view_payables_receivables' },
+  { kind: 'customer-refund-liabilities', label: 'Customer refund liabilities', labelKey: 'reports.kind.customerRefundLiabilities', extraCapability: 'finance.view_payables_receivables' },
 ] as const
 
 export const PERIOD_OPTIONS = [
-  { value: 'today', label: 'Today' },
-  { value: 'this_week', label: 'This week' },
-  { value: 'this_month', label: 'This month' },
-  { value: 'this_year', label: 'This year' },
-  { value: 'custom', label: 'Custom range' },
+  { value: 'today', label: 'Today', labelKey: 'reports.period.today' },
+  { value: 'this_week', label: 'This week', labelKey: 'reports.period.thisWeek' },
+  { value: 'this_month', label: 'This month', labelKey: 'reports.period.thisMonth' },
+  { value: 'this_year', label: 'This year', labelKey: 'reports.period.thisYear' },
+  { value: 'custom', label: 'Custom range', labelKey: 'reports.period.customRange' },
 ] as const
 
 export type PeriodValue = (typeof PERIOD_OPTIONS)[number]['value']
 
 export const COMPARE_OPTIONS = [
-  { value: 'none', label: 'No comparison' },
-  { value: 'today', label: 'vs previous day' },
-  { value: 'this_week', label: 'vs previous week' },
-  { value: 'this_month', label: 'vs previous month' },
-  { value: 'this_year', label: 'vs previous year' },
+  { value: 'none', label: 'No comparison', labelKey: 'reports.compare.none' },
+  { value: 'today', label: 'vs previous day', labelKey: 'reports.compare.vsPrevDay' },
+  { value: 'this_week', label: 'vs previous week', labelKey: 'reports.compare.vsPrevWeek' },
+  { value: 'this_month', label: 'vs previous month', labelKey: 'reports.compare.vsPrevMonth' },
+  { value: 'this_year', label: 'vs previous year', labelKey: 'reports.compare.vsPrevYear' },
 ] as const
 
 export type CompareValue = (typeof COMPARE_OPTIONS)[number]['value']

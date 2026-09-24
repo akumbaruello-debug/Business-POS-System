@@ -21,6 +21,7 @@ import { api } from '@/lib/api-client'
 import type { Contact, ContactListResponse, Pagination } from '@/lib/contact-types'
 import { formatIDR } from '@/lib/format'
 import { Button } from '@/components/ui/button'
+import { useLanguage } from '@/lib/i18n'
 
 // ---------------------------------------------------------------------------
 // Backend contract notes (from openapi.yaml):
@@ -46,10 +47,6 @@ const DEFAULT_PAGINATION: Pagination = {
   page: 1, per_page: 25, total: 0, total_pages: 1, has_next: false, has_prev: false,
 }
 
-function statusLabel(c: Contact): 'Active' | 'Inactive' {
-  return c.is_active ? 'Active' : 'Inactive'
-}
-
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString('id-ID', { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
@@ -69,6 +66,7 @@ type CustomerSummary = {
 }
 
 export default function CustomersPage() {
+  const { t } = useLanguage()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [customers, setCustomers] = useState<Contact[]>([])
@@ -204,7 +202,7 @@ export default function CustomersPage() {
       fetchCustomers()
     } catch (err: any) {
       if (err?.code === 'version_mismatch') {
-        toast('Customer was modified by another user. Please refresh and try again.')
+        toast(t('customers.staleRetry'))
       } else {
         toast(err instanceof Error ? err.message : 'Reactivate failed')
       }
@@ -270,7 +268,7 @@ export default function CustomersPage() {
       }, {
         headers: { 'Idempotency-Key': crypto.randomUUID() },
       })
-      toast('Customer created')
+      toast(t('customers.createdToast'))
       setDialog(null)
       fetchCustomers()
     } catch (err) {
@@ -308,14 +306,14 @@ export default function CustomersPage() {
           ...etagHeader(activeCustomer),
         },
       })
-      toast('Customer updated')
+      toast(t('customers.updatedToast'))
       setDialog(null)
       setActiveCustomer(null)
       fetchCustomers()
     } catch (err) {
       const code = (err as Error & { code?: string }).code
       if (code === 'version_mismatch') {
-        toast('Customer was modified by another user. Please refresh.')
+        toast(t('customers.staleRefresh'))
         fetchCustomers()
       } else if (code === 'conflict') {
         setFormErrors({ name: 'A contact with this name already exists' })
@@ -357,9 +355,9 @@ export default function CustomersPage() {
       <div className="content">
         <div className="page-heading">
           <div>
-            <div className="eyebrow">CRM / Customers</div>
-            <h1>Customers</h1>
-            <p>Manage customer relationships and purchase history.</p>
+            <div className="eyebrow">{t('customers.eyebrow')}</div>
+            <h1>{t('customers.title')}</h1>
+            <p>{t('customers.subtitle')}</p>
           </div>
         </div>
         <div className="error-state">
@@ -377,14 +375,14 @@ export default function CustomersPage() {
       {/* Page heading */}
       <div className="page-heading">
         <div>
-          <div className="eyebrow">CRM / Customers</div>
-          <h1>Customers</h1>
-          <p>Manage customer relationships and purchase history.</p>
+          <div className="eyebrow">{t('customers.eyebrow')}</div>
+          <h1>{t('customers.title')}</h1>
+          <p>{t('customers.subtitle')}</p>
         </div>
         <div className="heading-actions">
 
           {canCreate && (
-            <Button onClick={openAdd}><Plus size={14} /> Add customer</Button>
+            <Button onClick={openAdd}><Plus size={14} /> {t('customers.addCustomer')}</Button>
           )}
         </div>
       </div>
@@ -393,15 +391,15 @@ export default function CustomersPage() {
       <section className="metrics">
         <article className="metric-card">
           <div className="metric-top">
-            <span className="metric-label">Total customers</span>
+            <span className="metric-label">{t('customers.totalCustomers')}</span>
             <span className="metric-icon"><Users size={18} /></span>
           </div>
           <div className="metric-value">{loading ? '—' : pagination.total}</div>
-          <div className="metric-change positive"><span className="change-note">Across all segments</span></div>
+          <div className="metric-change positive"><span className="change-note">{t('customers.acrossAllSegments')}</span></div>
         </article>
         <article className="metric-card">
           <div className="metric-top">
-            <span className="metric-label">Active customers</span>
+            <span className="metric-label">{t('customers.activeCustomers')}</span>
             <span className="metric-icon"><Check size={18} /></span>
           </div>
           <div className="metric-value">{loading ? '—' : activeCount}</div>
@@ -409,7 +407,7 @@ export default function CustomersPage() {
         </article>
         <article className="metric-card">
           <div className="metric-top">
-            <span className="metric-label">Inactive customers</span>
+            <span className="metric-label">{t('customers.inactiveCustomers')}</span>
             <span className="metric-icon"><AlertCircle size={18} /></span>
           </div>
           <div className="metric-value">{loading ? '—' : inactiveCount}</div>
@@ -427,7 +425,7 @@ export default function CustomersPage() {
                 aria-label="Search customers"
                 value={query}
                 onChange={(e) => { setQuery(e.target.value); setPage(1) }}
-                placeholder="Search name, phone, email..."
+                placeholder={t('customers.searchPlaceholder')}
                 style={{ width: '100%', height: 36, paddingLeft: 32, paddingRight: 12, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--background)', fontSize: 13, outline: 'none' }}
               />
             </div>
@@ -437,11 +435,11 @@ export default function CustomersPage() {
               onChange={(e) => { setStatusFilter(e.target.value as typeof statusFilter); setPage(1) }}
               style={{ height: 36, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--background)', padding: '0 10px', fontSize: 13 }}
             >
-              <option value="all">All status</option>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
+              <option value="all">{t('customers.allStatus')}</option>
+              <option value="active">{t('common.active')}</option>
+              <option value="inactive">{t('common.inactive')}</option>
             </select>
-            <Button variant="ghost" size="sm" onClick={() => { setQuery(''); setStatusFilter('all'); setPage(1) }}>Clear filters</Button>
+            <Button variant="ghost" size="sm" onClick={() => { setQuery(''); setStatusFilter('all'); setPage(1) }}>{t('common.clearFilters')}</Button>
           </div>
           {selected.size > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: '#eff6ff', borderRadius: 6, fontSize: 13 }}>
@@ -460,12 +458,12 @@ export default function CustomersPage() {
         ) : customers.length === 0 ? (
           <div className="empty-workspace">
             <div className="empty-icon"><Users size={22} /></div>
-            <strong>No customers found</strong>
+            <strong>{t('customers.noCustomersFound')}</strong>
             <p>Try adjusting your search or filters.</p>
             <div style={{ display: 'flex', gap: 8 }}>
-              <Button variant="outline" onClick={() => { setQuery(''); setStatusFilter('all'); setPage(1) }}>Clear filters</Button>
+              <Button variant="outline" onClick={() => { setQuery(''); setStatusFilter('all'); setPage(1) }}>{t('common.clearFilters')}</Button>
               {canCreate && (
-                <Button onClick={openAdd}>Add customer</Button>
+                <Button onClick={openAdd}>{t('customers.addCustomer')}</Button>
               )}
             </div>
           </div>
@@ -479,14 +477,14 @@ export default function CustomersPage() {
                     <th style={{ width: 44, padding: '10px 14px' }}>
                       <input type="checkbox" aria-label="Select all customers" checked={customers.length > 0 && customers.every((c) => selected.has(c.id))} onChange={toggleAll} />
                     </th>
-                    {([['name', 'Customer'], ['phone', 'Phone'], ['email', 'Email'], ['type', 'Type'], ['created_at', 'Created'], ['is_active', 'Status']] as const).map(([key, label]) => (
+                    {([['name', t('customers.customer')], ['phone', t('common.phone')], ['email', t('common.email')], ['type', 'Type'], ['created_at', t('customers.created')], ['is_active', t('common.status')]] as const).map(([key, label]) => (
                       <th key={key} style={{ padding: '10px 14px' }}>
                         <button onClick={() => handleSort(key)} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 600, background: 'none', border: 0, cursor: 'pointer', color: sortKey === key ? 'var(--primary)' : 'inherit' }}>
                           {label}<ChevronsUpDown size={12} />
                         </button>
                       </th>
                     ))}
-                    <th style={{ padding: '10px 14px' }}>Actions</th>
+                    <th style={{ padding: '10px 14px' }}>{t('common.actions')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -507,7 +505,7 @@ export default function CustomersPage() {
                       <td style={{ padding: '12px 14px' }}>{fmtDate(c.created_at)}</td>
                       <td style={{ padding: '12px 14px' }}>
                         <span style={{ display: 'inline-block', padding: '2px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600, background: c.is_active ? '#ecfdf5' : '#f1f5f9', color: c.is_active ? '#059669' : '#64748b' }}>
-                          {statusLabel(c)}
+                          {c.is_active ? t('common.active') : t('common.inactive')}
                         </span>
                       </td>
                       <td style={{ padding: '12px 14px', position: 'relative' }}>
@@ -516,9 +514,9 @@ export default function CustomersPage() {
                         </button>
                         {menuOpen === c.id && (
                           <div style={{ position: 'absolute', right: 14, top: 40, zIndex: 30, width: 200, background: 'white', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 8px 24px rgba(0,0,0,.1)', padding: 4 }}>
-                            <button onClick={() => openView(c)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><Eye size={14} /> View customer</button>
+                            <button onClick={() => openView(c)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><Eye size={14} /> {t('customers.viewCustomer')}</button>
                             {canEdit && (
-                              <button onClick={() => openEdit(c)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><Pencil size={14} /> Edit customer</button>
+                              <button onClick={() => openEdit(c)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><Pencil size={14} /> {t('customers.editCustomer')}</button>
                             )}
 
                             {c.is_active ? (
@@ -547,14 +545,14 @@ export default function CustomersPage() {
                       <div style={{ fontSize: 11, color: '#718198' }}>{c.type}</div>
                     </div>
                     <span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600, background: c.is_active ? '#ecfdf5' : '#f1f5f9', color: c.is_active ? '#059669' : '#64748b' }}>
-                      {statusLabel(c)}
+                      {c.is_active ? t('common.active') : t('common.inactive')}
                     </span>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 12, fontSize: 13 }}>
-                    <div><span style={{ fontSize: 11, color: '#718198' }}>Phone</span><div>{c.phone ?? '—'}</div></div>
-                    <div><span style={{ fontSize: 11, color: '#718198' }}>Email</span><div>{c.email ?? '—'}</div></div>
+                    <div><span style={{ fontSize: 11, color: '#718198' }}>{t('common.phone')}</span><div>{c.phone ?? '—'}</div></div>
+                    <div><span style={{ fontSize: 11, color: '#718198' }}>{t('common.email')}</span><div>{c.email ?? '—'}</div></div>
                   </div>
-                  <Button variant="outline" size="sm" style={{ width: '100%', marginTop: 12 }} onClick={() => openView(c)}>View customer</Button>
+                  <Button variant="outline" size="sm" style={{ width: '100%', marginTop: 12 }} onClick={() => openView(c)}>{t('customers.viewCustomer')}</Button>
                 </article>
               ))}
             </div>
@@ -590,20 +588,20 @@ export default function CustomersPage() {
           <div style={{ width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto', background: 'white', borderRadius: 14, border: '1px solid var(--border)', padding: 24, boxShadow: '0 20px 48px rgba(0,0,0,.12)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
               <div>
-                <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Customer detail</h2>
-                <p style={{ fontSize: 13, color: '#718198', marginTop: 4 }}>Profile and contact information.</p>
+                <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>{t('customers.customerDetail')}</h2>
+                <p style={{ fontSize: 13, color: '#718198', marginTop: 4 }}>{t('customers.profileAndContact')}</p>
               </div>
               <button onClick={() => { setDialog(null); setActiveCustomer(null) }} aria-label="Close" style={{ background: 'none', border: 0, cursor: 'pointer', padding: 4 }}><X size={18} /></button>
             </div>
             <div style={{ display: 'grid', gap: 12, gridTemplateColumns: '1fr 1fr' }}>
               {([
-                ['Name', activeCustomer.name],
+                [t('common.name'), activeCustomer.name],
                 ['Type', activeCustomer.type],
-                ['Phone', activeCustomer.phone ?? '—'],
-                ['Email', activeCustomer.email ?? '—'],
-                ['Address', activeCustomer.address ?? '—'],
-                ['Status', statusLabel(activeCustomer)],
-                ['Created', fmtDate(activeCustomer.created_at)],
+                [t('common.phone'), activeCustomer.phone ?? '—'],
+                [t('common.email'), activeCustomer.email ?? '—'],
+                [t('common.address'), activeCustomer.address ?? '—'],
+                [t('common.status'), activeCustomer.is_active ? t('common.active') : t('common.inactive')],
+                [t('customers.created'), fmtDate(activeCustomer.created_at)],
                 ['Last updated', fmtDate(activeCustomer.updated_at)],
               ] as const).map(([label, value]) => (
                 <div key={label} style={{ background: '#f8fafc', borderRadius: 8, padding: 12 }}>
@@ -613,7 +611,7 @@ export default function CustomersPage() {
               ))}
               {activeCustomer.notes && (
                 <div style={{ gridColumn: '1 / -1', background: '#f8fafc', borderRadius: 8, padding: 12 }}>
-                  <div style={{ fontSize: 11, color: '#718198', marginBottom: 4 }}>Notes</div>
+                  <div style={{ fontSize: 11, color: '#718198', marginBottom: 4 }}>{t('common.notes')}</div>
                   <div style={{ fontSize: 13 }}>{activeCustomer.notes}</div>
                 </div>
               )}
@@ -621,28 +619,28 @@ export default function CustomersPage() {
             {/* Customer summary metrics (G1) */}
             <div style={{ marginTop: 20 }}>
               {summaryLoading ? (
-                <div>Loading summary…</div>
+                <div>{t('customers.loadingSummary')}</div>
               ) : summary ? (
                 <div style={{ display: 'grid', gap: 12, gridTemplateColumns: '1fr 1fr 1fr' }}>
                   <div style={{ background: '#f8fafc', borderRadius: 8, padding: 12 }}>
-                    <div style={{ fontSize: 11, color: '#718198', marginBottom: 4 }}>Total sales</div>
+                    <div style={{ fontSize: 11, color: '#718198', marginBottom: 4 }}>{t('customers.totalSales')}</div>
                     <div style={{ fontSize: 14, fontWeight: 500 }}>{formatIDR(summary.total_sales)}</div>
                   </div>
                   <div style={{ background: '#f8fafc', borderRadius: 8, padding: 12 }}>
-                    <div style={{ fontSize: 11, color: '#718198', marginBottom: 4 }}>Receivable</div>
+                    <div style={{ fontSize: 11, color: '#718198', marginBottom: 4 }}>{t('customers.receivable')}</div>
                     <div style={{ fontSize: 14, fontWeight: 500 }}>{formatIDR(summary.receivable)}</div>
                   </div>
                   <div style={{ background: '#f8fafc', borderRadius: 8, padding: 12 }}>
-                    <div style={{ fontSize: 11, color: '#718198', marginBottom: 4 }}>Sales count</div>
+                    <div style={{ fontSize: 11, color: '#718198', marginBottom: 4 }}>{t('customers.salesCount')}</div>
                     <div style={{ fontSize: 14, fontWeight: 500 }}>{summary.sales_count}</div>
                   </div>
                 </div>
               ) : null}
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
-              <Button variant="outline" onClick={() => { setDialog(null); setActiveCustomer(null) }}>Close</Button>
+              <Button variant="outline" onClick={() => { setDialog(null); setActiveCustomer(null) }}>{t('common.close')}</Button>
               {canEdit && (
-                <Button onClick={() => { const c = activeCustomer; setDialog(null); if (c) openEdit(c) }}>Edit customer</Button>
+                <Button onClick={() => { const c = activeCustomer; setDialog(null); if (c) openEdit(c) }}>{t('customers.editCustomer')}</Button>
               )}
             </div>
           </div>
@@ -653,14 +651,14 @@ export default function CustomersPage() {
       {dialog === 'confirm-deactivate' && activeCustomer && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,.35)', padding: 16 }} onMouseDown={(e) => { if (e.target === e.currentTarget) { setDialog(null); setActiveCustomer(null) } }}>
           <div style={{ width: '100%', maxWidth: 420, background: 'white', borderRadius: 14, border: '1px solid var(--border)', padding: 24, boxShadow: '0 20px 48px rgba(0,0,0,.12)' }}>
-            <h2 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 8px' }}>Deactivate customer?</h2>
+            <h2 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 8px' }}>{t('customers.deactivateCustomer')}</h2>
             <p style={{ fontSize: 13, color: '#718198', margin: '0 0 20px' }}>
-              <strong>{activeCustomer.name}</strong> will be marked inactive. Existing transactions and records are preserved.
+              {t('customers.deactivateText', { name: activeCustomer.name })}
             </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <Button variant="outline" onClick={() => { setDialog(null); setActiveCustomer(null) }} disabled={actionLoading}>Cancel</Button>
+              <Button variant="outline" onClick={() => { setDialog(null); setActiveCustomer(null) }} disabled={actionLoading}>{t('common.cancel')}</Button>
               <Button variant="destructive" onClick={handleDeactivate} disabled={actionLoading}>
-                {actionLoading ? 'Deactivating...' : 'Deactivate'}
+                {actionLoading ? t('customers.deactivating') : 'Deactivate'}
               </Button>
             </div>
           </div>
@@ -671,14 +669,14 @@ export default function CustomersPage() {
       {dialog === 'reactivate' && activeCustomer && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,.35)', padding: 16 }} onMouseDown={(e) => { if (e.target === e.currentTarget) { setDialog(null); setActiveCustomer(null) } }}>
           <div style={{ width: '100%', maxWidth: 420, background: 'white', borderRadius: 14, border: '1px solid var(--border)', padding: 24, boxShadow: '0 20px 48px rgba(0,0,0,.12)' }}>
-            <h2 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 8px' }}>Reactivate customer?</h2>
+            <h2 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 8px' }}>{t('customers.reactivateCustomer')}</h2>
             <p style={{ fontSize: 13, color: '#718198', margin: '0 0 20px' }}>
-              <strong>{activeCustomer.name}</strong> will be marked active again. Existing transactions and records are preserved.
+              {t('customers.reactivateText', { name: activeCustomer.name })}
             </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <Button variant="outline" onClick={() => { setDialog(null); setActiveCustomer(null) }} disabled={actionLoading}>Cancel</Button>
+              <Button variant="outline" onClick={() => { setDialog(null); setActiveCustomer(null) }} disabled={actionLoading}>{t('common.cancel')}</Button>
               <Button onClick={handleReactivate} disabled={actionLoading}>
-                {actionLoading ? 'Reactivating...' : 'Reactivate'}
+                {actionLoading ? t('customers.reactivating') : 'Reactivate'}
               </Button>
             </div>
           </div>
@@ -729,6 +727,7 @@ function CustomerFormDialog({
   loading: boolean
   serverErrors?: Record<string, string>
 }) {
+  const { t } = useLanguage()
   const [name, setName] = useState(customer?.name ?? '')
   const [phone, setPhone] = useState(customer?.phone ?? '')
   const [email, setEmail] = useState(customer?.email ?? '')
@@ -801,32 +800,32 @@ function CustomerFormDialog({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
           <div>
             <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: 'var(--foreground)' }}>
-              {mode === 'add' ? 'Add customer' : 'Edit customer'}
+              {mode === 'add' ? t('customers.addCustomerTitle') : t('customers.editCustomerTitle')}
             </h2>
             <p style={{ fontSize: 13, color: '#718198', marginTop: 4 }}>
-              {mode === 'add' ? 'Create a new customer record.' : 'Update customer contact information.'}
+              {mode === 'add' ? t('customers.createCustomer') : t('customers.updateCustomer')}
             </p>
           </div>
           <button onClick={onClose} aria-label="Close" style={{ background: 'none', border: 0, cursor: 'pointer', padding: 4 }}><X size={18} /></button>
         </div>
         <div style={{ display: 'grid', gap: 16 }}>
           <div>
-            <label style={labelStyle}>Name *</label>
+            <label style={labelStyle}>{t('common.name')} *</label>
             <input
               value={name}
               onChange={(e) => { setName(e.target.value); setErrors((prev) => { const n = { ...prev }; delete n.name; return n }) }}
-              placeholder="Customer name"
+              placeholder={t('customers.customerName')}
               style={{ ...fieldStyle, ...(errors.name ? { borderColor: '#dc2626' } : {}) }}
               aria-label="Customer name"
             />
             {errors.name && <div style={{ fontSize: 11, color: '#dc2626', marginTop: 2 }}>{errors.name}</div>}
           </div>
           <div>
-            <label style={labelStyle}>Phone</label>
+            <label style={labelStyle}>{t('common.phone')}</label>
             <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+62 8xx-xxxx-xxxx" style={fieldStyle} aria-label="Phone" />
           </div>
           <div>
-            <label style={labelStyle}>Email</label>
+            <label style={labelStyle}>{t('common.email')}</label>
             <input
               value={email}
               onChange={(e) => { setEmail(e.target.value); setErrors((prev) => { const n = { ...prev }; delete n.email; return n }) }}
@@ -837,11 +836,11 @@ function CustomerFormDialog({
             {errors.email && <div style={{ fontSize: 11, color: '#dc2626', marginTop: 2 }}>{errors.email}</div>}
           </div>
           <div>
-            <label style={labelStyle}>Address</label>
+            <label style={labelStyle}>{t('common.address')}</label>
             <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Street address" style={fieldStyle} aria-label="Address" />
           </div>
           <div>
-            <label style={labelStyle}>Notes</label>
+            <label style={labelStyle}>{t('common.notes')}</label>
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
@@ -852,9 +851,9 @@ function CustomerFormDialog({
           </div>
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
-          <Button variant="outline" onClick={onClose} disabled={loading}>Cancel</Button>
+          <Button variant="outline" onClick={onClose} disabled={loading}>{t('common.cancel')}</Button>
           <Button onClick={handleSubmit} disabled={loading}>
-            {loading ? (mode === 'add' ? 'Creating...' : 'Saving...') : mode === 'add' ? 'Add customer' : 'Save changes'}
+            {loading ? t('common.saving') : mode === 'add' ? t('customers.addCustomer') : t('common.saveChanges')}
           </Button>
         </div>
       </div>

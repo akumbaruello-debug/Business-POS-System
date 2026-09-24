@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api } from '@/lib/api-client'
+import { useLanguage } from '@/lib/i18n'
 import type {
   CompareValue,
   DashboardResponse,
@@ -41,13 +42,10 @@ function isForbidden(err: unknown): boolean {
   return msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('forbidden')
 }
 
-const PERMISSIONS_MSG =
-  "You don't have permission to view the financial dashboard. Contact your administrator."
-
 function greetingForHour(hour: number): string {
-  if (hour < 12) return 'Good morning'
-  if (hour < 17) return 'Good afternoon'
-  return 'Good evening'
+  if (hour < 12) return 'dashboard.greeting.morning'
+  if (hour < 17) return 'dashboard.greeting.afternoon'
+  return 'dashboard.greeting.evening'
 }
 
 function fmtLongDate(d: Date): string {
@@ -77,6 +75,7 @@ interface MetricCardProps {
 }
 
 function MetricCard({ label, value, deltaPct, icon: Icon, loading }: MetricCardProps) {
+  const { t } = useLanguage()
   // Delta styling comes from the numeric delta sign, never the formatted
   // string. Positive up (green), negative down (red), zero neutral (muted).
   const dir =
@@ -101,11 +100,11 @@ function MetricCard({ label, value, deltaPct, icon: Icon, loading }: MetricCardP
           <span className="metric-delta">
             {deltaPct > 0 ? '↗' : deltaPct < 0 ? '↘' : '→'} {formatPct(deltaPct)}
           </span>
-          <span className="change-note">vs. prev. period</span>
+          <span className="change-note">{t('dashboard.vsPrevPeriod')}</span>
         </div>
       ) : (
         <div className="metric-change">
-          <span className="change-note">Current period</span>
+          <span className="change-note">{t('dashboard.currentPeriod')}</span>
         </div>
       )}
     </article>
@@ -162,6 +161,7 @@ interface TrendPoint {
 const CHART_PAD = { top: 12, right: 16, bottom: 26, left: 74 }
 
 function SalesTrendChart({ data, loading }: { data: TrendPoint[]; loading: boolean }) {
+  const { t } = useLanguage()
   const containerRef = useRef<HTMLDivElement>(null)
   const [dims, setDims] = useState<{ width: number; height: number }>({ width: 0, height: 0 })
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
@@ -212,8 +212,8 @@ function SalesTrendChart({ data, loading }: { data: TrendPoint[]; loading: boole
           <div className="empty-icon">
             <BarChart3 size={22} />
           </div>
-          <strong>No sales data</strong>
-          <p>Revenue will appear here once sales are recorded.</p>
+          <strong>{t('dashboard.noSalesData')}</strong>
+          <p>{t('dashboard.revenueAppearsHere')}</p>
         </div>
       </div>
     )
@@ -245,7 +245,7 @@ function SalesTrendChart({ data, loading }: { data: TrendPoint[]; loading: boole
         className="line-chart-svg"
         viewBox={`0 0 ${svgWidth} ${svgHeight}`}
         role="img"
-        aria-label="Sales trend over time"
+        aria-label={t('dashboard.salesTrend')}
       >
         {/* horizontal gridlines */}
         {tickVals.map((val, i) => {
@@ -356,10 +356,11 @@ function SvgTooltip({
   revenue: number
   salesCount?: number
 }) {
+  const { t } = useLanguage()
   if (!label) return null
 
   const lines = [`${label}`, `${formatIDR(revenue)}`]
-  if (salesCount !== undefined) lines.push(`${salesCount} sale${salesCount !== 1 ? 's' : ''}`)
+  if (salesCount !== undefined) lines.push(`${salesCount} ${salesCount === 1 ? t('dashboard.sale') : t('dashboard.sales')}`)
 
   const fontSize = 11
   const lineHeight = 14
@@ -523,6 +524,7 @@ function DataTable({
   loading: boolean
   unit?: string
 }) {
+  const { t } = useLanguage()
   if (loading) {
     return (
       <div className="data-table">
@@ -542,8 +544,8 @@ function DataTable({
         <div className="empty-icon">
           <BarChartHorizontal size={22} />
         </div>
-        <strong>No data yet</strong>
-        <p>Records will appear here once available.</p>
+        <strong>{t('dashboard.noDataYet')}</strong>
+        <p>{t('dashboard.recordsAppearHere')}</p>
       </div>
     )
   }
@@ -578,6 +580,7 @@ function DataTable({
 export default function DashboardPage() {
   const user = useSession()
   const initials = initialsFor(user)
+  const { t } = useLanguage()
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -609,13 +612,13 @@ export default function DashboardPage() {
           setDashboard(null)
           setError('forbidden')
         } else {
-          setError(dashRes.reason instanceof Error ? dashRes.reason.message : 'Failed to load dashboard')
+          setError(dashRes.reason instanceof Error ? dashRes.reason.message : t('common.failedToLoad', { resource: 'dashboard' }))
         }
         if (invRes.status === 'fulfilled') {
           setInventory(invRes.value)
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load dashboard')
+        setError(err instanceof Error ? err.message : t('common.failedToLoad', { resource: 'dashboard' }))
       } finally {
         setLoading(false)
       }
@@ -651,16 +654,16 @@ export default function DashboardPage() {
       <div className="content" style={{ paddingBottom: 0 }}>
         <div className="page-heading">
           <div>
-            <h1>Dashboard</h1>
-            <p>Financial overview</p>
+            <h1>{t('nav.dashboard')}</h1>
+            <p>{t('dashboard.subtitle')}</p>
           </div>
         </div>
         <div className="error-state">
           <div className="error-icon">
             <AlertCircle size={32} />
           </div>
-          <strong>Access restricted</strong>
-          <p>{PERMISSIONS_MSG}</p>
+          <strong>{t('common.accessRestricted')}</strong>
+          <p>{t('common.permissionContactAdmin')}</p>
         </div>
       </div>
     )
@@ -672,28 +675,28 @@ export default function DashboardPage() {
           <div className="content">
             <section className="metrics">
               <MetricCard
-                label="Inventory (at cost)"
+                label={t('dashboard.inventoryAtCost')}
                 value={formatIDR(inventory.data.total_inventory_value)}
                 deltaPct={null}
                 icon={Package}
                 loading={false}
               />
               <MetricCard
-                label="Low Stock Items"
+                label={t('dashboard.lowStockItems')}
                 value={formatInt(inventory.data.low_stock_count)}
                 deltaPct={null}
                 icon={AlertCircle}
                 loading={false}
               />
               <MetricCard
-                label="Out of Stock"
+                label={t('dashboard.outOfStock')}
                 value={formatInt(inventory.data.out_of_stock_count)}
                 deltaPct={null}
                 icon={Boxes}
                 loading={false}
               />
               <MetricCard
-                label="Products"
+                label={t('dashboard.products')}
                 value={formatInt(inventory.data.products_count)}
                 deltaPct={null}
                 icon={Users}
@@ -712,13 +715,13 @@ export default function DashboardPage() {
       <div className="content">
         <div className="page-heading">
           <div>
-            <h1>Dashboard</h1>
-            <p>Financial overview</p>
+            <h1>{t('nav.dashboard')}</h1>
+            <p>{t('dashboard.subtitle')}</p>
           </div>
           <div className="heading-actions">
             <button className="button button-secondary" onClick={handleRefresh}>
               <RefreshCw size={14} />
-              Retry
+              {t('common.retry')}
             </button>
           </div>
         </div>
@@ -726,7 +729,7 @@ export default function DashboardPage() {
           <div className="error-icon">
             <AlertCircle size={32} />
           </div>
-          <strong>Failed to load dashboard</strong>
+          <strong>{t('common.failedToLoad', { resource: 'dashboard' })}</strong>
           <p>{error}</p>
         </div>
       </div>
@@ -743,13 +746,13 @@ export default function DashboardPage() {
         <div>
           <div className="eyebrow">{fmtLongDate(now)}</div>
           <h1>
-            {greeting}, {user.full_name || user.username}
+            {t(greetingForHour(now.getHours()))}, {user.full_name || user.username}
           </h1>
-          <p>Here&apos;s what&apos;s happening with your business.</p>
+          <p>{t('dashboard.businessUpdate')}</p>
         </div>
         <div className="heading-actions">
           <span className="as-of-note">
-            {dashboard ? `Updated ${fmtAsOf(dashboard.as_of)}` : ''}
+            {dashboard ? t('common.updated', { time: fmtAsOf(dashboard.as_of) }) : ''}
           </span>
           <button
             className="button button-secondary"
@@ -757,7 +760,7 @@ export default function DashboardPage() {
             disabled={refreshing}
           >
             <RefreshCw size={14} className={refreshing ? 'spin' : ''} />
-            {refreshing ? 'Refreshing...' : 'Refresh'}
+            {refreshing ? t('common.refreshing') : t('common.refresh')}
           </button>
         </div>
       </div>
@@ -765,9 +768,9 @@ export default function DashboardPage() {
       {/* Period / comparison filters */}
       <div className="dashboard-filters">
         <label className="filter-field">
-          <span className="filter-label">Period</span>
+          <span className="filter-label">{t('dashboard.period')}</span>
           <select
-            aria-label="Period"
+            aria-label={t('dashboard.period')}
             value={period}
             onChange={(e) => {
               setPeriod(e.target.value)
@@ -781,9 +784,9 @@ export default function DashboardPage() {
           </select>
         </label>
         <label className="filter-field">
-          <span className="filter-label">Compare</span>
+          <span className="filter-label">{t('dashboard.compare')}</span>
           <select
-            aria-label="Compare to previous period"
+            aria-label={t('dashboard.compare')}
             value={compareTo}
             onChange={(e) => setCompareTo(e.target.value as CompareValue)}
           >
@@ -795,35 +798,35 @@ export default function DashboardPage() {
           </select>
         </label>
         {period === 'custom' && (
-          <span className="filter-hint">Custom ranges not yet available</span>
+          <span className="filter-hint">{t('dashboard.customRangesNotAvailable')}</span>
         )}
       </div>
 
       {/* KPI cards */}
       <section className="metrics">
         <MetricCard
-          label="Total Revenue"
+          label={t('dashboard.totalRevenue')}
           value={kpis ? formatIDR(kpis.total_sales) : ''}
           deltaPct={comparison ? deltaPctOf('total_sales') : null}
           icon={CircleDollarSign}
           loading={loading}
         />
         <MetricCard
-          label="Total Purchases"
+          label={t('dashboard.totalPurchases')}
           value={kpis ? formatIDR(kpis.total_purchases) : ''}
           deltaPct={comparison ? deltaPctOf('total_purchases') : null}
           icon={ShoppingCart}
           loading={loading}
         />
         <MetricCard
-          label="Net Profit"
+          label={t('dashboard.netProfit')}
           value={kpis ? formatIDR(kpis.net_profit) : ''}
           deltaPct={comparison ? deltaPctOf('net_profit') : null}
           icon={TrendingUp}
           loading={loading}
         />
         <MetricCard
-          label="Cash on Hand"
+          label={t('dashboard.cashOnHand')}
           value={kpis ? formatIDR(kpis.cash_on_hand) : ''}
           deltaPct={null}
           icon={BarChart3}
@@ -834,14 +837,14 @@ export default function DashboardPage() {
       {/* Row 2: Inventory metrics */}
       <section className="metrics metrics-secondary">
         <MetricCard
-          label="Inventory (at cost)"
+          label={t('dashboard.inventoryAtCost')}
           value={kpis ? formatIDR(kpis.inventory_value) : ''}
           deltaPct={null}
           icon={Package}
           loading={loading}
         />
         <MetricCard
-          label="Low Stock Items"
+          label={t('dashboard.lowStockItems')}
           value={kpis ? formatInt(kpis.low_stock_count) : ''}
           deltaPct={null}
           icon={AlertCircle}
@@ -850,14 +853,14 @@ export default function DashboardPage() {
         {inventory && (
           <>
             <MetricCard
-              label="Out of Stock"
+              label={t('dashboard.outOfStock')}
               value={formatInt(inventory.data.out_of_stock_count)}
               deltaPct={null}
               icon={Boxes}
               loading={false}
             />
             <MetricCard
-              label="Products"
+              label={t('dashboard.products')}
               value={formatInt(inventory.data.products_count)}
               deltaPct={null}
               icon={Users}
@@ -873,8 +876,8 @@ export default function DashboardPage() {
         <article className="panel">
           <div className="panel-header">
             <div>
-              <h2>Sales trend</h2>
-              <p>Revenue over the selected period</p>
+              <h2>{t('dashboard.salesTrend')}</h2>
+              <p>{t('dashboard.salesTrendDesc')}</p>
             </div>
             {comparison && (
               <ComparisonBadge
@@ -891,8 +894,8 @@ export default function DashboardPage() {
         <article className="panel">
           <div className="panel-header">
             <div>
-              <h2>Best sellers</h2>
-              <p>Top products by revenue</p>
+              <h2>{t('dashboard.bestSellers')}</h2>
+              <p>{t('dashboard.bestSellersDesc')}</p>
             </div>
           </div>
           <DataTable
@@ -909,8 +912,8 @@ export default function DashboardPage() {
         <article className="panel">
           <div className="panel-header">
             <div>
-              <h2>Expense breakdown</h2>
-              <p>Top expense categories</p>
+              <h2>{t('dashboard.expenseBreakdown')}</h2>
+              <p>{t('dashboard.expenseBreakdownDesc')}</p>
             </div>
           </div>
           <DataTable
@@ -929,8 +932,8 @@ export default function DashboardPage() {
         <article className="panel workspace-card">
           <div className="panel-header">
             <div>
-              <h2>Quick actions</h2>
-              <p>Common tasks at your fingertips</p>
+              <h2>{t('dashboard.quickActions')}</h2>
+              <p>{t('dashboard.quickActionsDesc')}</p>
             </div>
           </div>
           <div className="quick-actions">
@@ -941,8 +944,8 @@ export default function DashboardPage() {
                 <Package size={16} />
               </span>
               <span>
-                <strong>Add product</strong>
-                <small>Update your catalogue</small>
+                <strong>{t('dashboard.addProduct')}</strong>
+                <small>{t('dashboard.updateCatalogue')}</small>
               </span>
               <ArrowUpRight size={15} />
             </a>

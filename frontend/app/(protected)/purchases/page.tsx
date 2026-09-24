@@ -21,6 +21,7 @@ import type { Product } from '@/lib/product-types'
 import { formatIDR } from '@/lib/format'
 import { Button } from '@/components/ui/button'
 import { useSession } from '@/lib/session'
+import { useLanguage } from '@/lib/i18n'
 
 // ---------------------------------------------------------------------------
 // Backend contract (from openapi.yaml §13 + backend/app/api/v1/purchases.py):
@@ -65,14 +66,27 @@ function fmtDate(iso: string | null): string {
 }
 
 function lifecycleLabel(s: string): string {
-  return s
+  const map: Record<string, string> = {
+    draft: 'status.draft',
+    posted: 'status.posted',
+    completed: 'status.completed',
+    partially_returned: 'status.partiallyReturned',
+    returned: 'status.returned',
+    cancelled: 'status.cancelled',
+  }
+  return map[s] ?? s
 }
 
 function paymentLabel(s: string): string {
-  return s
+  const map: Record<string, string> = {
+    unpaid: 'status.unpaid',
+    partial: 'status.partial',
+    paid: 'status.paid',
+  }
+  return map[s] ?? s
 }
 
-function LifecycleBadge({ status }: { status: string }) {
+function LifecycleBadge({ status, t }: { status: string; t: (key: string, params?: Record<string, string | number>) => string }) {
   const tone: Record<string, string> = {
     draft: 'background:#f1f5f9;color:#475569;border:1px solid #e2e8f0',
     posted: 'background:#eff6ff;color:#2563eb;border:1px solid #dbeafe',
@@ -106,12 +120,12 @@ function LifecycleBadge({ status }: { status: string }) {
           flex: 'none',
         }}
       />
-      {lifecycleLabel(status)}
+      {t(lifecycleLabel(status), { defaultValue: status })}
     </span>
   )
 }
 
-function PaymentBadge({ state }: { state: string }) {
+function PaymentBadge({ state, t }: { state: string; t: (key: string, params?: Record<string, string | number>) => string }) {
   const tone: Record<string, string> = {
     unpaid: 'background:#fef2f2;color:#dc2626;border:1px solid #fecaca',
     partial: 'background:#eff6ff;color:#2563eb;border:1px solid #dbeafe',
@@ -132,7 +146,7 @@ function PaymentBadge({ state }: { state: string }) {
         ...parseStyle(style),
       }}
     >
-      {paymentLabel(state)}
+      {t(paymentLabel(state), { defaultValue: state })}
     </span>
   )
 }
@@ -148,6 +162,7 @@ function parseStyle(s: string): Record<string, string> {
 
 export default function PurchasesPage() {
   const user = useSession()
+  const { t } = useLanguage()
   const router = useRouter()
   const canView = user.capabilities.includes('purchase.view')
   const canCreate = user.capabilities.includes('purchase.create')
@@ -215,7 +230,7 @@ export default function PurchasesPage() {
   const fetchPurchases = useCallback(async () => {
     if (!canView) {
       setLoading(false)
-      setError('Missing capability: purchase.view')
+      setError(t('errors.missingCapability', { capability: 'purchase.view' }))
       return
     }
     setLoading(true)
@@ -237,7 +252,7 @@ export default function PurchasesPage() {
       setPurchases(res.data)
       setPagination(res.pagination)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load purchases')
+      setError(err instanceof Error ? err.message : t('purchases.failedToLoad'))
     } finally {
       setLoading(false)
     }
@@ -271,17 +286,17 @@ export default function PurchasesPage() {
       <div className="content">
         <div className="page-heading">
           <div>
-            <div className="eyebrow">Purchasing / Purchases</div>
-            <h1>Purchases</h1>
-            <p>Manage purchase orders and supplier invoices.</p>
+            <div className="eyebrow">{t('purchases.eyebrow')}</div>
+            <h1>{t('purchases.title')}</h1>
+            <p>{t('purchases.subtitle')}</p>
           </div>
         </div>
         <div className="error-state">
           <div className="error-icon">
             <AlertTriangle size={32} />
           </div>
-          <strong>Forbidden</strong>
-          <p>Your account lacks the purchase.view capability.</p>
+          <strong>{t('errors.forbidden')}</strong>
+          <p>{t('errors.lacksCapability', { capability: 'purchase.view' })}</p>
         </div>
       </div>
     )
@@ -292,19 +307,19 @@ export default function PurchasesPage() {
       <div className="content">
         <div className="page-heading">
           <div>
-            <div className="eyebrow">Purchasing / Purchases</div>
-            <h1>Purchases</h1>
-            <p>Manage purchase orders and supplier invoices.</p>
-          </div>
-        </div>
-        <div className="error-state">
-          <div className="error-icon">
+            <div className="eyebrow">{t('purchases.eyebrow')}</div>
+            <h1>{t('purchases.title')}</h1>
+            <p>{t('purchases.subtitle')}</p>
+            </div>
+            </div>
+            <div className="error-state">
+            <div className="error-icon">
             <AlertTriangle size={32} />
-          </div>
-          <strong>Failed to load purchases</strong>
+            </div>
+            <strong>{t('purchases.failedToLoad')}</strong>
           <p>{error}</p>
           <Button variant="outline" onClick={fetchPurchases}>
-            Retry
+            {t('common.retry')}
           </Button>
         </div>
       </div>
@@ -316,14 +331,14 @@ export default function PurchasesPage() {
       {/* Heading */}
       <div className="page-heading">
         <div>
-          <div className="eyebrow">Purchasing / Purchases</div>
-          <h1>Purchases</h1>
-          <p>Manage purchase orders and supplier invoices.</p>
+          <div className="eyebrow">{t('purchases.eyebrow')}</div>
+          <h1>{t('purchases.title')}</h1>
+          <p>{t('purchases.subtitle')}</p>
         </div>
         {canCreate && (
           <div className="heading-actions">
             <Button onClick={() => setCreateOpen(true)}>
-              <Plus size={14} className="mr-1" /> New purchase
+              <Plus size={14} className="mr-1" /> {t('purchases.newPurchase')}
             </Button>
           </div>
         )}
@@ -345,7 +360,7 @@ export default function PurchasesPage() {
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 200px', minWidth: 180 }}>
           <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#8a98ab' }}>
-            Search
+            {t('common.search')}
           </label>
           <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
             <Search size={14} style={{ position: 'absolute', left: 10, color: '#9aa7b8' }} />
@@ -355,7 +370,7 @@ export default function PurchasesPage() {
                 setQuery(e.target.value)
                 setPage(1)
               }}
-              placeholder="Reference no… (q is reference search only)"
+              placeholder={t('purchases.searchPlaceholder')}
               style={{
                 width: '100%',
                 height: 34,
@@ -373,7 +388,7 @@ export default function PurchasesPage() {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#8a98ab' }}>
-            Lifecycle
+            {t('purchases.lifecycle')}
           </label>
           <select
             value={lifecycleFilter}
@@ -383,19 +398,19 @@ export default function PurchasesPage() {
             }}
             style={{ height: 34, borderRadius: 8, border: '1px solid var(--border)', background: 'white', padding: '0 10px', fontSize: 13 }}
           >
-            <option value="all">All statuses</option>
-            <option value="draft">draft</option>
-            <option value="posted">posted</option>
-            <option value="completed">completed</option>
-            <option value="partially_returned">partially_returned</option>
-            <option value="returned">returned</option>
-            <option value="cancelled">cancelled</option>
+            <option value="all">{t('purchases.allStatuses')}</option>
+            <option value="draft">{t('status.draft')}</option>
+            <option value="posted">{t('status.posted')}</option>
+            <option value="completed">{t('status.completed')}</option>
+            <option value="partially_returned">{t('status.partiallyReturned')}</option>
+            <option value="returned">{t('status.returned')}</option>
+            <option value="cancelled">{t('status.cancelled')}</option>
           </select>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#8a98ab' }}>
-            Payment
+            {t('purchases.payment')}
           </label>
           <select
             value={paymentFilter}
@@ -405,16 +420,16 @@ export default function PurchasesPage() {
             }}
             style={{ height: 34, borderRadius: 8, border: '1px solid var(--border)', background: 'white', padding: '0 10px', fontSize: 13 }}
           >
-            <option value="all">All</option>
-            <option value="unpaid">unpaid</option>
-            <option value="partial">partial</option>
-            <option value="paid">paid</option>
+            <option value="all">{t('purchases.all')}</option>
+            <option value="unpaid">{t('status.unpaid')}</option>
+            <option value="partial">{t('status.partial')}</option>
+            <option value="paid">{t('status.paid')}</option>
           </select>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#8a98ab' }}>
-            Supplier
+            {t('purchases.supplier')}
           </label>
           <select
             value={supplierFilter}
@@ -424,7 +439,7 @@ export default function PurchasesPage() {
             }}
             style={{ height: 34, borderRadius: 8, border: '1px solid var(--border)', background: 'white', padding: '0 10px', fontSize: 13, minWidth: 150 }}
           >
-            <option value="all">All suppliers</option>
+            <option value="all">{t('purchases.allSuppliers')}</option>
             {suppliers.map((s) => (
               <option key={s.id} value={String(s.id)}>
                 {s.name}
@@ -435,7 +450,7 @@ export default function PurchasesPage() {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#8a98ab' }}>
-            From
+            {t('purchases.from')}
           </label>
           <input
             type="date"
@@ -450,7 +465,7 @@ export default function PurchasesPage() {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#8a98ab' }}>
-            To
+            {t('purchases.to')}
           </label>
           <input
             type="date"
@@ -464,7 +479,7 @@ export default function PurchasesPage() {
         </div>
 
         <Button variant="outline" size="sm" onClick={clearFilters} style={{ height: 34 }}>
-          Clear
+          {t('common.clearFilters')}
         </Button>
       </div>
 
@@ -488,15 +503,15 @@ export default function PurchasesPage() {
             <div className="error-icon" style={{ background: '#eff6ff', color: 'var(--primary)' }}>
               <ClipboardList size={28} />
             </div>
-            <strong>No purchases found</strong>
+            <strong>{t('purchases.noPurchasesFound')}</strong>
             <p style={{ maxWidth: 420, color: '#718198', fontSize: 13, textAlign: 'center' }}>
               {query || lifecycleFilter !== 'all' || paymentFilter !== 'all' || supplierFilter !== 'all' || fromDate || toDate
-                ? 'No purchases match the current filters. Try clearing filters.'
-                : 'No purchase records yet. Purchases will appear here once created.'}
+                ? t('purchases.noPurchasesMatchFilters')
+                : t('purchases.purchasesAppearHere')}
             </p>
             {(query || lifecycleFilter !== 'all' || paymentFilter !== 'all' || supplierFilter !== 'all' || fromDate || toDate) && (
               <Button variant="outline" onClick={clearFilters}>
-                Clear filters
+                {t('common.clearFilters')}
               </Button>
             )}
           </div>
@@ -511,28 +526,28 @@ export default function PurchasesPage() {
                         onClick={() => handleSort('id')}
                         style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: 0, color: 'inherit', font: 'inherit', cursor: 'pointer' }}
                       >
-                        Purchase <ChevronsUpDown size={12} style={{ opacity: sortKey === 'id' ? 1 : 0.35 }} />
+                        {t('purchases.purchase')} <ChevronsUpDown size={12} style={{ opacity: sortKey === 'id' ? 1 : 0.35 }} />
                       </button>
                     </th>
-                    <th style={{ padding: '10px 14px', fontWeight: 700 }}>Supplier</th>
+                    <th style={{ padding: '10px 14px', fontWeight: 700 }}>{t('purchases.supplier')}</th>
                     <th style={{ padding: '10px 14px', fontWeight: 700, whiteSpace: 'nowrap' }}>
                       <button
                         onClick={() => handleSort('purchase_date')}
                         style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: 0, color: 'inherit', font: 'inherit', cursor: 'pointer' }}
                       >
-                        Purchase date <ChevronsUpDown size={12} style={{ opacity: sortKey === 'purchase_date' ? 1 : 0.35 }} />
+                        {t('purchases.purchaseDate')} <ChevronsUpDown size={12} style={{ opacity: sortKey === 'purchase_date' ? 1 : 0.35 }} />
                       </button>
                     </th>
-                    <th style={{ padding: '10px 14px', fontWeight: 700, textAlign: 'right' }}>Total</th>
-                    <th style={{ padding: '10px 14px', fontWeight: 700 }}>Payment</th>
-                    <th style={{ padding: '10px 14px', fontWeight: 700 }}>Lifecycle</th>
-                    <th style={{ padding: '10px 14px', fontWeight: 700, textAlign: 'right' }}>Actions</th>
+                    <th style={{ padding: '10px 14px', fontWeight: 700, textAlign: 'right' }}>{t('purchases.total')}</th>
+                    <th style={{ padding: '10px 14px', fontWeight: 700 }}>{t('purchases.payment')}</th>
+                    <th style={{ padding: '10px 14px', fontWeight: 700 }}>{t('purchases.lifecycle')}</th>
+                    <th style={{ padding: '10px 14px', fontWeight: 700, textAlign: 'right' }}>{t('common.actions')}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {purchases.map((p) => {
                     const ref = p.reference_no ? p.reference_no : `#${p.id}`
-                    const supplier = p.supplier_id ? (supplierName.get(p.supplier_id) ?? `Supplier #${p.supplier_id}`) : '—'
+                    const supplier = p.supplier_id ? (supplierName.get(p.supplier_id) ?? `${t('purchases.supplier')} #${p.supplier_id}`) : '—'
                     return (
                       <tr key={p.id} style={{ borderTop: '1px solid #f0f4f9' }}>
                         <td style={{ padding: '12px 14px' }}>
@@ -545,10 +560,10 @@ export default function PurchasesPage() {
                         <td style={{ padding: '12px 14px', color: '#475569', whiteSpace: 'nowrap' }}>{fmtDate(p.purchase_date)}</td>
                         <td style={{ padding: '12px 14px', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{formatIDR(p.total_amount)}</td>
                         <td style={{ padding: '12px 14px' }}>
-                          <PaymentBadge state={p.payment_state} />
+                          <PaymentBadge state={p.payment_state} t={t} />
                         </td>
                         <td style={{ padding: '12px 14px' }}>
-                          <LifecycleBadge status={p.lifecycle_status} />
+                          <LifecycleBadge status={p.lifecycle_status} t={t} />
                         </td>
                         <td style={{ padding: '12px 14px', textAlign: 'right' }}>
                           <Link
@@ -567,7 +582,7 @@ export default function PurchasesPage() {
                               textDecoration: 'none',
                             }}
                           >
-                            View
+                            {t('purchases.view')}
                           </Link>
                         </td>
                       </tr>
@@ -592,8 +607,8 @@ export default function PurchasesPage() {
               }}
             >
               <span>
-                Showing {purchases.length > 0 ? (pagination.page - 1) * pagination.per_page + 1 : 0}–
-                {Math.min(pagination.page * pagination.per_page, pagination.total)} of {pagination.total}
+                {t('common.showing')} {purchases.length > 0 ? (pagination.page - 1) * pagination.per_page + 1 : 0}–
+                {Math.min(pagination.page * pagination.per_page, pagination.total)} {t('common.of')} {pagination.total}
               </span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <select
@@ -605,15 +620,15 @@ export default function PurchasesPage() {
                   style={{ height: 32, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--background)', padding: '0 8px', fontSize: 12 }}
                   aria-label="Rows per page"
                 >
-                  <option value={10}>10 / page</option>
-                  <option value={25}>25 / page</option>
-                  <option value={50}>50 / page</option>
+                  <option value={10}>10 / {t('common.page')}</option>
+                  <option value={25}>25 / {t('common.page')}</option>
+                  <option value={50}>50 / {t('common.page')}</option>
                 </select>
                 <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
                   <ChevronLeft size={14} />
                 </Button>
                 <span style={{ fontSize: 12, padding: '0 6px' }}>
-                  Page {pagination.page} of {pagination.total_pages}
+                  {t('common.page')} {pagination.page} {t('common.of')} {pagination.total_pages}
                 </span>
                 <Button variant="outline" size="sm" disabled={page >= pagination.total_pages} onClick={() => setPage((p) => p + 1)}>
                   <ChevronRight size={14} />
@@ -652,10 +667,11 @@ export default function PurchasesPage() {
         <CreatePurchaseDialog
           suppliers={suppliers}
           products={products}
+          t={t}
           onClose={() => setCreateOpen(false)}
           onCreated={(id) => {
             setCreateOpen(false)
-            toast('Draft purchase created')
+            toast(t('purchases.createdToast'))
             router.push(`/purchases/${id}`)
           }}
           onError={(msg) => toast(msg)}
@@ -692,12 +708,14 @@ function CreatePurchaseDialog({
   onClose,
   onCreated,
   onError,
+  t,
 }: {
   suppliers: Contact[]
   products: Product[]
   onClose: () => void
   onCreated: (id: number) => void
   onError: (msg: string) => void
+  t: (key: string, params?: Record<string, string | number>) => string
 }) {
   const [supplierId, setSupplierId] = useState('')
   const [purchaseDate, setPurchaseDate] = useState(() => new Date().toISOString().slice(0, 10))
@@ -720,7 +738,7 @@ function CreatePurchaseDialog({
 
   const productName = (id: string) => {
     const found = products.find((p) => String(p.id) === id)
-    return found ? found.name : id ? `Product #${id}` : '—'
+    return found ? found.name : id ? `${t('purchases.product')} #${id}` : '—'
   }
 
   // Preview only — the server recomputes line_subtotal / line_total / totals.
@@ -735,23 +753,23 @@ function CreatePurchaseDialog({
   const submit = async () => {
     setError(null)
     if (lines.length === 0) {
-      setError('At least one line is required.')
+      setError(t('purchases.lineRequired'))
       return
     }
     const payloadLines = []
     for (const l of lines) {
       if (!l.product_id) {
-        setError('Every line needs a product.')
+        setError(t('purchases.lineNeedsProduct'))
         return
       }
       const q = Number(l.quantity)
       const u = Number(l.unit_price)
       if (!Number.isFinite(q) || q <= 0) {
-        setError('Line quantity must be greater than 0.')
+        setError(t('purchases.quantityPositive'))
         return
       }
       if (!Number.isFinite(u) || u < 0) {
-        setError('Line unit price must be 0 or greater.')
+        setError(t('purchases.unitPricePositive'))
         return
       }
       payloadLines.push({ product_id: Number(l.product_id), quantity: q, unit_price: u })
@@ -778,13 +796,13 @@ function CreatePurchaseDialog({
         headers: { 'Idempotency-Key': crypto.randomUUID() },
       })
       const id = Number(res.data?.id)
-      if (!Number.isFinite(id)) throw new Error('Server did not return a purchase id.')
+      if (!Number.isFinite(id)) throw new Error(t('purchases.serverNoId'))
       onCreated(id)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Create failed'
+      const msg = err instanceof Error ? err.message : t('purchases.createFailed')
       const code = (err as Error & { code?: string }).code
       if (code === 'conflict' || /reference|duplicate|unique/i.test(msg)) {
-        setError('That reference number is already in use. Choose a different one.')
+        setError(t('purchases.duplicateReference'))
       } else {
         setError(msg)
       }
@@ -848,9 +866,9 @@ function CreatePurchaseDialog({
           }}
         >
           <div>
-            <h2 style={{ fontSize: 16, fontWeight: 800, margin: 0 }}>New Purchase</h2>
+            <h2 style={{ fontSize: 16, fontWeight: 800, margin: 0 }}>{t('purchases.newPurchaseDialog')}</h2>
             <p style={{ margin: '4px 0 0', fontSize: 12, color: '#718198' }}>
-              Creates a draft. Nothing affects stock until the purchase is posted later.
+              {t('purchases.creatingDraftHelp')}
             </p>
           </div>
           <button onClick={onClose} aria-label="Close" style={{ border: 0, background: 'none', color: '#8a98ab' }}>
@@ -862,9 +880,9 @@ function CreatePurchaseDialog({
           {/* Header fields */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <label style={labelStyle}>Supplier (optional)</label>
+              <label style={labelStyle}>{t('purchases.supplierOptional')}</label>
               <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} style={fieldStyle}>
-                <option value="">No supplier (counter / cash buy)</option>
+                <option value="">{t('purchases.noSupplier')}</option>
                 {suppliers.map((s) => (
                   <option key={s.id} value={String(s.id)}>
                     {s.name}
@@ -873,7 +891,7 @@ function CreatePurchaseDialog({
               </select>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <label style={labelStyle}>Purchase date</label>
+              <label style={labelStyle}>{t('purchases.purchaseDate')}</label>
               <input
                 type="date"
                 value={purchaseDate}
@@ -882,17 +900,17 @@ function CreatePurchaseDialog({
               />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <label style={labelStyle}>Reference no (optional)</label>
+              <label style={labelStyle}>{t('purchases.referenceNoOptional')}</label>
               <input
                 value={referenceNo}
                 onChange={(e) => setReferenceNo(e.target.value)}
                 maxLength={50}
-                placeholder="Unique supplier invoice / PO ref"
+                placeholder={t('purchases.referenceNoPlaceholder')}
                 style={fieldStyle}
               />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <label style={labelStyle}>Notes (optional)</label>
+              <label style={labelStyle}>{t('purchases.notesOptional')}</label>
               <input value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={2000} style={fieldStyle} />
             </div>
           </div>
@@ -900,20 +918,20 @@ function CreatePurchaseDialog({
           {/* Items */}
           <div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <h3 style={{ fontSize: 13, fontWeight: 700, margin: 0 }}>Purchase items</h3>
+              <h3 style={{ fontSize: 13, fontWeight: 700, margin: 0 }}>{t('purchases.purchaseItems')}</h3>
               <Button variant="outline" size="sm" onClick={addLine}>
-                <Plus size={13} className="mr-1" /> Add line
+                <Plus size={13} className="mr-1" /> {t('purchases.addLine')}
               </Button>
             </div>
             <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead>
                   <tr style={{ background: '#f8fafc', fontSize: 11, letterSpacing: 0.5, textTransform: 'uppercase', color: '#64748b' }}>
-                    <th style={{ padding: '9px 12px', textAlign: 'left', fontWeight: 700 }}>Product</th>
-                    <th style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 700 }}>Quantity</th>
-                    <th style={{ padding: '9px 12px', textAlign: 'left', fontWeight: 700 }}>Unit</th>
-                    <th style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 700 }}>Unit price</th>
-                    <th style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 700 }}>Subtotal</th>
+                    <th style={{ padding: '9px 12px', textAlign: 'left', fontWeight: 700 }}>{t('purchases.product')}</th>
+                    <th style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 700 }}>{t('purchases.quantity')}</th>
+                    <th style={{ padding: '9px 12px', textAlign: 'left', fontWeight: 700 }}>{t('purchases.unit')}</th>
+                    <th style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 700 }}>{t('purchases.unitPrice')}</th>
+                    <th style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 700 }}>{t('purchases.subtotal')}</th>
                     <th style={{ padding: '9px 12px', width: 40 }} />
                   </tr>
                 </thead>
@@ -929,7 +947,7 @@ function CreatePurchaseDialog({
                             onChange={(e) => updateLine(l.key, { product_id: e.target.value })}
                             style={{ ...fieldStyle, height: 32 }}
                           >
-                            <option value="">Select product…</option>
+                            <option value="">{t('purchases.selectProduct')}</option>
                             {products.map((pr) => (
                               <option key={pr.id} value={String(pr.id)}>
                                 {pr.name}
@@ -948,7 +966,7 @@ function CreatePurchaseDialog({
                           />
                         </td>
                         <td style={{ padding: '8px 12px', color: '#718198' }}>
-                          {product?.unit_id ? `unit #${product.unit_id}` : '—'}
+                          {product?.unit_id ? `${t('purchases.unit')} #${product.unit_id}` : '—'}
                         </td>
                         <td style={{ padding: '8px 12px' }}>
                           <input
@@ -967,7 +985,7 @@ function CreatePurchaseDialog({
                           <button
                             onClick={() => removeLine(l.key)}
                             disabled={lines.length <= 1}
-                            aria-label="Remove line"
+                            aria-label={t("purchases.removeLine")}
                             style={{ border: 0, background: 'none', color: lines.length <= 1 ? '#cbd5e1' : '#dc2626' }}
                           >
                             <Trash2 size={15} />
@@ -980,19 +998,18 @@ function CreatePurchaseDialog({
               </table>
             </div>
             <p style={{ margin: '6px 0 0', fontSize: 11, color: '#94a3b8' }}>
-              Subtotal is a preview of quantity × unit price. The server computes the authoritative totals and
-              shipping allocation on save.
+              {t('purchases.previewNote')}
             </p>
           </div>
 
           {/* Shipping */}
           <div>
             <h3 style={{ fontSize: 13, fontWeight: 700, margin: '0 0 8px' }}>
-              Shipping <span style={{ fontWeight: 400, color: '#8a98ab' }}>(landed cost — optional)</span>
+              {t('purchases.shipping')} <span style={{ fontWeight: 400, color: '#8a98ab' }}>({t('purchases.shippingHelp')})</span>
             </h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14 }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <label style={labelStyle}>Shipping amount</label>
+                <label style={labelStyle}>{t('purchases.shippingAmount')}</label>
                 <input
                   type="number"
                   min="0"
@@ -1004,13 +1021,13 @@ function CreatePurchaseDialog({
                 />
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <label style={labelStyle}>Shipping supplier (optional)</label>
+                <label style={labelStyle}>{t('purchases.shippingSupplier')}</label>
                 <select
                   value={shipSupplierId}
                   onChange={(e) => setShipSupplierId(e.target.value)}
                   style={fieldStyle}
                 >
-                  <option value="">None</option>
+                  <option value="">{t('common.none')}</option>
                   {suppliers.map((s) => (
                     <option key={s.id} value={String(s.id)}>
                       {s.name}
@@ -1019,7 +1036,7 @@ function CreatePurchaseDialog({
                 </select>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <label style={labelStyle}>Description</label>
+                <label style={labelStyle}>{t('purchases.description')}</label>
                 <input
                   value={shipDescription}
                   onChange={(e) => setShipDescription(e.target.value)}
@@ -1035,22 +1052,22 @@ function CreatePurchaseDialog({
                 checked={shipPaidInCash}
                 onChange={(e) => setShipPaidInCash(e.target.checked)}
               />
-              Shipping paid in cash now
+              {t('purchases.shippingPaidCash')}
             </label>
           </div>
 
           {/* Summary */}
           <div style={{ background: '#f8fafc', border: '1px solid var(--border)', borderRadius: 10, padding: 14, fontSize: 13 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ color: '#718198' }}>Line subtotal</span>
+              <span style={{ color: '#718198' }}>{t('purchases.lineSubtotal')}</span>
               <span>{formatIDR(previewSubtotal)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ color: '#718198' }}>Shipping</span>
+              <span style={{ color: '#718198' }}>{t('purchases.shipping')}</span>
               <span>{formatIDR(previewShipping)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--border)', paddingTop: 8, fontWeight: 700 }}>
-              <span>Total (preview)</span>
+              <span>{t('purchases.totalPreview')}</span>
               <span>{formatIDR(previewTotal)}</span>
             </div>
           </div>
@@ -1084,10 +1101,10 @@ function CreatePurchaseDialog({
           }}
         >
           <Button variant="outline" onClick={onClose} disabled={busy}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button onClick={submit} disabled={busy}>
-            {busy ? 'Creating…' : 'Create draft'}
+            {busy ? t('purchases.creating') : t('purchases.createDraft')}
           </Button>
         </div>
       </div>

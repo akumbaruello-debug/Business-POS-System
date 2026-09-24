@@ -21,9 +21,10 @@ import {
   X,
 } from 'lucide-react'
 import { api } from '@/lib/api-client'
-import type { Contact, ContactListResponse, Pagination } from '@/lib/contact-types'
+import type { Contact, Pagination } from '@/lib/contact-types'
 import { Button } from '@/components/ui/button'
 import { useSession } from '@/lib/session'
+import { useLanguage } from '@/lib/i18n'
 
 // ---------------------------------------------------------------------------
 // Backend contract notes (from openapi.yaml §Contacts):
@@ -41,10 +42,6 @@ const DEFAULT_PAGINATION: Pagination = {
   page: 1, per_page: 25, total: 0, total_pages: 1, has_next: false, has_prev: false,
 }
 
-function statusLabel(c: Contact): 'Active' | 'Inactive' {
-  return c.is_active ? 'Active' : 'Inactive'
-}
-
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString('id-ID', { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
@@ -56,6 +53,7 @@ function etagHeader(c: Contact): Record<string, string> {
 }
 
 export default function SuppliersPage() {
+  const { t } = useLanguage()
   const user = useSession()
   const canManage = user.capabilities.includes('contact.manage')
   const canEdit = user.capabilities.includes('contact.edit')
@@ -172,7 +170,7 @@ export default function SuppliersPage() {
       }, {
         headers: { 'Idempotency-Key': crypto.randomUUID() },
       })
-      toast('Supplier created')
+      toast(t('suppliers.createdToast'))
       setDialog(null)
       fetchSuppliers()
     } catch (err) {
@@ -205,13 +203,13 @@ export default function SuppliersPage() {
           ...etagHeader(activeSupplier),
         },
       })
-      toast('Supplier updated')
+      toast(t('suppliers.updatedToast'))
       setDialog(null)
       setActiveSupplier(null)
       fetchSuppliers()
     } catch (err: any) {
       if (err.code === 'version_mismatch') {
-        toast('Supplier was modified by another user. Please refresh.')
+        toast(t('suppliers.staleRefresh'))
       } else {
         toast(err instanceof Error ? err.message : 'Update failed')
       }
@@ -238,7 +236,7 @@ export default function SuppliersPage() {
       fetchSuppliers()
     } catch (err: any) {
       if (err.code === 'version_mismatch') {
-        toast('Supplier was modified by another user. Please refresh and try again.')
+        toast(t('suppliers.staleRetry'))
       } else {
         toast(err instanceof Error ? err.message : 'Reactivate failed')
       }
@@ -311,9 +309,9 @@ export default function SuppliersPage() {
       <div className="content">
         <div className="page-heading">
           <div>
-            <div className="eyebrow">Purchasing / Suppliers</div>
-            <h1>Suppliers</h1>
-            <p>Manage supplier relationships and purchasing partners.</p>
+            <div className="eyebrow">{t('suppliers.eyebrow')}</div>
+            <h1>{t('suppliers.title')}</h1>
+            <p>{t('suppliers.subtitle')}</p>
           </div>
         </div>
         <div className="error-state">
@@ -331,15 +329,15 @@ export default function SuppliersPage() {
       {/* Page heading */}
       <div className="page-heading">
         <div>
-          <div className="eyebrow">Purchasing / Suppliers</div>
-          <h1>Suppliers</h1>
-          <p>Manage supplier relationships and purchasing partners.</p>
+          <div className="eyebrow">{t('suppliers.eyebrow')}</div>
+          <h1>{t('suppliers.title')}</h1>
+          <p>{t('suppliers.subtitle')}</p>
         </div>
         <div className="heading-actions">
           <Button variant="outline" onClick={() => toast('Import not yet wired — no backend endpoint')}><Upload size={14} /> Import</Button>
           <Button variant="outline" onClick={() => toast('Export not yet wired — no backend endpoint')}><Download size={14} /> Export</Button>
           {canCreate && (
-            <Button onClick={() => { setActiveSupplier(null); setDialog('add') }}><Plus size={14} /> Add supplier</Button>
+            <Button onClick={() => { setActiveSupplier(null); setDialog('add') }}><Plus size={14} /> {t('suppliers.addSupplier')}</Button>
           )}
         </div>
       </div>
@@ -348,15 +346,15 @@ export default function SuppliersPage() {
       <section className="metrics">
         <article className="metric-card">
           <div className="metric-top">
-            <span className="metric-label">Total suppliers</span>
+            <span className="metric-label">{t('suppliers.totalSuppliers')}</span>
             <span className="metric-icon"><Building2 size={18} /></span>
           </div>
           <div className="metric-value">{loading ? '—' : pagination.total}</div>
-          <div className="metric-change positive"><span className="change-note">All registered suppliers</span></div>
+          <div className="metric-change positive"><span className="change-note">{t('suppliers.allRegistered')}</span></div>
         </article>
         <article className="metric-card">
           <div className="metric-top">
-            <span className="metric-label">Active suppliers</span>
+            <span className="metric-label">{t('suppliers.activeSuppliers')}</span>
             <span className="metric-icon"><Truck size={18} /></span>
           </div>
           <div className="metric-value">{loading ? '—' : activeCount}</div>
@@ -364,7 +362,7 @@ export default function SuppliersPage() {
         </article>
         <article className="metric-card">
           <div className="metric-top">
-            <span className="metric-label">Inactive suppliers</span>
+            <span className="metric-label">{t('suppliers.inactiveSuppliers')}</span>
             <span className="metric-icon"><AlertCircle size={18} /></span>
           </div>
           <div className="metric-value">{loading ? '—' : inactiveCount}</div>
@@ -372,11 +370,11 @@ export default function SuppliersPage() {
         </article>
         <article className="metric-card">
           <div className="metric-top">
-            <span className="metric-label">Purchase volume</span>
+            <span className="metric-label">{t('suppliers.purchaseVolume')}</span>
             <span className="metric-icon"><Check size={18} /></span>
           </div>
           <div className="metric-value">{loading ? '—' : '—'}</div>
-          <div className="metric-change positive"><span className="change-note">Not yet tracked</span></div>
+          <div className="metric-change positive"><span className="change-note">{t('suppliers.notYetTracked')}</span></div>
         </article>
       </section>
 
@@ -390,7 +388,7 @@ export default function SuppliersPage() {
                 aria-label="Search suppliers"
                 value={query}
                 onChange={(e) => { setQuery(e.target.value); setPage(1) }}
-                placeholder="Search name, phone, email..."
+                placeholder={t('suppliers.searchPlaceholder')}
                 style={{ width: '100%', height: 36, paddingLeft: 32, paddingRight: 12, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--background)', fontSize: 13, outline: 'none' }}
               />
             </div>
@@ -400,11 +398,11 @@ export default function SuppliersPage() {
               onChange={(e) => { setStatusFilter(e.target.value as typeof statusFilter); setPage(1) }}
               style={{ height: 36, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--background)', padding: '0 10px', fontSize: 13 }}
             >
-              <option value="all">All status</option>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
+              <option value="all">{t('customers.allStatus')}</option>
+              <option value="active">{t('common.active')}</option>
+              <option value="inactive">{t('common.inactive')}</option>
             </select>
-            <Button variant="ghost" size="sm" onClick={() => { setQuery(''); setStatusFilter('all'); setPage(1) }}>Clear filters</Button>
+            <Button variant="ghost" size="sm" onClick={() => { setQuery(''); setStatusFilter('all'); setPage(1) }}>{t('common.clearFilters')}</Button>
           </div>
           {selected.size > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: '#eff6ff', borderRadius: 6, fontSize: 13 }}>
@@ -426,8 +424,8 @@ export default function SuppliersPage() {
             <strong>No suppliers found</strong>
             <p>Try adjusting your search or filters.</p>
             <div style={{ display: 'flex', gap: 8 }}>
-              <Button variant="outline" onClick={() => { setQuery(''); setStatusFilter('all'); setPage(1) }}>Clear filters</Button>
-              {canCreate && <Button onClick={() => { setActiveSupplier(null); setDialog('add') }}>Add supplier</Button>}
+              <Button variant="outline" onClick={() => { setQuery(''); setStatusFilter('all'); setPage(1) }}>{t('common.clearFilters')}</Button>
+              {canCreate && <Button onClick={() => { setActiveSupplier(null); setDialog('add') }}>{t('suppliers.addSupplier')}</Button>}
             </div>
           </div>
         ) : (
@@ -440,14 +438,14 @@ export default function SuppliersPage() {
                     <th style={{ width: 44, padding: '10px 14px' }}>
                       <input type="checkbox" aria-label="Select all suppliers" checked={suppliers.length > 0 && suppliers.every((s) => selected.has(s.id))} onChange={toggleAll} />
                     </th>
-                    {([['name', 'Supplier'], ['phone', 'Phone'], ['email', 'Email'], ['type', 'Type'], ['created_at', 'Created'], ['is_active', 'Status']] as const).map(([key, label]) => (
+                    {([['name', t('suppliers.supplier')], ['phone', t('common.phone')], ['email', t('common.email')], ['type', 'Type'], ['created_at', t('customers.created')], ['is_active', t('common.status')]] as const).map(([key, label]) => (
                       <th key={key} style={{ padding: '10px 14px' }}>
                         <button onClick={() => handleSort(key)} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 600, background: 'none', border: 0, cursor: 'pointer', color: sortKey === key ? 'var(--primary)' : 'inherit' }}>
                           {label}<ChevronsUpDown size={12} />
                         </button>
                       </th>
                     ))}
-                    <th style={{ padding: '10px 14px' }}>Actions</th>
+                    <th style={{ padding: '10px 14px' }}>{t('common.actions')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -468,7 +466,7 @@ export default function SuppliersPage() {
                       <td style={{ padding: '12px 14px' }}>{fmtDate(s.created_at)}</td>
                       <td style={{ padding: '12px 14px' }}>
                         <span style={{ display: 'inline-block', padding: '2px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600, background: s.is_active ? '#ecfdf5' : '#f1f5f9', color: s.is_active ? '#059669' : '#64748b' }}>
-                          {statusLabel(s)}
+                          {s.is_active ? t('common.active') : t('common.inactive')}
                         </span>
                       </td>
                       <td style={{ padding: '12px 14px', position: 'relative' }}>
@@ -477,9 +475,9 @@ export default function SuppliersPage() {
                         </button>
                         {menuOpen === s.id && (
                           <div style={{ position: 'absolute', right: 14, top: 40, zIndex: 30, width: 200, background: 'white', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 8px 24px rgba(0,0,0,.1)', padding: 4 }}>
-                            <button onClick={() => openView(s)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><Eye size={14} /> View supplier</button>
+                            <button onClick={() => openView(s)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><Eye size={14} /> {t('suppliers.viewSupplier')}</button>
                             {canEdit && (
-                              <button onClick={() => openEdit(s)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><Pencil size={14} /> Edit supplier</button>
+                              <button onClick={() => openEdit(s)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 6, fontSize: 13, color: '#4b5c72' }}><Pencil size={14} /> {t('suppliers.editSupplier')}</button>
                             )}
                             {s.is_active ? (
                               canDeactivate && (
@@ -510,7 +508,7 @@ export default function SuppliersPage() {
                     </div>
                     <div style={{ display: 'flex', gap: 4 }}>
                       <span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600, background: s.is_active ? '#ecfdf5' : '#f1f5f9', color: s.is_active ? '#059669' : '#64748b' }}>
-                        {statusLabel(s)}
+                        {s.is_active ? t('common.active') : t('common.inactive')}
                       </span>
                       <button onClick={() => setMenuOpen(menuOpen === s.id ? null : s.id)} style={{ background: 'none', border: 0, cursor: 'pointer', padding: 2, borderRadius: 4, color: '#6b7a90' }} aria-label={`Actions for ${s.name}`}>
                         <MoreHorizontal size={16} />
@@ -518,10 +516,10 @@ export default function SuppliersPage() {
                     </div>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 12, fontSize: 13 }}>
-                    <div><span style={{ fontSize: 11, color: '#718198' }}>Phone</span><div>{s.phone ?? '—'}</div></div>
-                    <div><span style={{ fontSize: 11, color: '#718198' }}>Email</span><div>{s.email ?? '—'}</div></div>
+                    <div><span style={{ fontSize: 11, color: '#718198' }}>{t('common.phone')}</span><div>{s.phone ?? '—'}</div></div>
+                    <div><span style={{ fontSize: 11, color: '#718198' }}>{t('common.email')}</span><div>{s.email ?? '—'}</div></div>
                   </div>
-                  <Button variant="outline" size="sm" style={{ width: '100%', marginTop: 12 }} onClick={() => openView(s)}>View supplier</Button>
+                  <Button variant="outline" size="sm" style={{ width: '100%', marginTop: 12 }} onClick={() => openView(s)}>{t('suppliers.viewSupplier')}</Button>
                 </article>
               ))}
             </div>
@@ -566,14 +564,14 @@ export default function SuppliersPage() {
       {dialog === 'reactivate' && activeSupplier && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,.35)', padding: 16 }} onMouseDown={(e) => { if (e.target === e.currentTarget) { setDialog(null); setActiveSupplier(null) } }}>
           <div style={{ width: '100%', maxWidth: 420, background: 'white', borderRadius: 14, border: '1px solid var(--border)', padding: 24, boxShadow: '0 20px 48px rgba(0,0,0,.12)' }}>
-            <h2 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 8px' }}>Reactivate supplier?</h2>
+            <h2 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 8px' }}>{t('suppliers.reactivateSupplier')}</h2>
             <p style={{ fontSize: 13, color: '#718198', margin: '0 0 20px' }}>
-              <strong>{activeSupplier.name}</strong> will be marked active again. This will restore full access to the supplier in purchasing workflows.
+              {t('suppliers.reactivateText', { name: activeSupplier.name })}
             </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <Button variant="outline" onClick={() => { setDialog(null); setActiveSupplier(null) }} disabled={actionLoading}>Cancel</Button>
+              <Button variant="outline" onClick={() => { setDialog(null); setActiveSupplier(null) }} disabled={actionLoading}>{t('common.cancel')}</Button>
               <Button onClick={handleReactivate} disabled={actionLoading}>
-                {actionLoading ? 'Reactivating...' : 'Reactivate'}
+                {actionLoading ? t('customers.reactivating') : 'Reactivate'}
               </Button>
             </div>
           </div>
@@ -586,20 +584,20 @@ export default function SuppliersPage() {
           <div style={{ width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto', background: 'white', borderRadius: 14, border: '1px solid var(--border)', padding: 24, boxShadow: '0 20px 48px rgba(0,0,0,.12)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
               <div>
-                <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Supplier detail</h2>
-                <p style={{ fontSize: 13, color: '#718198', marginTop: 4 }}>Profile and contact information.</p>
+                <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>{t('suppliers.supplierDetail')}</h2>
+                <p style={{ fontSize: 13, color: '#718198', marginTop: 4 }}>{t('suppliers.profileAndContact')}</p>
               </div>
               <button onClick={() => { setDialog(null); setActiveSupplier(null) }} aria-label="Close" style={{ background: 'none', border: 0, cursor: 'pointer', padding: 4 }}><X size={18} /></button>
             </div>
             <div style={{ display: 'grid', gap: 12, gridTemplateColumns: '1fr 1fr' }}>
               {([
-                ['Name', activeSupplier.name],
+                [t('common.name'), activeSupplier.name],
                 ['Type', activeSupplier.type],
-                ['Phone', activeSupplier.phone ?? '—'],
-                ['Email', activeSupplier.email ?? '—'],
-                ['Address', activeSupplier.address ?? '—'],
-                ['Status', statusLabel(activeSupplier)],
-                ['Created', fmtDate(activeSupplier.created_at)],
+                [t('common.phone'), activeSupplier.phone ?? '—'],
+                [t('common.email'), activeSupplier.email ?? '—'],
+                [t('common.address'), activeSupplier.address ?? '—'],
+                [t('common.status'), activeSupplier.is_active ? t('common.active') : t('common.inactive')],
+                [t('customers.created'), fmtDate(activeSupplier.created_at)],
                 ['Last updated', fmtDate(activeSupplier.updated_at)],
               ] as const).map(([label, value]) => (
                 <div key={label} style={{ background: '#f8fafc', borderRadius: 8, padding: 12 }}>
@@ -609,15 +607,15 @@ export default function SuppliersPage() {
               ))}
               {activeSupplier.notes && (
                 <div style={{ gridColumn: '1 / -1', background: '#f8fafc', borderRadius: 8, padding: 12 }}>
-                  <div style={{ fontSize: 11, color: '#718198', marginBottom: 4 }}>Notes</div>
+                  <div style={{ fontSize: 11, color: '#718198', marginBottom: 4 }}>{t('common.notes')}</div>
                   <div style={{ fontSize: 13 }}>{activeSupplier.notes}</div>
                 </div>
               )}
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
-              <Button variant="outline" onClick={() => { setDialog(null); setActiveSupplier(null) }}>Close</Button>
+              <Button variant="outline" onClick={() => { setDialog(null); setActiveSupplier(null) }}>{t('common.close')}</Button>
               {canEdit && activeSupplier.is_active && (
-                <Button onClick={() => { setDialog('edit') }}>Edit supplier</Button>
+                <Button onClick={() => { setDialog('edit') }}>{t('suppliers.editSupplier')}</Button>
               )}
             </div>
           </div>
@@ -628,14 +626,14 @@ export default function SuppliersPage() {
       {dialog === 'confirm-deactivate' && activeSupplier && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,.35)', padding: 16 }} onMouseDown={(e) => { if (e.target === e.currentTarget) { setDialog(null); setActiveSupplier(null) } }}>
           <div style={{ width: '100%', maxWidth: 420, background: 'white', borderRadius: 14, border: '1px solid var(--border)', padding: 24, boxShadow: '0 20px 48px rgba(0,0,0,.12)' }}>
-            <h2 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 8px' }}>Deactivate supplier?</h2>
+            <h2 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 8px' }}>{t('suppliers.deactivateSupplier')}</h2>
             <p style={{ fontSize: 13, color: '#718198', margin: '0 0 20px' }}>
-              <strong>{activeSupplier.name}</strong> will be marked inactive. Existing transactions and records are preserved.
+              {t('suppliers.deactivateText', { name: activeSupplier.name })}
             </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <Button variant="outline" onClick={() => { setDialog(null); setActiveSupplier(null) }} disabled={actionLoading}>Cancel</Button>
+              <Button variant="outline" onClick={() => { setDialog(null); setActiveSupplier(null) }} disabled={actionLoading}>{t('common.cancel')}</Button>
               <Button variant="destructive" onClick={handleDeactivate} disabled={actionLoading}>
-                {actionLoading ? 'Deactivating...' : 'Deactivate'}
+                {actionLoading ? t('customers.deactivating') : 'Deactivate'}
               </Button>
             </div>
           </div>
@@ -668,6 +666,7 @@ function SupplierFormDialog({
   onSubmit: (form: { name: string; phone: string; email: string; address: string; notes: string }) => void
   loading: boolean
 }) {
+  const { t } = useLanguage()
   const [name, setName] = useState(supplier?.name ?? '')
   const [phone, setPhone] = useState(supplier?.phone ?? '')
   const [email, setEmail] = useState(supplier?.email ?? '')
@@ -731,32 +730,32 @@ function SupplierFormDialog({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
           <div>
             <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: 'var(--foreground)' }}>
-              {mode === 'add' ? 'Add supplier' : 'Edit supplier'}
+              {mode === 'add' ? t('suppliers.addSupplierTitle') : t('suppliers.editSupplierTitle')}
             </h2>
             <p style={{ fontSize: 13, color: '#718198', marginTop: 4 }}>
-              {mode === 'add' ? 'Create a new supplier record.' : 'Update supplier contact information.'}
+              {mode === 'add' ? t('suppliers.createSupplier') : t('suppliers.updateSupplier')}
             </p>
           </div>
           <button onClick={onClose} aria-label="Close" style={{ background: 'none', border: 0, cursor: 'pointer', padding: 4 }}><X size={18} /></button>
         </div>
         <div style={{ display: 'grid', gap: 16 }}>
           <div>
-            <label style={labelStyle}>Name *</label>
+            <label style={labelStyle}>{t('common.name')} *</label>
             <input
               value={name}
               onChange={(e) => { setName(e.target.value); setErrors({ ...errors, name: '' }) }}
-              placeholder="Supplier name"
+              placeholder={t('suppliers.supplierName')}
               style={{ ...fieldStyle, ...(errors.name ? { borderColor: '#dc2626' } : {}) }}
               aria-label="Supplier name"
             />
             {errors.name && <div style={{ fontSize: 11, color: '#dc2626', marginTop: 2 }}>{errors.name}</div>}
           </div>
           <div>
-            <label style={labelStyle}>Phone</label>
+            <label style={labelStyle}>{t('common.phone')}</label>
             <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+62 8xx-xxxx-xxxx" style={fieldStyle} aria-label="Phone" />
           </div>
           <div>
-            <label style={labelStyle}>Email</label>
+            <label style={labelStyle}>{t('common.email')}</label>
             <input
               value={email}
               onChange={(e) => { setEmail(e.target.value); setErrors({ ...errors, email: '' }) }}
@@ -767,11 +766,11 @@ function SupplierFormDialog({
             {errors.email && <div style={{ fontSize: 11, color: '#dc2626', marginTop: 2 }}>{errors.email}</div>}
           </div>
           <div>
-            <label style={labelStyle}>Address</label>
+            <label style={labelStyle}>{t('common.address')}</label>
             <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Street address" style={fieldStyle} aria-label="Address" />
           </div>
           <div>
-            <label style={labelStyle}>Notes</label>
+            <label style={labelStyle}>{t('common.notes')}</label>
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
@@ -782,9 +781,9 @@ function SupplierFormDialog({
           </div>
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
-          <Button variant="outline" onClick={onClose} disabled={loading}>Cancel</Button>
+          <Button variant="outline" onClick={onClose} disabled={loading}>{t('common.cancel')}</Button>
           <Button onClick={handleSubmit} disabled={loading}>
-            {loading ? (mode === 'add' ? 'Creating...' : 'Saving...') : mode === 'add' ? 'Add supplier' : 'Save changes'}
+            {loading ? t('common.saving') : mode === 'add' ? t('suppliers.addSupplier') : t('common.saveChanges')}
           </Button>
         </div>
       </div>

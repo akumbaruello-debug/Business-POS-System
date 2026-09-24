@@ -84,21 +84,21 @@ export interface InventoryReportResponse {
 
 /** Valid `period` query values per backend period.py (_VALID_PERIODS). */
 export const PERIOD_OPTIONS = [
-  { value: 'today', label: 'Today' },
-  { value: 'this_week', label: 'This week' },
-  { value: 'this_month', label: 'This month' },
-  { value: 'this_year', label: 'This year' },
+  { value: 'today', label: 'Today', labelKey: 'dashboard.period.today' },
+  { value: 'this_week', label: 'This week', labelKey: 'dashboard.period.thisWeek' },
+  { value: 'this_month', label: 'This month', labelKey: 'dashboard.period.thisMonth' },
+  { value: 'this_year', label: 'This year', labelKey: 'dashboard.period.thisYear' },
 ] as const
 
 export type PeriodValue = (typeof PERIOD_OPTIONS)[number]['value']
 
 /** `compare_to` values the backend accepts (period aliases). */
 export const COMPARE_OPTIONS = [
-  { value: 'none', label: 'No comparison' },
-  { value: 'today', label: 'vs previous day' },
-  { value: 'this_week', label: 'vs previous week' },
-  { value: 'this_month', label: 'vs previous month' },
-  { value: 'this_year', label: 'vs previous year' },
+  { value: 'none', label: 'No comparison', labelKey: 'dashboard.compare.none' },
+  { value: 'today', label: 'vs previous day', labelKey: 'dashboard.compare.vsPrevDay' },
+  { value: 'this_week', label: 'vs previous week', labelKey: 'dashboard.compare.vsPrevWeek' },
+  { value: 'this_month', label: 'vs previous month', labelKey: 'dashboard.compare.vsPrevMonth' },
+  { value: 'this_year', label: 'vs previous year', labelKey: 'dashboard.compare.vsPrevYear' },
 ] as const
 
 export type CompareValue = (typeof COMPARE_OPTIONS)[number]['value']

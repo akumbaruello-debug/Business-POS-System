@@ -4,11 +4,12 @@ import { ChevronDown, LogOut, Menu } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { logout } from '@/lib/auth'
 import { useSession, initialsFor } from '@/lib/session'
+import { useLanguage } from '@/lib/i18n'
 
 // Header surface. Global search and the notifications bell are deliberately
 // absent: there is no backend contract for either, and shipping fabricated
-// demo panels would be misleading. The account menu keeps only Sign out
-// (real); Profile / settings / preferences / language have no pages yet.
+// demo panels would be misleading. The account menu keeps Sign out and a
+// Settings link; profile/preferences remain unimplemented.
 export function Header({
   onMenu,
   accountOpen,
@@ -21,6 +22,7 @@ export function Header({
   const router = useRouter()
   const user = useSession()
   const initials = initialsFor(user)
+  const { t } = useLanguage()
 
   const handleSignOut = () => {
     logout()
@@ -34,9 +36,9 @@ export function Header({
           <Menu size={19} />
         </button>
         <div className="breadcrumb">
-          <span>Workspace</span>
+          <span>{t('header.workspace')}</span>
           <ChevronDown size={14} />
-          <strong>Dashboard</strong>
+          <strong>{t('nav.dashboard')}</strong>
         </div>
       </div>
 
@@ -64,9 +66,19 @@ export function Header({
                 </span>
               </div>
               <hr />
+              <button
+                className="account-menu-item"
+                onClick={() => {
+                  setAccountOpen(false)
+                  router.push('/settings')
+                }}
+              >
+                {t('nav.settings')}
+              </button>
+              <hr />
               <button className="sign-out" onClick={handleSignOut}>
                 <LogOut size={15} />
-                Sign out
+                {t('header.signOut')}
               </button>
             </div>
           )}
