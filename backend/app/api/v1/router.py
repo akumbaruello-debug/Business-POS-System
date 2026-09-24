@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     auth,
+    capabilities,
     cash_movements,
     categories,
     contacts_routes,
@@ -25,15 +26,23 @@ from app.api.v1 import (
     purchases,
     refunds,
     reports,
+    roles,
     sales,
     settings,
     stock_movements,
     supplier_repayments,
     units,
+    users,
 )
 
 router = APIRouter()
 router.include_router(auth.router)
+# Phase 1.4 — Users management
+router.include_router(users.router)
+# Phase 1.5 — Roles management
+router.include_router(roles.router)
+# Phase 1 — capabilities catalog (read-only)
+router.include_router(capabilities.router)
 router.include_router(payment_methods.router)
 router.include_router(financial_categories.router)
 router.include_router(units.router)
