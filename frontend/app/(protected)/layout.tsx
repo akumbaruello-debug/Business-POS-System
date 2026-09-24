@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { AppShell } from '@/components/layout/app-shell'
 import { isAuthenticated, getCurrentUser, type SessionUser } from '@/lib/auth'
 import { SessionContext } from '@/lib/session'
+import { ApiError } from '@/lib/api-client'
 
 export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -24,8 +25,17 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
           return
         }
         setUser(u)
-      } catch {
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) {
+          router.replace('/login')
+          return
+        }
+        if (err instanceof ApiError && err.status >= 500) {
+          setLoading(false)
+          return
+        }
         router.replace('/login')
+        return
       } finally {
         setLoading(false)
       }

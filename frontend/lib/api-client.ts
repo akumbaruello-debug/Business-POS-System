@@ -1,8 +1,40 @@
 import { API_URL } from './constants'
 
-type RequestOptions = Omit<RequestInit, 'body'> & {
+export interface ApiErrorDetails {
+  code?: string
+  message?: string
+  details?: unknown
+  request_id?: string
+  errors?: Array<{ loc: (string | number)[]; msg: string; type: string }>
+}
+
+export class ApiError extends Error {
+  status: number
+  code?: string
+  details?: ApiErrorDetails
+  requestId?: string
+  validationErrors?: ApiErrorDetails['errors']
+
+  constructor(status: number, message: string, details?: ApiErrorDetails) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.code = details?.code
+    this.details = details
+    this.requestId = details?.request_id
+    this.validationErrors = details?.errors
+  }
+}
+
+export function isApiError(err: unknown): err is ApiError {
+  return err instanceof ApiError
+}
+
+export interface RequestOptions extends Omit<RequestInit, 'body'> {
   body?: unknown
-  params?: Record<string, string>
+  params?: Record<string, string | number | boolean | undefined | null>
+  ifMatch?: string
+  idempotencyKey?: string | true
 }
 
 export interface ApiResult<T = any> {
@@ -11,30 +43,65 @@ export interface ApiResult<T = any> {
   headers: Headers
 }
 
+function generateIdempotencyKey(): string {
+  return crypto.randomUUID()
+}
+
+function buildQueryParams(
+  params: RequestOptions['params']
+): URLSearchParams | undefined {
+  if (!params) return undefined
+  const qs = new URLSearchParams()
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null) return
+    qs.set(key, String(value))
+  })
+  return qs.size > 0 ? qs : undefined
+}
+
 async function rawClient<T = any>(
   endpoint: string,
   options: RequestOptions = {}
 ): Promise<ApiResult<T>> {
-  const { body, params, headers: customHeaders, ...rest } = options
+  const {
+    body,
+    params,
+    headers: customHeaders,
+    ifMatch,
+    idempotencyKey,
+    ...rest
+  } = options
 
   const url = new URL(`${API_URL}${endpoint}`)
-  if (params) {
-    Object.entries(params).forEach(([key, value]) => {
-      if (value !== undefined && value !== null) {
-        url.searchParams.set(key, value)
-      }
+  const qs = buildQueryParams(params)
+  if (qs) {
+    qs.forEach((value, key) => url.searchParams.set(key, value))
+  }
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+
+  if (customHeaders) {
+    const normalized = customHeaders as Record<string, string>
+    Object.entries(normalized).forEach(([key, value]) => {
+      if (value !== undefined) headers[key] = value
     })
   }
 
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-    ...customHeaders,
+  if (ifMatch) {
+    headers['If-Match'] = ifMatch
   }
 
-  // Attach access token from localStorage if present
+  const isMutation = rest.method && rest.method !== 'GET' && rest.method !== 'HEAD'
+  if (isMutation && idempotencyKey) {
+    headers['Idempotency-Key'] =
+      idempotencyKey === true ? generateIdempotencyKey() : idempotencyKey
+  }
+
   const token = localStorage.getItem('access_token')
   if (token) {
-    ;(headers as Record<string, string>)['Authorization'] = `Bearer ${token}`
+    headers['Authorization'] = `Bearer ${token}`
   }
 
   const config: RequestInit = {
@@ -49,46 +116,51 @@ async function rawClient<T = any>(
 
   const response = await fetch(url.toString(), config)
 
-  // Handle 401 Unauthorized — could trigger logout
   if (response.status === 401) {
-    // Clear invalid token
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
-    // Let the caller handle redirect
-    throw new Error('Unauthorized')
+    throw new ApiError(401, 'Unauthorized', { code: 'unauthorized' })
   }
 
   const contentType = response.headers.get('content-type')
+  const etag = response.headers.get('etag') ?? undefined
+
   if (contentType?.includes('application/json')) {
     const data = await response.json()
     if (!response.ok) {
-      // Backend envelope: { error: { code, message, details, request_id } }.
       const errBody = data?.error ?? data
       const message =
         (typeof errBody?.message === 'string' && errBody.message) ||
         (typeof data?.detail === 'string' && data.detail) ||
         (typeof data?.message === 'string' && data.message) ||
         `Request failed with status ${response.status}`
-      const err = new Error(message)
-      // Preserve the backend error code (e.g. version_mismatch,
-      // lifecycle_state_invalid, idempotency_violation) so callers can
-      // branch on it without parsing the message text.
-      ;(err as Error & { code?: string }).code =
-        typeof errBody?.code === 'string' ? errBody.code : undefined
-      throw err
-    }
-    return { data: data as T, status: response.status, headers: response.headers }
-  } else {
-    // Non-JSON response (e.g. file download / 204 No Content)
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
+      const details: ApiErrorDetails = {
+        code: typeof errBody?.code === 'string' ? errBody.code : undefined,
+        message: typeof errBody?.message === 'string' ? errBody.message : undefined,
+        details: errBody?.details,
+        request_id: typeof errBody?.request_id === 'string' ? errBody.request_id : undefined,
+        errors: Array.isArray(errBody?.errors) ? errBody.errors : undefined,
+      }
+      throw new ApiError(response.status, message, details)
     }
     return {
-      data: (await response.text()) as unknown as T,
+      data: data as T,
       status: response.status,
       headers: response.headers,
-    }
+      ...(etag ? { etag } : {}),
+    } as ApiResult<T>
   }
+
+  if (!response.ok) {
+    throw new ApiError(response.status, `HTTP ${response.status}`)
+  }
+
+  return {
+    data: (await response.text()) as unknown as T,
+    status: response.status,
+    headers: response.headers,
+    ...(etag ? { etag } : {}),
+  } as ApiResult<T>
 }
 
 async function client<T = any>(
@@ -111,12 +183,6 @@ export const api = {
   delete: <T = any>(endpoint: string, options?: Omit<RequestOptions, 'body' | 'method'>) =>
     client<T>(endpoint, { ...options, method: 'DELETE' }),
 
-  /**
-   * Same verbs as `api`, but resolves `{ data, status, headers }` so callers
-   * can read response headers (notably `ETag`) and status codes. Used by the
-   * Purchasing draft-mutation flow, which needs the server's canonical ETag
-   * for the next `If-Match` without a second GET.
-   */
   headers: {
     get: <T = any>(endpoint: string, options?: Omit<RequestOptions, 'body' | 'method'>) =>
       rawClient<T>(endpoint, { ...options, method: 'GET' }),

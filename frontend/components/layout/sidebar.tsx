@@ -8,19 +8,32 @@ import {
   Package,
   PieChart,
   Settings,
+  Shield,
   Store,
   Truck,
+  UserCog,
   Users,
 } from 'lucide-react'
 import { useSession, initialsFor } from '@/lib/session'
 import { useLanguage } from '@/lib/i18n'
+import { useCan } from '@/lib/authz'
 
-// Only routes with implemented pages ship. Dead sections have no page yet,
-// so their links are withheld rather than 404ing. Reintroduce a group when
-// its first page lands.
-function useNavigation() {
+interface NavItem {
+  label: string
+  icon: React.ComponentType<{ size?: number }>
+  href: string
+  required?: string
+}
+
+interface NavGroup {
+  label: string
+  items: NavItem[]
+}
+
+function useNavigation(): NavGroup[] {
   const { t } = useLanguage()
-  return [
+  const { can } = useCan()
+  const groups: NavGroup[] = [
     { label: t('nav.overview'), items: [{ label: t('nav.dashboard'), icon: LayoutDashboard, href: '/dashboard' }] },
     {
       label: t('nav.inventory'),
@@ -52,10 +65,24 @@ function useNavigation() {
       items: [{ label: t('nav.reports'), icon: PieChart, href: '/reports' }],
     },
     {
+      label: t('nav.administration'),
+      items: [
+        { label: t('nav.users'), icon: UserCog, href: '/users', required: 'user.view' },
+        { label: t('nav.roles'), icon: Shield, href: '/roles', required: 'role.view' },
+      ],
+    },
+    {
       label: t('nav.settings'),
       items: [{ label: t('nav.settings'), icon: Settings, href: '/settings' }],
     },
-  ] as const
+  ]
+
+  return groups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => (item.required ? can(item.required) : true)),
+    }))
+    .filter((group) => group.items.length > 0)
 }
 
 export function Sidebar({
