@@ -66,6 +66,10 @@ function useNavigation(): NavGroup[] {
       items: [{ label: t('nav.reports'), icon: PieChart, href: '/reports' }],
     },
     {
+      label: t('nav.audit'),
+      items: [{ label: t('nav.audit'), icon: FileText, href: '/audit', required: 'audit.view' }],
+    },
+    {
       label: t('nav.production'),
       items: [{ label: t('nav.production'), icon: Factory, href: '/production', required: 'production.view' }],
     },

@@ -21,6 +21,7 @@ export const en: Record<string, string> = {
   'nav.suppliers': 'Suppliers',
   'nav.reports': 'Reports',
   'nav.production': 'Production',
+  'nav.audit': 'Audit Log',
   'nav.settings': 'Settings',
 
   // Header
@@ -794,4 +795,24 @@ export const en: Record<string, string> = {
   'capabilities.subtitle': 'Available permissions in the system.',
   'capabilities.searchPlaceholder': 'Search capabilities...',
   'capabilities.noResults': 'No capabilities found',
+
+  'audit.title': 'Audit Log',
+  'audit.subtitle': 'Append-only record of all system changes.',
+  'audit.eyebrow': 'Administration / Audit',
+  'audit.noEntries': 'No audit entries found',
+  'audit.noEntriesMatch': 'No audit entries match the current filters.',
+  'audit.entriesAppearHere': 'Audit entries will appear here once activity occurs.',
+  'audit.failedToLoad': 'Failed to load audit entries',
+  'audit.entityType': 'Entity type',
+  'audit.action': 'Action',
+  'audit.entityId': 'Entity ID',
+  'audit.userId': 'User ID',
+  'audit.eventTime': 'Event time',
+  'audit.ipAddress': 'IP address',
+  'audit.oldValues': 'Old values',
+  'audit.newValues': 'New values',
+  'audit.reason': 'Reason',
+  'audit.allActions': 'All actions',
+  'audit.allEntityTypes': 'All entity types',
+  'audit.allUsers': 'All users',
 }

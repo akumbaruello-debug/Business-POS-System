@@ -21,6 +21,7 @@ export const id: Record<string, string> = {
   'nav.suppliers': 'Pemasok',
   'nav.reports': 'Laporan',
   'nav.production': 'Produksi',
+  'nav.audit': 'Catatan Audit',
   'nav.settings': 'Pengaturan',
 
   // Header
@@ -793,4 +794,24 @@ export const id: Record<string, string> = {
   'capabilities.subtitle': 'Izin yang tersedia dalam sistem.',
   'capabilities.searchPlaceholder': 'Cari kemampuan...',
   'capabilities.noResults': 'Tidak ada kemampuan ditemukan',
+
+  'audit.title': 'Catatan Audit',
+  'audit.subtitle': 'Catatan yang tidak dapat diubah dari semua perubahan sistem.',
+  'audit.eyebrow': 'Administrasi / Audit',
+  'audit.noEntries': 'Tidak ada catatan audit ditemukan',
+  'audit.noEntriesMatch': 'Tidak ada catatan audit yang cocok dengan filter saat ini.',
+  'audit.entriesAppearHere': 'Catatan audit akan muncul di sini setelah aktivitas terjadi.',
+  'audit.failedToLoad': 'Gagal memuat catatan audit',
+  'audit.entityType': 'Tipe entitas',
+  'audit.action': 'Aksi',
+  'audit.entityId': 'ID entitas',
+  'audit.userId': 'ID pengguna',
+  'audit.eventTime': 'Waktu kejadian',
+  'audit.ipAddress': 'Alamat IP',
+  'audit.oldValues': 'Nilai lama',
+  'audit.newValues': 'Nilai baru',
+  'audit.reason': 'Alasan',
+  'audit.allActions': 'Semua aksi',
+  'audit.allEntityTypes': 'Semua tipe entitas',
+  'audit.allUsers': 'Semua pengguna',
 }
