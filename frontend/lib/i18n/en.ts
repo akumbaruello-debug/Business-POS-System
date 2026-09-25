@@ -815,4 +815,6 @@ export const en: Record<string, string> = {
   'audit.allActions': 'All actions',
   'audit.allEntityTypes': 'All entity types',
   'audit.allUsers': 'All users',
+  'audit.sort': 'Sort',
+  'audit.entryDetail': 'Audit entry',
 }

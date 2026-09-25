@@ -2385,7 +2385,6 @@ JOIN capabilities c ON c.code IN (
     'payment_method.view','cost_type.view',
     'sale.view','sale.create','sale.edit_own_draft',
     'purchase.view','purchase.create','purchase.edit_own_draft',
-    'purchase.return.finalize','purchase.return.arrival',
     'inventory.view',
     'production.view',
     'notification.view','notification.mark_read'

@@ -932,3 +932,189 @@ async def _ensure_product_one(app: AsyncClient) -> AsyncGenerator[None, None]:
     """
     await _seed_stock()
     yield
+# Dedicated price_override audit event (API §3.3)
+# ---------------------------------------------------------------------------
+
+
+async def _grant_capability(
+    app: AsyncClient,
+    h_owner: dict[str, str],
+    staff_user: dict[str, Any],
+    code: str,
+) -> None:
+    r1 = await app.get(f"/api/v1/users/{staff_user['user_id']}", headers=h_owner)
+    assert r1.status_code == 200, r1.text
+    res = await app.post(
+        f"/api/v1/users/{staff_user['user_id']}/capabilities",
+        headers={**h_owner, "Idempotency-Key": _idem(), "If-Match": f"\"{r1.json()['updated_at']}\""},
+        json={"capability_code": code, "is_granted": True},
+    )
+    assert res.status_code == 200, res.text
+
+
+async def _price_override_rows(
+    app: AsyncClient,
+    h_owner: dict[str, str],
+    line_id: int,
+) -> list[dict[str, Any]]:
+    r = await app.get(
+        "/api/v1/audit",
+        headers=h_owner,
+        params={
+            "filter[action]": "price_override",
+            "filter[entity_type]": "sale_line",
+            "filter[entity_id]": line_id,
+        },
+    )
+    assert r.status_code == 200, r.text
+    return list(r.json()["data"])
+
+
+@pytest.mark.asyncio
+async def test_price_override_emits_dedicated_audit_event(
+    app: AsyncClient,
+    owner_user: dict[str, Any],
+    staff_user: dict[str, Any],
+) -> None:
+    """Non-owner holding sale.price_override sets a price -> dedicated row."""
+    h_owner = await _owner_headers(app, owner_user)
+    h_staff = await _staff_headers(app, staff_user)
+    await _grant_capability(app, h_owner, staff_user, "sale.price_override")
+    h_staff = await _staff_headers(app, staff_user)
+
+    r = await app.post("/api/v1/sales", headers={**h_owner, "Idempotency-Key": _idem()}, json={})
+    sale_id = r.json()["id"]
+    r_line = await app.post(
+        f"/api/v1/sales/{sale_id}/lines",
+        headers={**h_staff, "Idempotency-Key": _idem()},
+        json={"product_id": 1, "quantity": "1.000", "unit_price": "123.45"},
+    )
+    assert r_line.status_code == 201, r_line.text
+    line_id = r_line.json()["id"]
+
+    # audit_log is append-only across tests and line ids can be reused after
+    # truncation, so match our row by actor + values (unique to this test).
+    rows = await _price_override_rows(app, h_owner, line_id)
+    ours = [e for e in rows if e["user_id"] == staff_user["user_id"] and (e["new_values"] or {}).get("unit_price") == "123.45"]
+    assert len(ours) == 1
+    assert ours[0]["entity_type"] == "sale_line"
+    assert ours[0]["entity_id"] == line_id
+
+
+@pytest.mark.asyncio
+async def test_non_override_line_changes_emit_no_price_override_event(
+    app: AsyncClient,
+    owner_user: dict[str, Any],
+    staff_user: dict[str, Any],
+) -> None:
+    """Owner-authored prices and quantity-only patches leave no dedicated row."""
+    h_owner = await _owner_headers(app, owner_user)
+
+    async def _count() -> int:
+        r_audit = await app.get(
+            "/api/v1/audit",
+            headers=h_owner,
+            params={"filter[action]": "price_override", "per_page": 1},
+        )
+        assert r_audit.status_code == 200, r_audit.text
+        return int(r_audit.json()["pagination"]["total"])
+
+    total_before = await _count()
+
+    r = await app.post("/api/v1/sales", headers={**h_owner, "Idempotency-Key": _idem()}, json={})
+    sale_id = r.json()["id"]
+    # Owner sets an explicit price on their own draft: privileged branch not taken.
+    r_line = await app.post(
+        f"/api/v1/sales/{sale_id}/lines",
+        headers={**h_owner, "Idempotency-Key": _idem()},
+        json={"product_id": 1, "quantity": "1.000", "unit_price": "50.00"},
+    )
+    assert r_line.status_code == 201, r_line.text
+    line_id = r_line.json()["id"]
+    assert await _count() == total_before
+
+    # Quantity-only patch: no unit_price mutation.
+    r_patch = await app.patch(
+        f"/api/v1/sales/{sale_id}/lines/{line_id}",
+        headers={**h_owner, "If-Match": _etag(r_line)},
+        json={"quantity": "2.000"},
+    )
+    assert r_patch.status_code == 200, r_patch.text
+    assert await _count() == total_before
+
+
+@pytest.mark.asyncio
+async def test_unauthorized_override_emits_no_price_override_event(
+    app: AsyncClient,
+    owner_user: dict[str, Any],
+    staff_user: dict[str, Any],
+) -> None:
+    """Non-owner without the cap is denied and leaves no dedicated row."""
+    h_owner = await _owner_headers(app, owner_user)
+    h_staff = await _staff_headers(app, staff_user)
+
+    r = await app.post("/api/v1/sales", headers={**h_owner, "Idempotency-Key": _idem()}, json={})
+    sale_id = r.json()["id"]
+    before = await app.get(
+        "/api/v1/audit",
+        headers=h_owner,
+        params={"filter[action]": "price_override", "per_page": 1},
+    )
+    total_before = before.json()["pagination"]["total"]
+
+    r_line = await app.post(
+        f"/api/v1/sales/{sale_id}/lines",
+        headers={**h_staff, "Idempotency-Key": _idem()},
+        json={"product_id": 1, "quantity": "1.000", "unit_price": "77.00"},
+    )
+    assert r_line.status_code == 403, r_line.text
+
+    after = await app.get(
+        "/api/v1/audit",
+        headers=h_owner,
+        params={"filter[action]": "price_override", "per_page": 1},
+    )
+    assert after.json()["pagination"]["total"] == total_before
+
+
+@pytest.mark.asyncio
+async def test_price_override_audit_failure_fails_request(
+    app: AsyncClient,
+    owner_user: dict[str, Any],
+    staff_user: dict[str, Any],
+    monkeypatch: Any,
+) -> None:
+    """Per API §3.3 the audit write must succeed or the request fails."""
+    import app.services.sales as sales_module
+
+    h_owner = await _owner_headers(app, owner_user)
+    h_staff = await _staff_headers(app, staff_user)
+    await _grant_capability(app, h_owner, staff_user, "sale.price_override")
+    h_staff = await _staff_headers(app, staff_user)
+
+    r = await app.post("/api/v1/sales", headers={**h_owner, "Idempotency-Key": _idem()}, json={})
+    sale_id = r.json()["id"]
+
+    real_write_audit = sales_module.write_audit
+
+    async def _failing_write_audit(uow: Any, **kwargs: Any) -> int:
+        if kwargs.get("action") == "price_override":
+            raise RuntimeError("audit store unavailable")
+        return await real_write_audit(uow, **kwargs)
+
+    monkeypatch.setattr(sales_module, "write_audit", _failing_write_audit)
+
+    # The failure propagates (no 2xx/4xx response): the request fails instead
+    # of committing a line without its mandated audit row.
+    with pytest.raises(RuntimeError, match="audit store unavailable"):
+        await app.post(
+            f"/api/v1/sales/{sale_id}/lines",
+            headers={**h_staff, "Idempotency-Key": _idem()},
+            json={"product_id": 1, "quantity": "1.000", "unit_price": "88.00"},
+        )
+
+    # Nothing persisted: UnitOfWork rolled the whole transaction back.
+    monkeypatch.undo()
+    r_lines = await app.get(f"/api/v1/sales/{sale_id}/lines", headers=h_owner)
+    assert r_lines.status_code == 200, r_lines.text
+    assert r_lines.json() == []

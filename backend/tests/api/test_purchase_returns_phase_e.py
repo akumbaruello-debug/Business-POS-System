@@ -1,8 +1,8 @@
 """Phase-E purchase-return finalization, arrival, override + cancel-gate tests.
 
 Covers the new endpoints added for the locked finalization contract:
-* POST /purchase-returns/{id}/finalize   (owner + staff)  -> finalized_at
-* POST /purchase-returns/{id}/arrival     (owner + staff)  -> supplier_arrival_at
+* POST /purchase-returns/{id}/finalize   (owner; staff only via explicit grant)  -> finalized_at
+* POST /purchase-returns/{id}/arrival     (owner; staff only via explicit grant)  -> supplier_arrival_at
 * POST /purchase-returns/{id}/override    (owner only)     -> overdue_override_at
 * cancel gate: finalized returns cannot be cancelled
 * parent-purchase lifecycle recovery after unfinalized-return cancellation
@@ -133,13 +133,50 @@ async def test_finalize_return_idempotent_replay(
     assert r2.headers.get("Idempotent-Replay") == "true"
 
 
+async def _grant_capability(
+    app: AsyncClient,
+    h_owner: dict[str, str],
+    staff_user: dict[str, Any],
+    code: str,
+) -> None:
+    """Owner grants ``code`` to staff via the user-override mechanism."""
+    r1 = await app.get(f"/api/v1/users/{staff_user['user_id']}", headers=h_owner)
+    assert r1.status_code == 200, r1.text
+    etag = r1.json()["updated_at"]
+    res = await app.post(
+        f"/api/v1/users/{staff_user['user_id']}/capabilities",
+        headers={**h_owner, "Idempotency-Key": _idem(), "If-Match": f'"{etag}"'},
+        json={"capability_code": code, "is_granted": True},
+    )
+    assert res.status_code == 200, res.text
+    assert code in res.json()["effective"]
+
+
 @pytest.mark.asyncio
-async def test_finalize_staff_allowed(
+async def test_staff_defaults_exclude_finalize_and_arrival(
     app: AsyncClient,
     owner_user: dict[str, Any],
     staff_user: dict[str, Any],
 ) -> None:
-    """Staff HAS purchase.return.finalize -> can finalize."""
+    """PRD V1.1 §6.1: finalize/arrival are sensitive -> OFF for Staff by default."""
+    h_own = await _owner_headers(app, owner_user)
+    res = await app.get(
+        f"/api/v1/users/{staff_user['user_id']}/capabilities", headers=h_own
+    )
+    assert res.status_code == 200, res.text
+    effective = set(res.json()["effective"])
+    assert "purchase.return.finalize" not in effective
+    assert "purchase.return.arrival" not in effective
+    assert "purchase.return.override" not in effective
+
+
+@pytest.mark.asyncio
+async def test_finalize_staff_denied_by_default_granted_explicitly(
+    app: AsyncClient,
+    owner_user: dict[str, Any],
+    staff_user: dict[str, Any],
+) -> None:
+    """Staff gets 403 on finalize by default; succeeds after explicit grant."""
     h_own = await _owner_headers(app, owner_user)
     h_staff = await _staff_headers(app, staff_user)
     pid, line_id = await _create_posted_purchase_with_line(app, h_own)
@@ -150,8 +187,17 @@ async def test_finalize_staff_allowed(
         headers={**h_staff, "Idempotency-Key": _idem()},
         json={"reason": "courier confirmed"},
     )
-    assert res.status_code == 200, res.text
-    assert res.json()["finalized_at"] is not None
+    assert res.status_code == 403, res.text
+
+    await _grant_capability(app, h_own, staff_user, "purchase.return.finalize")
+    h_staff = await _staff_headers(app, staff_user)
+    res2 = await app.post(
+        f"/api/v1/purchase-returns/{ret_id}/finalize",
+        headers={**h_staff, "Idempotency-Key": _idem()},
+        json={"reason": "courier confirmed"},
+    )
+    assert res2.status_code == 200, res2.text
+    assert res2.json()["finalized_at"] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -184,12 +230,22 @@ async def test_arrival_staff_then_duplicate_rejected(
     owner_user: dict[str, Any],
     staff_user: dict[str, Any],
 ) -> None:
-    """Staff can record arrival; duplicate arrival is a 409 conflict."""
+    """Staff gets 403 on arrival by default; after grant, arrival works and
+    duplicate arrival is a 409 conflict."""
     h_own = await _owner_headers(app, owner_user)
     h_staff = await _staff_headers(app, staff_user)
     pid, line_id = await _create_posted_purchase_with_line(app, h_own)
     ret_id = await _create_return(app, h_own, pid, line_id)
 
+    res_denied = await app.post(
+        f"/api/v1/purchase-returns/{ret_id}/arrival",
+        headers={**h_staff, "Idempotency-Key": _idem()},
+        json={},
+    )
+    assert res_denied.status_code == 403, res_denied.text
+
+    await _grant_capability(app, h_own, staff_user, "purchase.return.arrival")
+    h_staff = await _staff_headers(app, staff_user)
     res = await app.post(
         f"/api/v1/purchase-returns/{ret_id}/arrival",
         headers={**h_staff, "Idempotency-Key": _idem()},

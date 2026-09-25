@@ -3987,6 +3987,123 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+  /purchase-returns/{id}/finalize:
+    post:
+      operationId: finalizePurchaseReturn
+      summary: 'Confirm courier handoff on a posted purchase return (finalized_at set). Irreversible; blocks cancellation.'
+      description: 'Confirm courier handoff on a posted purchase return (finalized_at set). Irreversible; blocks cancellation.'
+      tags:
+      - Purchase Returns
+      security:
+      - bearerAuth: []
+      x-required-capability: purchase.return.finalize
+      parameters:
+      - name: id
+        in: path
+        required: true
+        description: Resource id
+        schema:
+          type: integer
+          format: int64
+      - $ref: '#/components/parameters/IdempotencyKeyRequired'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseReturnFinalizeRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseReturn'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /purchase-returns/{id}/arrival:
+    post:
+      operationId: recordPurchaseReturnArrival
+      summary: 'Record supplier arrival on a posted purchase return (server-authoritative timestamp; starts the 5-day confirmation window).'
+      description: 'Record supplier arrival on a posted purchase return (server-authoritative timestamp; starts the 5-day confirmation window).'
+      tags:
+      - Purchase Returns
+      security:
+      - bearerAuth: []
+      x-required-capability: purchase.return.arrival
+      parameters:
+      - name: id
+        in: path
+        required: true
+        description: Resource id
+        schema:
+          type: integer
+          format: int64
+      - $ref: '#/components/parameters/IdempotencyKeyRequired'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseReturnArrivalRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseReturn'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /purchase-returns/{id}/override-expired-window:
+    post:
+      operationId: overridePurchaseReturnExpiredWindow
+      summary: 'Owner-only: override an expired supplier-arrival confirmation window.'
+      description: 'Owner-only: override an expired supplier-arrival confirmation window.'
+      tags:
+      - Purchase Returns
+      security:
+      - bearerAuth: []
+      x-required-capability: purchase.return.override
+      parameters:
+      - name: id
+        in: path
+        required: true
+        description: Resource id
+        schema:
+          type: integer
+          format: int64
+      - $ref: '#/components/parameters/IdempotencyKeyRequired'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseReturnOverrideRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseReturn'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /supplier-repayments:
     get:
       operationId: listSupplierRepayments
@@ -8383,6 +8500,31 @@ components:
           minimum: 1
     PurchaseReturnCancelRequest:
       $ref: '#/components/schemas/SalesReturnCancelRequest'
+    PurchaseReturnFinalizeRequest:
+      type: object
+      properties:
+        reason:
+          type:
+          - string
+          - 'null'
+          maxLength: 1000
+    PurchaseReturnArrivalRequest:
+      type: object
+      properties:
+        note:
+          type:
+          - string
+          - 'null'
+          maxLength: 1000
+    PurchaseReturnOverrideRequest:
+      type: object
+      required:
+      - reason
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1000
     SupplierRepaymentRequest:
       type: object
       required:
