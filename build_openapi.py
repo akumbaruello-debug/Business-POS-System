@@ -154,6 +154,7 @@ def post_op(
     responses_204=None,
     idempotency_required=False,
     if_match_required=False,
+    if_match_optional=False,
     response_codes=None,
     security=None,
     x_ratelimit=None,
@@ -172,6 +173,10 @@ def post_op(
     if has_path_id:
         op["parameters"] = [path_id_("id", "Resource id", "int64")]
     _attach_idempotency_if_match(op, idempotency_required, if_match_required)
+    if if_match_optional is True and if_match_required is not True:
+        op["parameters"] = op.get("parameters", []) + [
+            {"$ref": "#/components/parameters/IfMatch"}
+        ]
     if request_schema:
         op["requestBody"] = {
             "required": True,
@@ -1895,6 +1900,23 @@ def build_schemas():
     }
     s["PurchaseReturnCancelRequest"] = {
         "$ref": "#/components/schemas/SalesReturnCancelRequest"
+    }
+    s["PurchaseReturnFinalizeRequest"] = {
+        "type": "object",
+        "properties": {
+            "reason": {"type": ["string", "null"], "maxLength": 1000},
+        },
+    }
+    s["PurchaseReturnArrivalRequest"] = {
+        "type": "object",
+        "properties": {
+            "note": {"type": ["string", "null"], "maxLength": 1000},
+        },
+    }
+    s["PurchaseReturnOverrideRequest"] = {
+        "type": "object",
+        "required": ["reason"],
+        "properties": {"reason": {"type": "string", "minLength": 1, "maxLength": 1000}},
     }
 
     s["SupplierRepaymentRequest"] = {
@@ -3984,6 +4006,45 @@ def build_paths():
             responses_200="PurchaseReturn",
             idempotency_required=True,
             if_match_required=True,
+        )
+    }
+    p["/purchase-returns/{id}/finalize"] = {
+        "post": post_op(
+            "finalizePurchaseReturn",
+            "Confirm courier handoff on a posted purchase return (finalized_at set). Irreversible; blocks cancellation.",
+            tags=["Purchase Returns"],
+            capability="purchase.return.finalize",
+            has_path_id=True,
+            request_schema="PurchaseReturnFinalizeRequest",
+            responses_200="PurchaseReturn",
+            idempotency_required=True,
+            if_match_optional=True,
+        )
+    }
+    p["/purchase-returns/{id}/arrival"] = {
+        "post": post_op(
+            "recordPurchaseReturnArrival",
+            "Record supplier arrival on a posted purchase return (server-authoritative timestamp; starts the 5-day confirmation window).",
+            tags=["Purchase Returns"],
+            capability="purchase.return.arrival",
+            has_path_id=True,
+            request_schema="PurchaseReturnArrivalRequest",
+            responses_200="PurchaseReturn",
+            idempotency_required=True,
+            if_match_optional=True,
+        )
+    }
+    p["/purchase-returns/{id}/override-expired-window"] = {
+        "post": post_op(
+            "overridePurchaseReturnExpiredWindow",
+            "Owner-only: override an expired supplier-arrival confirmation window.",
+            tags=["Purchase Returns"],
+            capability="purchase.return.override",
+            has_path_id=True,
+            request_schema="PurchaseReturnOverrideRequest",
+            responses_200="PurchaseReturn",
+            idempotency_required=True,
+            if_match_optional=True,
         )
     }
 

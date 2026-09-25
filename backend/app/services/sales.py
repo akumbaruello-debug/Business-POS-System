@@ -795,6 +795,29 @@ class SaleService:
                 new_values=validated,
                 ctx=ctx,
             )
+            # Dedicated price-override event (API §3.3): the privileged
+            # branch above (non-owner authorized via sale.price_override)
+            # must leave its own audit row; the write participates in this
+            # transaction so a failure fails the request.
+            if (
+                inserted is not None
+                and line.get("unit_price") is not None
+                and int(sale["created_by"]) != principal_user_id
+                and "sale.price_override" in principal_caps
+            ):
+                await write_audit(
+                    self._uow,
+                    action=AuditAction.PRICE_OVERRIDE,
+                    entity_type=ENTITY_SALE_LINES,
+                    entity_id=int(inserted["id"]),
+                    old_values=None,
+                    new_values={
+                        "product_id": validated["product_id"],
+                        "quantity": str(validated["quantity"]),
+                        "unit_price": str(validated["unit_price"]),
+                    },
+                    ctx=ctx,
+                )
 
         if idempotency_key is not None and inserted is not None:
             line_dict = await self._line_dict_async(inserted)
@@ -894,6 +917,23 @@ class SaleService:
                 new_values=dict(updated),
                 ctx=ctx,
             )
+            # Dedicated price-override event (API §3.3): same privileged
+            # branch rule as add_line — explicit unit_price mutation by a
+            # non-owner holding sale.price_override.
+            if (
+                unit_price is not None
+                and int(sale["created_by"]) != principal_user_id
+                and "sale.price_override" in principal_caps
+            ):
+                await write_audit(
+                    self._uow,
+                    action=AuditAction.PRICE_OVERRIDE,
+                    entity_type=ENTITY_SALE_LINES,
+                    entity_id=line_id,
+                    old_values={"unit_price": str(line["unit_price"])},
+                    new_values={"unit_price": str(_quant(new_price))},
+                    ctx=ctx,
+                )
         line_dict = await self._line_dict_async(updated)
         updated_sale = await self._repo.get(sale_id)
         if updated_sale is not None:

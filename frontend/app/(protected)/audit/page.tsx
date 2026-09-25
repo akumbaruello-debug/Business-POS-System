@@ -7,7 +7,7 @@ import {
   ChevronRight,
   FileText,
   RefreshCw,
-  Search,
+  X,
 } from 'lucide-react'
 import { api } from '@/lib/api-client'
 import { useSession } from '@/lib/session'
@@ -56,21 +56,30 @@ const DEFAULT_PAGINATION: Pagination = {
 
 const PER_PAGE_OPTIONS = [10, 25, 50, 100]
 
+// Closed vocabulary — must match backend ALLOWED_ENTITY_TYPES exactly
+// (backend/app/api/v1/audit_routes.py). Any other value is rejected with 422.
 const ENTITY_TYPE_OPTIONS = [
-  'sale', 'sale_line', 'sale_payment', 'sales_return',
-  'purchase', 'purchase_line', 'purchase_payment', 'purchase_return',
-  'purchase_shipping', 'product', 'category', 'unit', 'contact',
-  'payment_method', 'cost_type', 'financial_category', 'user', 'role',
-  'manual_finance_entry', 'cash_movement', 'stock_movement',
-  'production_run', 'refund', 'supplier_repayment', 'system_settings',
-  'capability_override',
+  'category', 'unit', 'product', 'payment_method', 'cost_type',
+  'financial_category', 'contact', 'sale', 'sale_line', 'sale_payment',
+  'sales_return', 'purchase', 'purchase_line', 'purchase_payment',
+  'purchase_shipping', 'purchase_return', 'refund', 'supplier_repayment',
+  'production_run', 'production_input', 'production_output',
+  'production_cost_line',
 ]
 
+// Closed vocabulary — must match the audit_log action CHECK (schema.sql).
 const ACTION_OPTIONS = [
   'create', 'post', 'cancel', 'complete', 'return', 'adjust', 'movement',
   'price_override', 'payment', 'refund', 'permission_grant',
   'permission_revoke', 'settings_change', 'deactivate', 'update',
-  'finalise', 'arrival', 'override',
+  'finalize', 'arrival', 'override',
+]
+
+// Whitelisted sort keys — must match backend _SORT_MAP
+// (backend/app/api/v1/audit_routes.py).
+const SORT_OPTIONS = [
+  '-event_time', 'event_time', '-id', 'id',
+  '-action', 'action', '-entity_type', 'entity_type',
 ]
 
 // ---------------------------------------------------------------------------
@@ -87,6 +96,15 @@ function fmtDate(iso: string, locale: string): string {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+function fmtValues(values: Record<string, unknown> | null): string {
+  if (values === null || values === undefined) return '—'
+  try {
+    return JSON.stringify(values, null, 2)
+  } catch {
+    return String(values)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -119,23 +137,13 @@ export default function AuditPage() {
   const [entityId, setEntityId] = useState('')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
-  const [searchInput, setSearchInput] = useState('')
-  const [q, setQ] = useState('')
+  const [selected, setSelected] = useState<AuditEntry | null>(null)
 
   const [page, setPage] = useState(1)
   const [perPage, setPerPage] = useState(50)
   const [sort, setSort] = useState('-event_time')
 
   const locale = language === 'id' ? 'id-ID' : 'en-US'
-
-  // Debounce search
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setQ(searchInput)
-      setPage(1)
-    }, 300)
-    return () => window.clearTimeout(timer)
-  }, [searchInput])
 
   const buildParams = useCallback((): Record<string, string> => {
     const params: Record<string, string> = {
@@ -149,9 +157,8 @@ export default function AuditPage() {
     if (entityId) params['filter[entity_id]'] = entityId
     if (from) params.from = new Date(`${from}T00:00:00`).toISOString()
     if (to) params.to = new Date(`${to}T23:59:59`).toISOString()
-    if (q.trim()) params.q = q.trim()
     return params
-  }, [page, perPage, sort, entityType, action, userId, entityId, from, to, q])
+  }, [page, perPage, sort, entityType, action, userId, entityId, from, to])
 
   const load = useCallback(async () => {
     if (!hasCap) {
@@ -186,8 +193,6 @@ export default function AuditPage() {
     setEntityId('')
     setFrom('')
     setTo('')
-    setSearchInput('')
-    setQ('')
     setPage(1)
     setSort('-event_time')
   }
@@ -199,9 +204,8 @@ export default function AuditPage() {
     if (userId) count += 1
     if (entityId) count += 1
     if (from || to) count += 1
-    if (q) count += 1
     return count
-  }, [entityType, action, userId, entityId, from, to, q])
+  }, [entityType, action, userId, entityId, from, to])
 
   const entries = data?.data ?? []
 
@@ -342,16 +346,19 @@ export default function AuditPage() {
             </div>
           </div>
 
-          <div className="sales-field sales-field-grow">
-            <span className="sales-field-label">Search</span>
-            <div className="sales-search">
-              <Search size={15} />
-              <input
-                aria-label="Search audit"
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                placeholder={t('reports.searchPlaceholder')}
-              />
+          <div className="sales-field">
+            <span className="sales-field-label">{t('audit.sort')}</span>
+            <div className="sales-select">
+              <select
+                aria-label={t('audit.sort')}
+                value={sort}
+                onChange={(e) => { setSort(e.target.value); setPage(1) }}
+              >
+                {SORT_OPTIONS.map((v) => (
+                  <option key={v} value={v}>{v}</option>
+                ))}
+              </select>
+              <ChevronLeft size={14} style={{ transform: 'rotate(-90deg)' }} />
             </div>
           </div>
         </div>
@@ -419,21 +426,7 @@ export default function AuditPage() {
                             type="button"
                             className="button button-secondary"
                             style={{ fontSize: 12, padding: '2px 8px' }}
-                            onClick={() => {
-                              const detail = {
-                                id: e.id,
-                                event_time: e.event_time,
-                                user_id: e.user_id,
-                                action: e.action,
-                                entity_type: e.entity_type,
-                                entity_id: e.entity_id,
-                                old_values: e.old_values,
-                                new_values: e.new_values,
-                                reason: e.reason,
-                                ip_address: e.ip_address,
-                              }
-                              alert(JSON.stringify(detail, null, 2))
-                            }}
+                            onClick={() => setSelected(e)}
                           >
                             {t('common.view')}
                           </button>
@@ -497,6 +490,81 @@ export default function AuditPage() {
             </section>
           )}
         </>
+      )}
+
+      {/* Entry detail modal */}
+      {selected && (
+        <div className="sales-dialog-backdrop" onClick={() => setSelected(null)}>
+          <div
+            className="sales-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t('audit.entryDetail')}
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: 'min(640px, 100%)' }}
+          >
+            <div className="sales-dialog-head">
+              <h3>{t('audit.entryDetail')} #{selected.id}</h3>
+              <button
+                type="button"
+                className="sales-dialog-close"
+                aria-label={t('common.close')}
+                onClick={() => setSelected(null)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="sales-dialog-body">
+              <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: '6px 12px', fontSize: 13 }}>
+                <span style={{ color: '#64748b' }}>{t('audit.eventTime')}</span>
+                <strong>{fmtDate(selected.event_time, locale)}</strong>
+                <span style={{ color: '#64748b' }}>{t('audit.action')}</span>
+                <strong>{selected.action}</strong>
+                <span style={{ color: '#64748b' }}>{t('audit.entityType')}</span>
+                <strong>{selected.entity_type}</strong>
+                <span style={{ color: '#64748b' }}>{t('audit.entityId')}</span>
+                <strong>{selected.entity_id ?? '—'}</strong>
+                <span style={{ color: '#64748b' }}>{t('audit.userId')}</span>
+                <strong>{selected.user_id ?? '—'}</strong>
+                <span style={{ color: '#64748b' }}>{t('audit.ipAddress')}</span>
+                <strong>{selected.ip_address ?? '—'}</strong>
+                <span style={{ color: '#64748b' }}>{t('audit.reason')}</span>
+                <strong>{selected.reason ?? '—'}</strong>
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', marginBottom: 4 }}>
+                  {t('audit.oldValues')}
+                </div>
+                <pre style={{
+                  margin: 0, padding: 10, fontSize: 12, maxHeight: 180, overflow: 'auto',
+                  background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8,
+                }}>
+                  {fmtValues(selected.old_values)}
+                </pre>
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', marginBottom: 4 }}>
+                  {t('audit.newValues')}
+                </div>
+                <pre style={{
+                  margin: 0, padding: 10, fontSize: 12, maxHeight: 180, overflow: 'auto',
+                  background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8,
+                }}>
+                  {fmtValues(selected.new_values)}
+                </pre>
+              </div>
+            </div>
+            <div className="sales-dialog-foot">
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => setSelected(null)}
+              >
+                {t('common.close')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

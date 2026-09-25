@@ -814,4 +814,6 @@ export const id: Record<string, string> = {
   'audit.allActions': 'Semua aksi',
   'audit.allEntityTypes': 'Semua tipe entitas',
   'audit.allUsers': 'Semua pengguna',
+  'audit.sort': 'Urutkan',
+  'audit.entryDetail': 'Detail audit',
 }

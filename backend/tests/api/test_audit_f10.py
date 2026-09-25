@@ -454,6 +454,50 @@ class TestListAuditValidation:
         assert r.status_code == 400, r.text
         assert r.json()["error"]["code"] == "validation_failed"
 
+    @pytest.mark.parametrize(
+        "entity_type",
+        ["user", "role", "manual_finance_entry", "cash_movement", "stock_movement", "system_settings", "capability_override"],
+    )
+    async def test_non_whitelisted_entity_types_rejected(
+        self, app: AsyncClient, owner_user: dict[str, Any], entity_type: str
+    ) -> None:
+        """Values outside ALLOWED_ENTITY_TYPES are 400 (frontend must not offer them)."""
+        h = await _owner_headers(app, owner_user)
+        r = await app.get(
+            "/api/v1/audit",
+            headers=h,
+            params={"filter[entity_type]": entity_type},
+        )
+        assert r.status_code == 400, f"{entity_type}: {r.text}"
+
+    @pytest.mark.parametrize(
+        "entity_type",
+        ["production_input", "production_output", "production_cost_line", "sale_line", "purchase_return"],
+    )
+    async def test_whitelisted_entity_types_accepted(
+        self, app: AsyncClient, owner_user: dict[str, Any], entity_type: str
+    ) -> None:
+        """Every ALLOWED_ENTITY_TYPES value is accepted (200, possibly empty)."""
+        h = await _owner_headers(app, owner_user)
+        r = await app.get(
+            "/api/v1/audit",
+            headers=h,
+            params={"filter[entity_type]": entity_type},
+        )
+        assert r.status_code == 200, f"{entity_type}: {r.text}"
+        assert all(e["entity_type"] == entity_type for e in r.json()["data"])
+
+    async def test_q_accepted_for_contract_parity(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        """``q`` is accepted (200) but has no search column: totals match the unfiltered query."""
+        h = await _owner_headers(app, owner_user)
+        params = {"filter[entity_type]": "product", "per_page": 1}
+        r_plain = await app.get("/api/v1/audit", headers=h, params=params)
+        r_q = await app.get("/api/v1/audit", headers=h, params={**params, "q": "anything"})
+        assert r_plain.status_code == 200 and r_q.status_code == 200
+        assert r_q.json()["pagination"]["total"] == r_plain.json()["pagination"]["total"]
+
     async def test_write_methods_not_routed(
         self, app: AsyncClient, owner_user: dict[str, Any]
     ) -> None:

@@ -26,10 +26,13 @@ import { useSession } from '@/lib/session'
 // Detail: GET /purchases/{id}?include=lines,shipping,payments,returns
 // Captures the server ETag into If-Match for mutations.
 // Phase B: draft mutations. Phase C: POST /purchases/{id}/post (draft → posted)
-// via a confirmation dialog (capability purchase.post). Supplier names via
-// GET /contacts?filter[type]=supplier (best-effort). Product names via
-// GET /products?per_page=500 (best-effort). No ReceiveModal, no timeline,
-// no fabricated invoice/terms/discount.
+// via a confirmation dialog (capability purchase.post). Return creation:
+// POST /purchases/{id}/returns (capability purchase.return) via the Returns
+// card dialog — line selection with remaining-quantity bounds. Finalize /
+// arrival / override-expired-window are intentionally NOT exposed here
+// (next phase). Supplier names via GET /contacts?filter[type]=supplier
+// (best-effort). Product names via GET /products?per_page=500 (best-effort).
+// No timeline, no fabricated invoice/terms/discount.
 // ---------------------------------------------------------------------------
 
 function fmtDate(iso: string | null | undefined): string {
@@ -256,12 +259,26 @@ export default function PurchaseDetailPage() {
   const canEditDraft = user.capabilities.includes('purchase.edit_own_draft')
   const canPost = user.capabilities.includes('purchase.post')
   const canAddPayment = user.capabilities.includes('purchase.create')
+  const canReturn = user.capabilities.includes('purchase.return')
   const isDraft = purchase?.lifecycle_status === 'draft'
   const isCancelled = purchase?.lifecycle_status === 'cancelled'
   const payable = canAddPayment && !isDraft && !isCancelled && (purchase ? purchase.outstanding > 0 : false)
   const editable = canEditDraft && isDraft
   const postable = canPost && isDraft
+  // Returnable mirrors backend _LIFECYCLE_RETURNABLE (posted, completed,
+  // partially_returned). Creation requires purchase.return only — never the
+  // Phase-E finalize / arrival / override capabilities.
+  const returnable =
+    canReturn &&
+    !!purchase &&
+    (purchase.lifecycle_status === 'posted' ||
+      purchase.lifecycle_status === 'completed' ||
+      purchase.lifecycle_status === 'partially_returned')
   const [postConfirmOpen, setPostConfirmOpen] = useState(false)
+  const [returnOpen, setReturnOpen] = useState(false)
+  const [returnReason, setReturnReason] = useState('')
+  const [returnQuantities, setReturnQuantities] = useState<Record<number, number>>({})
+  const [returnError, setReturnError] = useState<string | null>(null)
 
   const toast = (msg: string) => {
     setNotice(msg)
@@ -449,6 +466,83 @@ export default function PurchaseDetailPage() {
       })
       setPostConfirmOpen(false)
     })
+
+  // Return creation (POST /purchases/{id}/returns). Backend owns inventory
+  // reduction, AP/SREC treatment, lifecycle and quantity bounds; the frontend
+  // only pre-validates (reason, positive qty, qty <= remaining) and displays
+  // the server result. Cancelled returns never reduce remaining quantity.
+  const returnedQtyForLine = useCallback(
+    (purchaseLineId: number): number => {
+      if (!purchase?.returns) return 0
+      let sum = 0
+      for (const ret of purchase.returns) {
+        if (ret.lifecycle_status === 'cancelled') continue
+        for (const rl of ret.lines ?? []) {
+          if (rl.purchase_line_id === purchaseLineId) sum += Number(rl.quantity) || 0
+        }
+      }
+      return sum
+    },
+    [purchase?.returns],
+  )
+
+  const remainingQtyForLine = useCallback(
+    (line: PurchaseLine): number => {
+      const remaining = Number(line.quantity) - returnedQtyForLine(line.id)
+      return remaining > 0 ? remaining : 0
+    },
+    [returnedQtyForLine],
+  )
+
+  // Estimate only: server computes the authoritative line_value at original
+  // receipt cost (unit cost + allocated shipping share).
+  const estimatedReturnValue = useMemo(() => {
+    if (!purchase?.lines) return 0
+    let total = 0
+    for (const line of purchase.lines) {
+      const qty = Number(returnQuantities[line.id] ?? 0) || 0
+      if (qty <= 0) continue
+      const perUnit = Number(line.quantity) > 0 ? Number(line.line_total) / Number(line.quantity) : 0
+      total += qty * perUnit
+    }
+    return total
+  }, [purchase?.lines, returnQuantities])
+
+  const submitReturn = () => {
+    const linesPayload = (purchase?.lines ?? [])
+      .map((line) => ({ line, qty: Number(returnQuantities[line.id] ?? 0) || 0 }))
+      .filter(({ qty }) => qty > 0)
+    if (!returnReason.trim()) {
+      setReturnError('A reason is required.')
+      return
+    }
+    if (linesPayload.length === 0) {
+      setReturnError('Enter a return quantity for at least one line.')
+      return
+    }
+    for (const { line, qty } of linesPayload) {
+      const remaining = remainingQtyForLine(line)
+      if (qty > remaining) {
+        const name = productMap.get(line.product_id) ?? `Product #${line.product_id}`
+        setReturnError(`Quantity for ${name} exceeds the remaining ${remaining}.`)
+        return
+      }
+    }
+    setReturnError(null)
+    runMutation('Return recorded', async () => {
+      await api.post(
+        `/purchases/${purchaseId}/returns`,
+        {
+          reason: returnReason.trim(),
+          lines: linesPayload.map(({ line, qty }) => ({ purchase_line_id: line.id, quantity: qty })),
+        },
+        { headers: { 'If-Match': etag ?? '', 'Idempotency-Key': crypto.randomUUID() } },
+      )
+      setReturnOpen(false)
+      setReturnReason('')
+      setReturnQuantities({})
+    })
+  }
 
   if (loading) {
     return (
@@ -733,7 +827,17 @@ export default function PurchaseDetailPage() {
             )}
           </Card>
 
-          <Card title="Returns" description="Goods returned to supplier (read-only)">
+          <Card
+            title="Returns"
+            description="Goods returned to supplier"
+            action={
+              returnable ? (
+                <Button variant="outline" size="sm" onClick={() => { setReturnError(null); setReturnOpen(true) }} disabled={busy}>
+                  <Plus size={13} className="mr-1" /> New return
+                </Button>
+              ) : undefined
+            }
+          >
             {purchase.returns && purchase.returns.length > 0 ? (
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -986,6 +1090,26 @@ export default function PurchaseDetailPage() {
           busy={busy}
           onCancel={() => { if (!busy) setPaymentOpen(false) }}
           onSave={addPayment}
+        />
+      )}
+
+      {/* Return creation dialog (POST /purchases/{id}/returns) */}
+      {returnOpen && purchase && (
+        <ReturnDialog
+          lines={purchase.lines ?? []}
+          productName={(id) => productMap.get(id) ?? `Product #${id}`}
+          remainingFor={remainingQtyForLine}
+          reason={returnReason}
+          quantities={returnQuantities}
+          estimatedValue={estimatedReturnValue}
+          error={returnError}
+          busy={busy}
+          onCancel={() => { if (!busy) { setReturnOpen(false); setReturnError(null) } }}
+          onReasonChange={setReturnReason}
+          onQuantityChange={(lineId, qty) =>
+            setReturnQuantities((prev) => ({ ...prev, [lineId]: qty }))
+          }
+          onSave={submitReturn}
         />
       )}
 
@@ -1563,6 +1687,144 @@ function PaymentDialog({
         {localError && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 8, background: '#fef2f2', color: '#dc2626', fontSize: 13, border: '1px solid #fecaca' }}>
             <AlertTriangle size={15} /> {localError}
+          </div>
+        )}
+      </div>
+    </DialogShell>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Return creation. Purchase-side rules only: line selection with
+// remaining-quantity bounds (purchased minus already-returned on posted
+// returns), required reason, server-authoritative totals. Submitting reduces
+// stock, adjusts AP / supplier receivable and moves the parent lifecycle;
+// a return can later be cancelled from the Returns workspace.
+// ---------------------------------------------------------------------------
+const RETURN_REASON_MAX = 1000
+
+function ReturnDialog({
+  lines,
+  productName,
+  remainingFor,
+  reason,
+  quantities,
+  estimatedValue,
+  error,
+  busy,
+  onCancel,
+  onReasonChange,
+  onQuantityChange,
+  onSave,
+}: {
+  lines: PurchaseLine[]
+  productName: (productId: number) => string
+  remainingFor: (line: PurchaseLine) => number
+  reason: string
+  quantities: Record<number, number>
+  estimatedValue: number
+  error: string | null
+  busy: boolean
+  onCancel: () => void
+  onReasonChange: (value: string) => void
+  onQuantityChange: (lineId: number, qty: number) => void
+  onSave: () => void
+}) {
+  const selectedCount = lines.filter((l) => (Number(quantities[l.id] ?? 0) || 0) > 0).length
+  return (
+    <DialogShell
+      title="New purchase return"
+      description="Return goods to the supplier. Stock decreases at original receipt cost."
+      onCancel={onCancel}
+      busy={busy}
+      onSave={onSave}
+      saveLabel={busy ? 'Saving…' : `Save return${selectedCount > 0 ? ` (${selectedCount} line${selectedCount > 1 ? 's' : ''})` : ''}`}
+      width={600}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, padding: '12px 14px' }}>
+          <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1, color: '#b45309' }} />
+          <div style={{ fontSize: 12.5, lineHeight: 1.6, color: '#92400e' }}>
+            Returning reduces stock and adjusts the payable / supplier receivable.
+            This cannot be undone from here — use Cancel on the return if needed.
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label style={FIELD_LABEL}>Reason</label>
+          <textarea
+            value={reason}
+            onChange={(e) => onReasonChange(e.target.value)}
+            maxLength={RETURN_REASON_MAX}
+            rows={2}
+            placeholder="Why are these goods being returned?"
+            style={{ ...FIELD_INPUT, height: 'auto', padding: 10, resize: 'vertical' }}
+          />
+          <div style={{ fontSize: 11, color: '#94a3b8', textAlign: 'right' }}>
+            {reason.length}/{RETURN_REASON_MAX}
+          </div>
+        </div>
+
+        <div>
+          <div style={{ ...FIELD_LABEL, marginBottom: 6 }}>Lines to return</div>
+          {lines.length === 0 ? (
+            <div style={{ padding: 16, fontSize: 13, color: '#718198', textAlign: 'center', border: '1px solid var(--border)', borderRadius: 8 }}>
+              No lines on this purchase.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {lines.map((line) => {
+                const remaining = remainingFor(line)
+                const qty = Number(quantities[line.id] ?? 0) || 0
+                const name = productName(line.product_id)
+                return (
+                  <div
+                    key={line.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+                      padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 8,
+                      opacity: remaining <= 0 ? 0.55 : 1,
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>{name}</div>
+                      <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                        Purchased {line.quantity} · already returned {Number(line.quantity) - remaining} · remaining {remaining}
+                      </div>
+                    </div>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step="any"
+                      min={0}
+                      max={remaining}
+                      value={qty || ''}
+                      onChange={(e) => onQuantityChange(line.id, Number(e.target.value) || 0)}
+                      placeholder="0"
+                      disabled={busy || remaining <= 0}
+                      aria-label={`Quantity to return for ${name}`}
+                      style={{ ...FIELD_INPUT, width: 130, textAlign: 'right' }}
+                    />
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {selectedCount > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, borderTop: '1px solid #f0f4f9', paddingTop: 10 }}>
+            <span style={{ color: '#718198' }}>Estimated return value</span>
+            <strong>{formatIDR(estimatedValue)}</strong>
+          </div>
+        )}
+        <p style={{ margin: 0, fontSize: 11, color: '#94a3b8' }}>
+          Estimate only — the server values each line at its original receipt cost.
+        </p>
+
+        {error && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 8, background: '#fef2f2', color: '#dc2626', fontSize: 13, border: '1px solid #fecaca' }}>
+            <AlertTriangle size={15} /> {error}
           </div>
         )}
       </div>

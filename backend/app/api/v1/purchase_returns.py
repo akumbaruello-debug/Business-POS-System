@@ -5,6 +5,9 @@ Endpoints match ``openapi.yaml`` §13 exactly:
 * ``listPurchaseReturns``   GET   /purchase-returns
 * ``getPurchaseReturn``     GET   /purchase-returns/{id}
 * ``cancelPurchaseReturn``  POST  /purchase-returns/{id}/cancel
+* ``finalizePurchaseReturn``  POST  /purchase-returns/{id}/finalize
+* ``recordPurchaseReturnArrival``  POST  /purchase-returns/{id}/arrival
+* ``overridePurchaseReturnExpiredWindow``  POST  /purchase-returns/{id}/override-expired-window
 """
 
 from __future__ import annotations

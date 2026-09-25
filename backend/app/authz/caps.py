@@ -196,8 +196,6 @@ _STAFF_DEFAULT_CODES: Final[tuple[str, ...]] = (
     "purchase.view",
     "purchase.create",
     "purchase.edit_own_draft",
-    "purchase.return.finalize",
-    "purchase.return.arrival",
     "inventory.view",
     "production.view",
     "notification.view",
