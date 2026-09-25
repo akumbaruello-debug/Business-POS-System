@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.v1 import (
+    audit_routes,
     auth,
     capabilities,
     cash_movements,
@@ -43,6 +44,8 @@ router.include_router(users.router)
 router.include_router(roles.router)
 # Phase 1 — capabilities catalog (read-only)
 router.include_router(capabilities.router)
+# F.10 — Audit log read (GET /audit -> listAudit)
+router.include_router(audit_routes.router)
 router.include_router(payment_methods.router)
 router.include_router(financial_categories.router)
 router.include_router(units.router)
