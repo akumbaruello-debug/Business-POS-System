@@ -74,17 +74,47 @@ function unwrapList<T>(res: unknown): T[] {
   return res as T[]
 }
 
+interface PaginationEnvelope {
+  page: number
+  per_page: number
+  total: number
+  total_pages: number
+}
+
+function unwrapPagination(res: unknown): PaginationEnvelope | null {
+  if (res && typeof res === 'object' && 'pagination' in res) {
+    const p = (res as { pagination: unknown }).pagination
+    if (p && typeof p === 'object') return p as PaginationEnvelope
+  }
+  return null
+}
+
+/** Canonical lock rule (backend auth/password.py): locked while locked_until is in the future. */
+export function isUserLocked(u: { locked_until?: string | null }): boolean {
+  if (!u.locked_until) return false
+  const ts = new Date(u.locked_until).getTime()
+  return Number.isFinite(ts) && ts > Date.now()
+}
+
 export async function listUsers(filters?: UserFilters): Promise<Paginated<UserListItem>> {
+  // Param names mirror the backend contract exactly: per_page (not page_size)
+  // and filter[is_active] / filter[role_id] (not active_only / role_id).
   const params: Record<string, string> = {}
   if (filters?.q) params.q = filters.q
-  if (filters?.active_only !== undefined) params.active_only = String(filters.active_only)
-  if (filters?.role_id !== undefined) params.role_id = String(filters.role_id)
+  if (filters?.active_only !== undefined) params['filter[is_active]'] = String(filters.active_only)
+  if (filters?.role_id !== undefined) params['filter[role_id]'] = String(filters.role_id)
   if (filters?.sort) params.sort = filters.sort
   if (filters?.page !== undefined) params.page = String(filters.page)
-  if (filters?.page_size !== undefined) params.page_size = String(filters.page_size)
+  if (filters?.page_size !== undefined) params.per_page = String(filters.page_size)
   const res = await api.get<unknown>('/users', { params })
   const items = unwrapList<UserListItem>(res)
-  return { items, total: items.length, page: filters?.page ?? 1, page_size: items.length }
+  const pagination = unwrapPagination(res)
+  return {
+    items,
+    total: pagination?.total ?? items.length,
+    page: pagination?.page ?? filters?.page ?? 1,
+    page_size: pagination?.per_page ?? items.length,
+  }
 }
 
 export async function getUser(id: number): Promise<UserDetail> {

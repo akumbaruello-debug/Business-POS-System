@@ -6,7 +6,7 @@ import { useLanguage } from '@/lib/i18n'
 import { useCan } from '@/lib/authz'
 import { isApiError } from '@/lib/api-client'
 import { listRoles, type Role } from '@/lib/roles-service'
-import { getUser, getUserCapabilities, updateUser, deactivateUser, activateUser, unlockUser, resetPassword, grantCapability, revokeCapability, type UserDetail, type UserCapabilities } from '@/lib/users-service'
+import { getUser, getUserCapabilities, updateUser, deactivateUser, activateUser, unlockUser, resetPassword, grantCapability, revokeCapability, isUserLocked, type UserDetail, type UserCapabilities } from '@/lib/users-service'
 import { CapabilityPicker } from '@/components/capability-picker'
 import { AlertTriangle, ArrowLeft, Check, KeyRound, Lock, LockOpen, Save, Shield, Trash2, UserCog, X } from 'lucide-react'
 
@@ -43,7 +43,11 @@ export default function UserDetailPageClient({ params }: { params: Promise<Param
   const canActivate = can('user.manage')
   const canUnlock = can('user.manage')
   const canReset = can('auth.password_reset_others')
-  const canOverride = can(['user.grant_capability', 'user.revoke_capability'])
+  // Grant and revoke are independent backend capabilities — never AND them,
+  // or a user holding only one loses both actions.
+  const canGrant = can('user.grant_capability')
+  const canRevoke = can('user.revoke_capability')
+  const canOverride = canGrant || canRevoke
 
   const fetchData = async () => {
     setLoading(true)
@@ -75,13 +79,17 @@ export default function UserDetailPageClient({ params }: { params: Promise<Param
     return caps?.effective || []
   }, [caps])
 
+  // Canonical If-Match source: the ETag captured on fetch, refreshed after
+  // every mutation via fetchData — never a stale copy.
+  const currentEtag = () => user?.etag ?? `"${user?.updated_at ?? user?.created_at ?? ''}"`
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!user || !canEdit) return
     setSaving(true)
     setFormError(null)
     try {
-      await updateUser(userId, user.updated_at ?? user.created_at ?? '', {
+      await updateUser(userId, currentEtag(), {
         full_name: form.full_name,
         email: form.email || null,
         role_id: form.role_id ? Number(form.role_id) : null,
@@ -114,7 +122,7 @@ export default function UserDetailPageClient({ params }: { params: Promise<Param
       if (user.is_active) {
         await deactivateUser(userId, reason || undefined)
       } else {
-        await activateUser(userId, user.updated_at ?? user.created_at ?? '')
+        await activateUser(userId, currentEtag())
       }
       setConfirmOpen(false)
       setReason('')
@@ -168,10 +176,12 @@ export default function UserDetailPageClient({ params }: { params: Promise<Param
     setSaving(true)
     setFormError(null)
     try {
-      const etag = user.etag ?? `"${user.updated_at ?? user.created_at ?? ''}"`
+      const etag = currentEtag()
       const currentGranted = (caps?.overrides || []).filter((o) => o.is_granted).map((o) => o.capability_code)
-      const toAdd = overrideCaps.filter((c) => !currentGranted.includes(c))
-      const toRemove = currentGranted.filter((c) => !overrideCaps.includes(c))
+      // Each direction requires its own capability; attempting an
+      // unauthorized direction would fail server-side, so skip it locally.
+      const toAdd = canGrant ? overrideCaps.filter((c) => !currentGranted.includes(c)) : []
+      const toRemove = canRevoke ? currentGranted.filter((c) => !overrideCaps.includes(c)) : []
       await Promise.all([
         ...toAdd.map((code) => grantCapability(userId, etag, code)),
         ...toRemove.map((code) => revokeCapability(userId, code)),
@@ -221,7 +231,7 @@ export default function UserDetailPageClient({ params }: { params: Promise<Param
               </button>
             )
           )}
-          {user.is_locked && canUnlock && (
+          {isUserLocked(user) && canUnlock && (
             <button className="btn btn-ghost" onClick={() => setConfirmOpen('unlock')} disabled={saving}>
               <LockOpen size={16} /> {t('users.unlock')}
             </button>
@@ -242,7 +252,9 @@ export default function UserDetailPageClient({ params }: { params: Promise<Param
           <div className="form-grid">
             <div className="field">
               <label>{t('users.username')}</label>
-              <input value={form.username} disabled={!canEdit} onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))} />
+              {/* Username is immutable via PATCH /users/{id} (UserUpdateRequest
+                  has no username field) — always read-only, never submitted. */}
+              <input value={form.username} disabled readOnly />
             </div>
             <div className="field">
               <label>{t('users.fullName')}</label>

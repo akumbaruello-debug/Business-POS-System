@@ -65,8 +65,16 @@ async def _staff_headers(app: AsyncClient, staff_user: dict[str, Any]) -> dict[s
 
 
 def _etag(resp: Any) -> str:
-    """Build an If-Match value from the response's updated_at."""
+    """Build an If-Match value from the response's canonical etag field.
+
+    The body also carries updated_at, but it serializes in +00:00 form
+    while If-Match compares against the Z-form etag — quoting updated_at
+    always 412s. Prefer the etag the API returns.
+    """
     body = resp.json()
+    etag = body.get("etag")
+    if etag:
+        return str(etag)
     return f'"{body["updated_at"]}"'
 
 

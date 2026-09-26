@@ -57,13 +57,23 @@ function unwrapList<T>(res: unknown): T[] {
 }
 
 export async function listRoles(filters?: RoleFilters): Promise<Paginated<Role>> {
+  // Param name mirrors the backend contract: per_page (not page_size).
   const params: Record<string, string> = {}
   if (filters?.q) params.q = filters.q
   if (filters?.page !== undefined) params.page = String(filters.page)
-  if (filters?.page_size !== undefined) params.page_size = String(filters.page_size)
+  if (filters?.page_size !== undefined) params.per_page = String(filters.page_size)
   const res = await api.get<unknown>('/roles', { params })
   const items = unwrapList<Role>(res)
-  return { items, total: items.length, page: filters?.page ?? 1, page_size: items.length }
+  const pagination =
+    res && typeof res === 'object' && 'pagination' in res
+      ? (res as { pagination: { page: number; per_page: number; total: number } }).pagination
+      : null
+  return {
+    items,
+    total: pagination?.total ?? items.length,
+    page: pagination?.page ?? filters?.page ?? 1,
+    page_size: pagination?.per_page ?? items.length,
+  }
 }
 
 export async function getRole(id: number): Promise<Role> {

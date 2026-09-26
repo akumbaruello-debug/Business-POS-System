@@ -13,6 +13,7 @@ import {
   activateUser,
   unlockUser,
   resetPassword,
+  isUserLocked,
   type UserListItem,
   type UserFilters,
 } from '@/lib/users-service'
@@ -354,7 +355,7 @@ export default function UsersPage() {
                         {canManage && !u.is_active && (
                           <button onClick={() => openDialog(u, 'activate')}><UserCheck size={14} /> {t('users.activate')}</button>
                         )}
-                        {canManage && u.locked_until && (
+                        {canManage && isUserLocked(u) && (
                           <button onClick={() => openDialog(u, 'unlock')}><LockOpen size={14} /> {t('users.unlock')}</button>
                         )}
                         {canResetPassword && (

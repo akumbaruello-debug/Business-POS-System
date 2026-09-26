@@ -151,6 +151,7 @@ export default function PurchaseDetailPage() {
   const [lineDialog, setLineDialog] = useState<{ mode: 'add' | 'edit'; line?: PurchaseLine } | null>(null)
   const [shippingOpen, setShippingOpen] = useState(false)
   const [paymentOpen, setPaymentOpen] = useState(false)
+  const [repaymentOpen, setRepaymentOpen] = useState(false)
   const router = useRouter()
 
   const fetchPurchase = useCallback(async () => {
@@ -259,6 +260,7 @@ export default function PurchaseDetailPage() {
   const canEditDraft = user.capabilities.includes('purchase.edit_own_draft')
   const canPost = user.capabilities.includes('purchase.post')
   const canAddPayment = user.capabilities.includes('purchase.create')
+  const canRecordRepayment = user.capabilities.includes('purchase.refund')
   const canReturn = user.capabilities.includes('purchase.return')
   const isDraft = purchase?.lifecycle_status === 'draft'
   const isCancelled = purchase?.lifecycle_status === 'cancelled'
@@ -451,6 +453,29 @@ export default function PurchaseDetailPage() {
         const newEtag = res.headers.get('ETag') ?? (res.data as unknown as { etag?: string })?.etag ?? null
         if (newEtag) setEtag(newEtag)
         setPaymentOpen(false)
+      },
+      { refresh: true },
+    )
+
+  // Supplier repayment (POST /supplier-repayments). Records cash received
+  // from the supplier against the purchase's supplier receivable (SREC),
+  // typically created by a paid purchase return (Phase-E D1). Backend owns
+  // the SREC ceiling, cash ledger and per-return targeting; the frontend
+  // only pre-checks amount bounds and displays server state.
+  const recordRepayment = (amount: number, paymentMethodId: number, reason: string) =>
+    runMutation(
+      'Supplier repayment recorded',
+      async () => {
+        const body: Record<string, unknown> = {
+          purchase_id: purchaseId,
+          amount,
+          payment_method_id: paymentMethodId,
+        }
+        if (reason.trim()) body.reason = reason.trim()
+        await api.post('/supplier-repayments', body, {
+          headers: { 'Idempotency-Key': crypto.randomUUID() },
+        })
+        setRepaymentOpen(false)
       },
       { refresh: true },
     )
@@ -966,6 +991,27 @@ export default function PurchaseDetailPage() {
                 <span>Supplier receivable</span>
                 <span style={{ fontWeight: 600, color: '#334155' }}>{formatIDR(purchase.supplier_receivable)}</span>
               </div>
+              {purchase.supplier_receivable > 0 && (
+                <div style={{ fontSize: 11, color: '#8a98ab', lineHeight: 1.5, borderTop: '1px solid #f0f4f9', paddingTop: 10, marginTop: 2 }}>
+                  Money expected from the supplier (usually from a paid return).
+                  {canRecordRepayment && ' Record it once the cash arrives.'}
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+                {canRecordRepayment && purchase.supplier_receivable > 0 && (
+                  <Button variant="outline" size="sm" onClick={() => setRepaymentOpen(true)} disabled={busy}>
+                    <Plus size={13} className="mr-1" /> Record repayment
+                  </Button>
+                )}
+                {purchase.supplier_id && (
+                  <Link
+                    href={`/suppliers/${purchase.supplier_id}`}
+                    style={{ display: 'inline-flex', alignItems: 'center', fontSize: 12, fontWeight: 600, color: 'var(--primary)', textDecoration: 'none' }}
+                  >
+                    Supplier repayments →
+                  </Link>
+                )}
+              </div>
             </div>
           </Card>
 
@@ -1090,6 +1136,17 @@ export default function PurchaseDetailPage() {
           busy={busy}
           onCancel={() => { if (!busy) setPaymentOpen(false) }}
           onSave={addPayment}
+        />
+      )}
+
+      {/* Supplier repayment dialog (POST /supplier-repayments) */}
+      {repaymentOpen && purchase && (
+        <RepaymentDialog
+          srec={purchase.supplier_receivable}
+          paymentMethods={paymentMethods}
+          busy={busy}
+          onCancel={() => { if (!busy) setRepaymentOpen(false) }}
+          onSave={recordRepayment}
         />
       )}
 
@@ -1825,6 +1882,115 @@ function ReturnDialog({
         {error && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 8, background: '#fef2f2', color: '#dc2626', fontSize: 13, border: '1px solid #fecaca' }}>
             <AlertTriangle size={15} /> {error}
+          </div>
+        )}
+      </div>
+    </DialogShell>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Supplier repayment. Records cash received from the supplier against the
+// purchase-level SREC (POST /supplier-repayments, capability
+// purchase.refund). The SREC ceiling and cash ledger are enforced
+// server-side; the outstanding SREC is displayed but never used as the
+// authoritative check. Cancelling a return after cash was received is
+// blocked server-side (Phase-E D3) — the received amounts stay visible in
+// the Returns workspace so the block is explainable.
+// ---------------------------------------------------------------------------
+function RepaymentDialog({
+  srec,
+  paymentMethods,
+  busy,
+  onCancel,
+  onSave,
+}: {
+  srec: number
+  paymentMethods: PaymentMethod[]
+  busy: boolean
+  onCancel: () => void
+  onSave: (amount: number, paymentMethodId: number, reason: string) => void
+}) {
+  const firstMethod = paymentMethods[0]
+  const [methodId, setMethodId] = useState(firstMethod ? String(firstMethod.id) : '')
+  const [amount, setAmount] = useState(() => (srec > 0 ? String(srec) : ''))
+  const [reason, setReason] = useState('')
+  const [localError, setLocalError] = useState<string | null>(null)
+
+  const amountNum = Number(amount)
+
+  const submit = () => {
+    setLocalError(null)
+    if (!methodId) {
+      setLocalError('Select a payment method.')
+      return
+    }
+    if (!Number.isFinite(amountNum) || amountNum <= 0) {
+      setLocalError('Amount must be greater than 0.')
+      return
+    }
+    // UX pre-check only — the backend enforces the SREC ceiling.
+    if (amountNum > srec) {
+      setLocalError(`Amount exceeds the supplier receivable of ${formatIDR(srec)}.`)
+      return
+    }
+    onSave(amountNum, Number(methodId), reason)
+  }
+
+  return (
+    <DialogShell
+      title="Record supplier repayment"
+      description="Record cash received from the supplier. The server enforces the receivable ceiling."
+      onCancel={onCancel}
+      busy={busy}
+      onSave={submit}
+      saveLabel="Record repayment"
+      width={520}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', background: '#f8fafc', border: '1px solid var(--border)', borderRadius: 10, padding: 12, fontSize: 13 }}>
+          <span style={{ color: '#718198' }}>Supplier receivable</span>
+          <strong style={{ color: 'var(--primary)' }}>{formatIDR(srec)}</strong>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label style={FIELD_LABEL}>Payment method</label>
+          <select value={methodId} onChange={(e) => setMethodId(e.target.value)} style={FIELD_INPUT}>
+            <option value="">Select method…</option>
+            {paymentMethods.map((m) => (
+              <option key={m.id} value={String(m.id)}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label style={FIELD_LABEL}>Amount received</label>
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            style={FIELD_INPUT}
+          />
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label style={FIELD_LABEL}>Reason (optional)</label>
+          <input
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            maxLength={1000}
+            placeholder="Supplier cash repayment"
+            style={FIELD_INPUT}
+          />
+        </div>
+
+        {localError && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 8, background: '#fef2f2', color: '#dc2626', fontSize: 13, border: '1px solid #fecaca' }}>
+            <AlertTriangle size={15} /> {localError}
           </div>
         )}
       </div>

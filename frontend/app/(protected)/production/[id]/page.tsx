@@ -680,11 +680,14 @@ export default function ProductionDetailPage() {
         />
       )}
 
-      {inputDialog && (
+      {inputDialog && run && (
         <InputDialog
           mode={inputDialog.mode}
           input={inputDialog.input}
-          products={products}
+          // Backend input rule: exists + is_active, and must not equal the
+          // output product (is_producible is output-only). Inactive and
+          // output products are hidden; the server remains authoritative.
+          products={products.filter((p) => p.is_active && p.id !== run.output_product_id)}
           t={t}
           busy={busy}
           onCancel={() => setInputDialog(null)}

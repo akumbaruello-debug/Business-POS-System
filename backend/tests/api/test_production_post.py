@@ -73,6 +73,11 @@ async def _staff_headers(app: AsyncClient, staff_user: dict[str, Any]) -> dict[s
 
 
 def _etag_from(body: dict[str, Any]) -> str:
+    # Prefer the canonical etag: quoted updated_at never matches If-Match
+    # (+00:00 wire form vs Z-form etag).
+    etag = body.get("etag")
+    if etag:
+        return str(etag)
     return f'"{body["updated_at"]}"'
 
 

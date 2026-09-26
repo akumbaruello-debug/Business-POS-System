@@ -113,6 +113,9 @@ export default function ProductionPage() {
   const [runs, setRuns] = useState<ProductionRun[]>([])
   const [pagination, setPagination] = useState<Pagination>(DEFAULT_PAGINATION)
   const [products, setProducts] = useState<Product[]>([])
+  // Inputs accept any ACTIVE product (backend: exists + is_active, must not
+  // equal the output; is_producible is only required for the OUTPUT).
+  const [inputProducts, setInputProducts] = useState<Product[]>([])
   const [costTypes, setCostTypes] = useState<CostType[]>([])
   const [createOpen, setCreateOpen] = useState(false)
 
@@ -143,7 +146,9 @@ export default function ProductionPage() {
       const res = await api.get<{ data: Product[] }>('/products', {
         params: { per_page: '500' },
       })
-      setProducts(res.data.filter((p) => p.is_producible && p.is_active))
+      const all = res.data ?? []
+      setProducts(all.filter((p) => p.is_producible && p.is_active))
+      setInputProducts(all.filter((p) => p.is_active))
     } catch {
       // enrichment only
     }
@@ -335,6 +340,7 @@ export default function ProductionPage() {
             <option value="all">{t('production.allStatuses')}</option>
             <option value="draft">{t('status.draft')}</option>
             <option value="posted">{t('status.posted')}</option>
+            <option value="completed">{t('status.completed')}</option>
             <option value="cancelled">{t('status.cancelled')}</option>
           </select>
         </div>
@@ -574,6 +580,7 @@ export default function ProductionPage() {
       {createOpen && (
         <CreateProductionDialog
           products={products}
+          inputProducts={inputProducts}
           costTypes={costTypes}
           t={t}
           onClose={() => setCreateOpen(false)}
@@ -617,6 +624,7 @@ function emptyCostLine(): CostLineDraft {
 
 function CreateProductionDialog({
   products,
+  inputProducts,
   costTypes,
   onClose,
   onCreated,
@@ -624,6 +632,7 @@ function CreateProductionDialog({
   t,
 }: {
   products: Product[]
+  inputProducts: Product[]
   costTypes: CostType[]
   onClose: () => void
   onCreated: (id: number) => void
