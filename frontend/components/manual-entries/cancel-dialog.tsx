@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { X } from 'lucide-react'
+import { AlertTriangle, X } from 'lucide-react'
 import { api, isApiError } from '@/lib/api-client'
 import type {
   ManualEntryCancelRequest,
@@ -16,15 +16,25 @@ export interface CancelEntryDialogProps {
   entryEtag: string
   onClose: () => void
   onCancelled: (entry: ManualEntryResponse) => void
+  onConflict: () => void
   t: TFunction
 }
 
+/**
+ * Cancel-entry confirmation dialog.
+ *
+ * Follows the audit contract (§6.49–55):
+ *  - POST /manual-entries/{id}/cancel requires Idempotency-Key + If-Match (ETag).
+ *  - On 412 version_mismatch: calls onConflict() to refresh the entry from
+ *    the server rather than silently overwriting another user's change.
+ */
 export function CancelEntryDialog({
   open,
   entry,
   entryEtag,
   onClose,
   onCancelled,
+  onConflict,
   t,
 }: CancelEntryDialogProps) {
   const [reason, setReason] = useState<string>('')
@@ -47,23 +57,25 @@ export function CancelEntryDialog({
     const payload: ManualEntryCancelRequest = { reason: reason.trim() }
 
     try {
-      // api.post returns the response data directly (not ApiResult wrapper)
-      // If-Match ETag header is passed via the `ifMatch` option (api-client
-      // translates it to the HTTP If-Match header).
-      // Idempotency-Key is auto-generated via idempotencyKey: true.
-      const resp = await api.post<ManualEntryResponse>(
+      await api.headers.post<ManualEntryResponse>(
         `/manual-entries/${entry.id}/cancel`,
         payload,
         {
           idempotencyKey: true,
           ifMatch: entryEtag,
-        }
+        },
       )
-      onCancelled(resp)
+      onCancelled(entry)
       setReason('')
       onClose()
     } catch (err) {
-      if (isApiError(err)) {
+      const code = (err as Error & { code?: string }).code
+      if (code === 'version_mismatch' || code === 'precondition_failed') {
+        // ETag no longer matches — the entry was modified elsewhere.
+        // Surface the conflict and let the parent refresh the entry.
+        setError(t('manualEntries.errors.versionMismatch'))
+        onConflict()
+      } else if (isApiError(err)) {
         setError(err.message || t('manualEntries.cancelError'))
       } else {
         setError(t('manualEntries.cancelError'))
@@ -73,7 +85,6 @@ export function CancelEntryDialog({
     }
   }
 
-  const entryDate = new Date(entry.entry_date)
   const amountStr = new Intl.NumberFormat('id-ID').format(entry.amount)
 
   return (
@@ -91,10 +102,22 @@ export function CancelEntryDialog({
 
         <div className="p-4 border-b border-border">
           <div className="text-sm space-y-1">
-            <div><span className="text-muted-foreground">{t('manualEntries.entryType')}:</span> {entry.entry_type}</div>
-            <div><span className="text-muted-foreground">{t('manualEntries.category')}:</span> {entry.category_name || `#${entry.category_id}`}</div>
-            <div><span className="text-muted-foreground">{t('manualEntries.amount')}:</span> {amountStr}</div>
-            <div><span className="text-muted-foreground">{t('manualEntries.entryDate')}:</span> {entryDate.toLocaleDateString()}</div>
+            <div>
+              <span className="text-muted-foreground">{t('manualEntries.entryType')}:</span>{' '}
+              {entry.entry_type}
+            </div>
+            <div>
+              <span className="text-muted-foreground">{t('manualEntries.category')}:</span>{' '}
+              {entry.category_name || `#${entry.category_id}`}
+            </div>
+            <div>
+              <span className="text-muted-foreground">{t('manualEntries.amount')}:</span>{' '}
+              {amountStr}
+            </div>
+            <div>
+              <span className="text-muted-foreground">{t('manualEntries.entryDate')}:</span>{' '}
+              {new Date(entry.entry_date).toLocaleDateString()}
+            </div>
           </div>
         </div>
 
@@ -104,6 +127,11 @@ export function CancelEntryDialog({
               {error}
             </div>
           )}
+
+          <div className="flex items-start gap-3 p-3 text-sm text-muted-foreground bg-muted/30 border border-border rounded">
+            <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+            <span>{t('manualEntries.cancelWarning')}</span>
+          </div>
 
           <div>
             <label className="block text-sm font-medium mb-1">{t('manualEntries.cancelReason')}</label>
@@ -117,6 +145,9 @@ export function CancelEntryDialog({
               placeholder={t('manualEntries.cancelReasonPlaceholder')}
               required
             />
+            <div className="text-xs text-muted-foreground mt-1">
+              {reason.length}/1000
+            </div>
           </div>
 
           <div className="flex justify-end gap-2 pt-2">

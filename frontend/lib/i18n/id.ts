@@ -959,4 +959,10 @@ export const id: Record<string, string> = {
   'manualEntries.errors.cancelFailed': 'Gagal membatalkan entri. Silakan coba lagi.',
   'manualEntries.errors.versionMismatch': 'Entri ini dimodifikasi oleh pengguna lain. Segarkan dan coba lagi.',
   'manualEntries.errors.alreadyCancelled': 'Entri ini sudah dibatalkan.',
+  'manualEntries.cancelledToast': 'Entri #{id} dibatalkan',
+  'manualEntries.notFound': 'Entri #{id} tidak ditemukan',
+  'manualEntries.notFoundDesc': 'Entri kasual yang diminta tidak dapat ditemukan.',
+  'manualEntries.backToList': 'Kembali ke entri',
+  'manualEntries.cancelledAt': 'Tanggal pembatalan',
+  'manualEntries.cancelledBy': 'Dibatalkan oleh',
 }

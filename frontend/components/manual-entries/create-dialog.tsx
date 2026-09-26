@@ -79,7 +79,11 @@ export function CreateEntryDialog({
     }
 
     try {
-      const resp = await api.post<ManualEntryResponse>('/manual-entries', payload)
+      const resp = await api.post<ManualEntryResponse>(
+        '/manual-entries',
+        payload,
+        { idempotencyKey: true },
+      )
       onCreated(resp)
       onClose()
     } catch (err) {

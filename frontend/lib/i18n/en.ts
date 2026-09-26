@@ -959,5 +959,11 @@ export const en: Record<string, string> = {
   'manualEntries.errors.createFailed': 'Failed to create entry. Please try again.',
   'manualEntries.errors.cancelFailed': 'Failed to cancel entry. Please try again.',
   'manualEntries.errors.versionMismatch': 'This entry was modified by another user. Refresh and try again.',
+  'manualEntries.cancelledToast': 'Entry #{id} cancelled',
   'manualEntries.errors.alreadyCancelled': 'This entry has already been cancelled.',
+  'manualEntries.notFound': 'Entry #{id} not found',
+  'manualEntries.notFoundDesc': 'The requested manual entry could not be found.',
+  'manualEntries.backToList': 'Back to entries',
+  'manualEntries.cancelledAt': 'Cancellation date',
+  'manualEntries.cancelledBy': 'Cancelled by',
 }
