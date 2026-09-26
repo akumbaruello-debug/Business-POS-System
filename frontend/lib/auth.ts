@@ -29,9 +29,16 @@ export async function login(username: string, password: string): Promise<Session
   return res.user
 }
 
-export function logout(): void {
-  localStorage.removeItem('access_token')
-  localStorage.removeItem('refresh_token')
+export async function logout(): Promise<void> {
+  // Best-effort server revocation; local state clears regardless.
+  try {
+    await api.post('/auth/logout', {})
+  } catch {
+    // Session may already be expired/revoked — still sign out locally.
+  } finally {
+    localStorage.removeItem('access_token')
+    localStorage.removeItem('refresh_token')
+  }
 }
 
 export function getAccessToken(): string | null {

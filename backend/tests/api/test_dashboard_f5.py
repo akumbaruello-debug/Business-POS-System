@@ -871,12 +871,13 @@ class TestF5Charts:
         assert r.status_code == 200, r.text
         bs = r.json()["charts"]["best_sellers"]
         assert len(bs) == 3
-        # Revenue DESC: product 1 = 1*300 = 300; product 2 = 2*100 =
-        # 200 (per MS-9 SUM(quantity * line_total)); product 3 = 1*50.
+        # Revenue DESC per MS-9 SUM(line_total): line_total is already
+        # quantity x unit_price, so product 2 = 100 (not 2*100 = 200;
+        # quantity x line_total would double-count).
         assert bs[0]["product_id"] == 1
         assert bs[0]["revenue"] == 300.0
         assert bs[1]["product_id"] == 2
-        assert bs[1]["revenue"] == 200.0
+        assert bs[1]["revenue"] == 100.0
         assert bs[2]["product_id"] == 3
         assert bs[2]["revenue"] == 50.0
 
