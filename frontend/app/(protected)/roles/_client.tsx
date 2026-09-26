@@ -6,7 +6,7 @@ import { useLanguage } from '@/lib/i18n'
 import { useCan } from '@/lib/authz'
 import { isApiError } from '@/lib/api-client'
 import { listRoles, deleteRole, isSystemRole, roleCapabilities, type Role } from '@/lib/roles-service'
-import { AlertTriangle, ChevronLeft, ChevronRight, Eye, Lock, Pencil, Plus, Shield, Trash2, X } from 'lucide-react'
+import { AlertTriangle, ChevronLeft, ChevronRight, Eye, Lock, Pencil, Plus, Search, Shield, Trash2, X } from 'lucide-react'
 
 export default function RolesPageClient() {
   const { t } = useLanguage()
@@ -19,6 +19,7 @@ export default function RolesPageClient() {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [total, setTotal] = useState(0)
+  const [query, setQuery] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<Role | null>(null)
   const [deleting, setDeleting] = useState(false)
 
@@ -30,7 +31,7 @@ export default function RolesPageClient() {
     setLoading(true)
     setError(null)
     try {
-      const res = await listRoles({ page, page_size: pageSize })
+      const res = await listRoles({ page, page_size: pageSize, ...(query.trim() ? { q: query.trim() } : {}) })
       setRoles(res.items)
       setTotal(res.total)
     } catch (err) {
@@ -42,7 +43,7 @@ export default function RolesPageClient() {
 
   useEffect(() => {
     fetchRoles()
-  }, [page, pageSize])
+  }, [page, pageSize, query])
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize])
 
@@ -83,6 +84,22 @@ export default function RolesPageClient() {
       </div>
 
       {error && <div className="notice error">{error}</div>}
+
+      <div className="filters" style={{ marginBottom: 12 }}>
+        <div className="search-input">
+          <Search size={16} />
+          <input
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); setPage(1) }}
+            placeholder={t('roles.searchPlaceholder')}
+          />
+        </div>
+        {query && (
+          <button className="btn btn-ghost" onClick={() => { setQuery(''); setPage(1) }}>
+            <X size={14} /> {t('common.clearFilters')}
+          </button>
+        )}
+      </div>
 
       <div className="card data-table">
         <table>

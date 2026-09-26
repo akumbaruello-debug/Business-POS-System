@@ -79,6 +79,34 @@ async def _create_return(
 
 
 @pytest.mark.asyncio
+async def test_list_and_get_expose_phase_e_fields(
+    app: AsyncClient,
+    owner_user: dict[str, Any],
+) -> None:
+    """List/get share the post-mutation courier shape (finalize/arrival/override/is_overdue)."""
+    h = await _owner_headers(app, owner_user)
+    pid, line_id = await _create_posted_purchase_with_line(app, h)
+    ret_id = await _create_return(app, h, pid, line_id)
+
+    expected = {
+        "finalized_at", "finalized_by", "finalized_reason",
+        "supplier_arrival_at", "supplier_arrival_by",
+        "overdue_override_at", "overdue_override_by", "overdue_override_reason",
+        "is_overdue",
+    }
+    res_list = await app.get("/api/v1/purchase-returns", headers=h)
+    assert res_list.status_code == 200, res_list.text
+    row = next(r for r in res_list.json()["data"] if r["id"] == ret_id)
+    assert expected.issubset(row.keys()), set(row.keys())
+    assert row["finalized_at"] is None
+    assert row["is_overdue"] is False
+
+    res_get = await app.get(f"/api/v1/purchase-returns/{ret_id}", headers=h)
+    assert res_get.status_code == 200, res_get.text
+    assert expected.issubset(res_get.json().keys())
+
+
+@pytest.mark.asyncio
 async def test_finalize_return_owner_then_cancel_rejected(
     app: AsyncClient,
     owner_user: dict[str, Any],

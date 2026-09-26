@@ -1926,6 +1926,7 @@ class PurchaseService:
                     "reason": r.get("reason"),
                     "total_value_returned": float(r["total_value_returned"]),
                     "lifecycle_status": str(r["lifecycle_status"]),
+                    **self._phase_e_fields(r),
                     "lines": [self._return_line_dict(ln) for ln in lines],
                     "created_at": r["created_at"],
                     "created_by": int(r["created_by"]),
@@ -1946,6 +1947,7 @@ class PurchaseService:
             "reason": ret.get("reason"),
             "total_value_returned": float(ret["total_value_returned"]),
             "lifecycle_status": str(ret["lifecycle_status"]),
+            **self._phase_e_fields(ret),
             "lines": [self._return_line_dict(ln) for ln in lines],
             "created_at": ret["created_at"],
             "created_by": int(ret["created_by"]),
@@ -2242,15 +2244,12 @@ class PurchaseService:
             )
         return enriched, False
 
-    async def _enrich_return(self, return_id: int) -> dict[str, Any]:
-        """Refresh a return from the DB and shape it as the API expects.
+    def _phase_e_fields(self, refreshed: dict[str, Any]) -> dict[str, Any]:
+        """Phase-E courier state for a purchase-return row (read-only shape).
 
-        Used by finalize / arrival / override after the repo write.
+        Shared by list / get / post-mutation enrichment so every read path
+        exposes the same finalized / arrival / override / overdue fields.
         """
-        refreshed = await self._repo.get_return(return_id)
-        if refreshed is None:
-            raise NotFound("Purchase return missing after mutation.")
-        lines_now = await self._repo.list_return_lines(return_id)
         # Derived overdue flag: supplier arrival older than the confirmation
         # window, with no durable Owner override recorded yet.
         arrival_at = refreshed.get("supplier_arrival_at")
@@ -2260,12 +2259,6 @@ class PurchaseService:
                 datetime.now(UTC) - arrival_at
             ).days > self._ARRIVAL_CONFIRMATION_DAYS
         return {
-            "id": int(refreshed["id"]),
-            "purchase_id": int(refreshed["purchase_id"]),
-            "return_date": refreshed["return_date"],
-            "reason": refreshed.get("reason"),
-            "total_value_returned": float(refreshed["total_value_returned"]),
-            "lifecycle_status": str(refreshed["lifecycle_status"]),
             "finalized_at": refreshed.get("finalized_at"),
             "finalized_by": refreshed.get("finalized_by"),
             "finalized_reason": refreshed.get("finalized_reason"),
@@ -2274,12 +2267,31 @@ class PurchaseService:
             "overdue_override_at": refreshed.get("overdue_override_at"),
             "overdue_override_by": refreshed.get("overdue_override_by"),
             "overdue_override_reason": refreshed.get("overdue_override_reason"),
+            "is_overdue": bool(is_overdue_flag),
+        }
+
+    async def _enrich_return(self, return_id: int) -> dict[str, Any]:
+        """Refresh a return from the DB and shape it as the API expects.
+
+        Used by finalize / arrival / override after the repo write.
+        """
+        refreshed = await self._repo.get_return(return_id)
+        if refreshed is None:
+            raise NotFound("Purchase return missing after mutation.")
+        lines_now = await self._repo.list_return_lines(return_id)
+        return {
+            "id": int(refreshed["id"]),
+            "purchase_id": int(refreshed["purchase_id"]),
+            "return_date": refreshed["return_date"],
+            "reason": refreshed.get("reason"),
+            "total_value_returned": float(refreshed["total_value_returned"]),
+            "lifecycle_status": str(refreshed["lifecycle_status"]),
+            **self._phase_e_fields(refreshed),
             "lines": [self._return_line_dict(ln) for ln in lines_now],
             "created_at": refreshed["created_at"],
             "created_by": int(refreshed["created_by"]),
             "updated_at": refreshed.get("created_at") or refreshed.get("return_date"),
             "etag": f'"{int(refreshed["version"])}"',
-            "is_overdue": bool(is_overdue_flag),
         }
 
     async def _recover_parent_purchase_lifecycle(

@@ -4,7 +4,8 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useLanguage } from '@/lib/i18n'
 import { isApiError } from '@/lib/api-client'
-import { createRole, type CreateRoleBody } from '@/lib/roles-service'
+import { createRole, replaceRoleCapabilities, type CreateRoleBody } from '@/lib/roles-service'
+import { CapabilityPicker } from '@/components/capability-picker'
 import { ArrowLeft, Save, ShieldPlus } from 'lucide-react'
 
 export default function NewRolePageClient() {
@@ -15,6 +16,7 @@ export default function NewRolePageClient() {
   const [errors, setErrors] = useState<Record<string, string>>({})
 
   const [form, setForm] = useState<CreateRoleBody>({ name: '', description: '' })
+  const [capabilities, setCapabilities] = useState<string[]>([])
 
   const update = (field: keyof CreateRoleBody, value: string) => {
     setForm((f) => ({ ...f, [field]: value }))
@@ -34,7 +36,16 @@ export default function NewRolePageClient() {
     setSaving(true)
     setFormError(null)
     try {
-      await createRole(form)
+      // POST /roles accepts name/description only (RoleCreateRequest,
+      // extra=forbid) — capabilities are applied right after via the
+      // existing PUT /roles/{id}/capabilities replace endpoint.
+      const created = await createRole({
+        name: form.name.trim(),
+        description: form.description?.trim() ? form.description.trim() : null,
+      })
+      if (capabilities.length > 0) {
+        await replaceRoleCapabilities(created.id, '', capabilities)
+      }
       router.push('/roles')
     } catch (err) {
       if (isApiError(err)) {
@@ -78,6 +89,12 @@ export default function NewRolePageClient() {
               <textarea value={form.description || ''} onChange={(e) => update('description', e.target.value)} />
             </div>
           </div>
+        </div>
+
+        <div className="form-section">
+          <h3><ShieldPlus size={18} /> {t('roles.capabilities')}</h3>
+          <p className="muted small">{t('roles.createCapabilitiesHelp')}</p>
+          <CapabilityPicker selected={capabilities} onChange={setCapabilities} />
         </div>
 
         <div className="form-actions">
