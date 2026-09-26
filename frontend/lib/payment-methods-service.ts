@@ -3,10 +3,9 @@
 // Backend: GET /api/v1/payment-methods/  — list all payment methods.
 // Response: MetaEnvelope[PaymentMethodResponse] -> { data: [...], pagination: {...} }
 //
-// Note: The payment-methods route uses `active_only` query param (this is
-// correctly documented in OpenAPI unlike financial-categories which uses
-// filter[is_active]). We fetch active methods since we only need to resolve
-// display names for currently-selected payment methods.
+// The backend route handler (payment_methods.py line 92) uses the alias
+// `filter[is_active]` for the `active_only` query parameter, NOT a bare
+// `active_only` param (audit §7.2). We use the actual implemented alias.
 
 import { api } from '@/lib/api-client'
 import type { PaymentMethodResponse } from '@/lib/finance-types'
@@ -24,11 +23,11 @@ interface PaymentMethodListEnvelope {
 export async function fetchPaymentMethods(
   options?: { signal?: AbortSignal }
 ): Promise<PaymentMethodResponse[]> {
-  // api.get returns the JSON data directly (not ApiResult)
   const resp = await api.get<PaymentMethodListEnvelope>(
     '/payment-methods/',
     {
-      params: { active_only: true },
+      // Backend alias is filter[is_active], not active_only (audit §7.2).
+      params: { 'filter[is_active]': 'true', per_page: '200' },
       signal: options?.signal,
     }
   )

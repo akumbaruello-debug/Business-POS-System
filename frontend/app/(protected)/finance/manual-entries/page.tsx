@@ -1,6 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import {
   AlertCircle,
   ChevronLeft,
@@ -26,6 +27,7 @@ import { fetchPaymentMethods } from '@/lib/payment-methods-service'
 import { formatIDR, formatDate, formatInt } from '@/lib/format'
 import { num } from '@/lib/sale-ui'
 import { useSession } from '@/lib/session'
+import { useCan } from '@/lib/authz'
 import { useLanguage } from '@/lib/i18n'
 
 // Backend contract (backend/app/api/v1/manual_entries.py):
@@ -43,11 +45,12 @@ import { useLanguage } from '@/lib/i18n'
 export default function ManualEntriesPage() {
   const user = useSession()
   const { t, language } = useLanguage()
+  const { can } = useCan()
 
-  const canView = user.capabilities.includes('manual_entry.view')
-  const canCreateIncome = user.capabilities.includes('manual_entry.create_income')
-  const canCreateExpense = user.capabilities.includes('manual_entry.create_expense')
-  const canCancel = user.capabilities.includes('manual_entry.cancel')
+  const canView = can('manual_entry.view')
+  const canCreateIncome = can('manual_entry.create_income')
+  const canCreateExpense = can('manual_entry.create_expense')
+  const canCancel = can('manual_entry.cancel')
 
   const canCreate = canCreateIncome || canCreateExpense
 
@@ -183,14 +186,24 @@ export default function ManualEntriesPage() {
     }
   }
 
-  const handleCreated = () => {
+  const handleCreated = (_entry: ManualEntry) => {
     void fetchEntries()
   }
 
-  const handleCancelled = () => {
+  const handleCancelled = (refreshed: ManualEntry) => {
     void fetchEntries()
     setCancelEntry(null)
     setCancelEtag('')
+  }
+
+  const handleCancelConflict = () => {
+    // ETag mismatch on cancel — the entry was modified elsewhere.
+    // The cancel dialog already surfaces the error; close it and let the
+    // list refresh to reflect the latest server state.
+    setCancelDialogOpen(false)
+    setCancelEntry(null)
+    setCancelEtag('')
+    void fetchEntries()
   }
 
   // ---------------------------------------------------------------------------
@@ -404,7 +417,9 @@ export default function ManualEntriesPage() {
                         <td>{formatDate(e.entry_date, language)}</td>
                         <td>{typeBadge(e.entry_type)}</td>
                         <td>
-                          <strong>{e.category_name ?? `#${e.category_id}`}</strong>
+                          <Link href={`/finance/manual-entries/${e.id}`} className="sales-ref">
+                            <strong>{e.category_name ?? `#${e.category_id}`}</strong>
+                          </Link>
                         </td>
                         <td className="muted">{method?.name ?? `#${e.payment_method_id}`}</td>
                         <td className="sales-td-right sales-num">
@@ -511,6 +526,7 @@ export default function ManualEntriesPage() {
           entry={cancelEntry}
           entryEtag={cancelEtag}
           onCancelled={handleCancelled}
+          onConflict={handleCancelConflict}
           t={(key, params) => t(key, params)}
         />
       )}
