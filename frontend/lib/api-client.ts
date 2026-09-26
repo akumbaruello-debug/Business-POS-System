@@ -35,6 +35,52 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
   params?: Record<string, string | number | boolean | undefined | null>
   ifMatch?: string
   idempotencyKey?: string | true
+  /** Internal: set when this call is already a post-refresh retry. */
+  _refreshed?: boolean
+}
+
+// Single-flight session refresh (backend POST /auth/refresh rotates both
+// tokens). Concurrent 401s share one refresh call instead of stampeding.
+let refreshPromise: Promise<boolean> | null = null
+
+function clearSession(): void {
+  localStorage.removeItem('access_token')
+  localStorage.removeItem('refresh_token')
+}
+
+async function doRefresh(): Promise<boolean> {
+  const refreshToken = localStorage.getItem('refresh_token')
+  if (!refreshToken) return false
+  try {
+    const res = await fetch(`${API_URL}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    })
+    if (!res.ok) return false
+    const data = await res.json()
+    if (typeof data?.access_token !== 'string' || typeof data?.refresh_token !== 'string') {
+      return false
+    }
+    localStorage.setItem('access_token', data.access_token)
+    localStorage.setItem('refresh_token', data.refresh_token)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function ensureFreshSession(): Promise<boolean> {
+  if (!refreshPromise) {
+    refreshPromise = doRefresh().finally(() => {
+      refreshPromise = null
+    })
+  }
+  return refreshPromise
+}
+
+function isAuthEndpoint(endpoint: string): boolean {
+  return endpoint.startsWith('/auth/login') || endpoint.startsWith('/auth/refresh')
 }
 
 export interface ApiResult<T = any> {
@@ -69,6 +115,7 @@ async function rawClient<T = any>(
     headers: customHeaders,
     ifMatch,
     idempotencyKey,
+    _refreshed,
     ...rest
   } = options
 
@@ -117,8 +164,13 @@ async function rawClient<T = any>(
   const response = await fetch(url.toString(), config)
 
   if (response.status === 401) {
-    localStorage.removeItem('access_token')
-    localStorage.removeItem('refresh_token')
+    // Access tokens are short-lived (15 min). On expiry, rotate via the
+    // stored refresh token and retry once — never for the auth endpoints
+    // themselves (login 401 = bad credentials; refresh 401 = dead session).
+    if (!isAuthEndpoint(endpoint) && !_refreshed && (await ensureFreshSession())) {
+      return rawClient<T>(endpoint, { ...options, _refreshed: true })
+    }
+    clearSession()
     throw new ApiError(401, 'Unauthorized', { code: 'unauthorized' })
   }
 

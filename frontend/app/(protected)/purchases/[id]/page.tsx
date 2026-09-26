@@ -261,12 +261,23 @@ export default function PurchaseDetailPage() {
   const canPost = user.capabilities.includes('purchase.post')
   const canAddPayment = user.capabilities.includes('purchase.create')
   const canRecordRepayment = user.capabilities.includes('purchase.refund')
+  const canCancelPurchase = user.capabilities.includes('purchase.cancel')
   const canReturn = user.capabilities.includes('purchase.return')
   const isDraft = purchase?.lifecycle_status === 'draft'
   const isCancelled = purchase?.lifecycle_status === 'cancelled'
   const payable = canAddPayment && !isDraft && !isCancelled && (purchase ? purchase.outstanding > 0 : false)
   const editable = canEditDraft && isDraft
   const postable = canPost && isDraft
+  // Cancellation mirrors backend _LIFECYCLE_CANCELLABLE for posted docs;
+  // drafts are deleted, never cancelled. Backend remains authoritative.
+  const cancellable =
+    canCancelPurchase &&
+    !!purchase &&
+    (purchase.lifecycle_status === 'posted' ||
+      purchase.lifecycle_status === 'completed' ||
+      purchase.lifecycle_status === 'partially_returned' ||
+      purchase.lifecycle_status === 'returned')
+  const deletableDraft = canAddPayment && isDraft
   // Returnable mirrors backend _LIFECYCLE_RETURNABLE (posted, completed,
   // partially_returned). Creation requires purchase.return only — never the
   // Phase-E finalize / arrival / override capabilities.
@@ -277,6 +288,8 @@ export default function PurchaseDetailPage() {
       purchase.lifecycle_status === 'completed' ||
       purchase.lifecycle_status === 'partially_returned')
   const [postConfirmOpen, setPostConfirmOpen] = useState(false)
+  const [cancelOpen, setCancelOpen] = useState(false)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [returnOpen, setReturnOpen] = useState(false)
   const [returnReason, setReturnReason] = useState('')
   const [returnQuantities, setReturnQuantities] = useState<Record<number, number>>({})
@@ -492,6 +505,30 @@ export default function PurchaseDetailPage() {
       setPostConfirmOpen(false)
     })
 
+  // Cancel a posted purchase (POST /purchases/{id}/cancel). Reverses the
+  // receipt effect per backend rules (on-hand via purchase_reversal,
+  // consumed via value_adjustment). Requires a reason; terminal state.
+  const cancelPurchase = (reason: string) =>
+    runMutation('Purchase cancelled', async () => {
+      await api.post(
+        `/purchases/${purchaseId}/cancel`,
+        { reason },
+        { headers: { 'If-Match': etag ?? '', 'Idempotency-Key': crypto.randomUUID() } },
+      )
+      setCancelOpen(false)
+    })
+
+  // Delete a draft (DELETE /purchases/{id}). Drafts only — posted history
+  // is never hard-deleted. Explicit two-step confirmation in the dialog.
+  const deleteDraft = () =>
+    runMutation('Draft deleted', async () => {
+      await api.delete(`/purchases/${purchaseId}`, {
+        headers: { 'If-Match': etag ?? '', 'Idempotency-Key': crypto.randomUUID() },
+      })
+      setDeleteConfirmOpen(false)
+      router.push('/purchases')
+    })
+
   // Return creation (POST /purchases/{id}/returns). Backend owns inventory
   // reduction, AP/SREC treatment, lifecycle and quantity bounds; the frontend
   // only pre-validates (reason, positive qty, qty <= remaining) and displays
@@ -682,6 +719,16 @@ export default function PurchaseDetailPage() {
           {editable && (
             <Button variant="outline" onClick={() => setHeaderOpen(true)} disabled={busy}>
               <Pencil size={14} className="mr-1" /> Edit purchase
+            </Button>
+          )}
+          {cancellable && (
+            <Button variant="outline" onClick={() => setCancelOpen(true)} disabled={busy}>
+              <X size={14} className="mr-1" /> Cancel purchase
+            </Button>
+          )}
+          {deletableDraft && (
+            <Button variant="outline" onClick={() => setDeleteConfirmOpen(true)} disabled={busy}>
+              <Trash2 size={14} className="mr-1" /> Delete draft
             </Button>
           )}
           <Link
@@ -1099,6 +1146,33 @@ export default function PurchaseDetailPage() {
         />
       )}
 
+      {/* Cancel confirmation dialog (POST /purchases/{id}/cancel) */}
+      {cancelOpen && purchase && (
+        <CancelPurchaseDialog
+          reference={purchase.reference_no ?? `#${purchase.id}`}
+          busy={busy}
+          onCancel={() => { if (!busy) setCancelOpen(false) }}
+          onConfirm={cancelPurchase}
+        />
+      )}
+
+      {/* Delete-draft confirmation dialog (DELETE /purchases/{id}) */}
+      {deleteConfirmOpen && purchase && (
+        <DialogShell
+          title="Delete draft"
+          description="The draft and its lines will be permanently removed. Posted history can never be deleted this way."
+          onCancel={() => { if (!busy) setDeleteConfirmOpen(false) }}
+          busy={busy}
+          onSave={deleteDraft}
+          saveLabel={busy ? 'Deleting…' : 'Delete draft'}
+          width={480}
+        >
+          <div style={{ fontSize: 13, color: '#334155' }}>
+            Delete draft <strong>{purchase.reference_no ?? `#${purchase.id}`}</strong>? This cannot be undone.
+          </div>
+        </DialogShell>
+      )}
+
       {/* Line add/edit dialog */}
       {lineDialog && (
         <LineDialog
@@ -1248,6 +1322,64 @@ function PostConfirmDialog({
           <div>
             <div style={FIELD_LABEL}>Total (server)</div>
             <div style={{ marginTop: 4, fontWeight: 700 }}>{total != null ? formatIDR(Number(total)) : '—'}</div>
+          </div>
+        </div>
+      </div>
+    </DialogShell>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Cancel confirmation. Reason is required by the backend (1–1000 chars).
+// Cancellation reverses the receipt effect and is terminal.
+// ---------------------------------------------------------------------------
+const CANCEL_REASON_MAX = 1000
+
+function CancelPurchaseDialog({
+  reference,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  reference: string
+  busy: boolean
+  onCancel: () => void
+  onConfirm: (reason: string) => void
+}) {
+  const [reason, setReason] = useState('')
+  return (
+    <DialogShell
+      title="Cancel purchase"
+      description="Cancelling reverses the receipt effect. Cancelled purchases stay visible for audit."
+      onCancel={onCancel}
+      busy={busy}
+      onSave={() => {
+        if (reason.trim()) onConfirm(reason.trim())
+      }}
+      saveLabel={busy ? 'Cancelling…' : 'Cancel purchase'}
+      width={480}
+    >
+      <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14, fontSize: 13, color: '#334155' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, padding: '12px 14px' }}>
+          <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1, color: '#b45309' }} />
+          <div style={{ lineHeight: 1.6 }}>
+            Cancelling <strong>{reference}</strong> reverses received stock,
+            voids the payable and refunds collected amounts per backend rules.
+            This cannot be undone from here.
+          </div>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label style={FIELD_LABEL}>Reason *</label>
+          <textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            maxLength={CANCEL_REASON_MAX}
+            rows={3}
+            placeholder="Why is this purchase being cancelled?"
+            style={{ ...FIELD_INPUT, height: 'auto', padding: 10, resize: 'vertical' }}
+          />
+          <div style={{ fontSize: 11, color: '#94a3b8', textAlign: 'right' }}>
+            {reason.length}/{CANCEL_REASON_MAX}
           </div>
         </div>
       </div>
