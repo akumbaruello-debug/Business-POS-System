@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   Package,
   PieChart,
+  Receipt,
   Settings,
   Shield,
   Store,
@@ -59,6 +60,12 @@ function useNavigation(): NavGroup[] {
       items: [
         { label: t('nav.purchases'), icon: ClipboardList, href: '/purchases' },
         { label: t('nav.suppliers'), icon: Truck, href: '/suppliers' },
+      ],
+    },
+    {
+      label: t('nav.finance'),
+      items: [
+        { label: t('nav.manualEntries'), icon: Receipt, href: '/finance/manual-entries', required: 'manual_entry.view' },
       ],
     },
     {
