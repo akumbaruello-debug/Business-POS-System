@@ -1,6 +1,7 @@
 'use client'
 
 import {
+  Bell,
   Boxes,
   ClipboardList,
   Factory,
@@ -36,7 +37,10 @@ function useNavigation(): NavGroup[] {
   const { t } = useLanguage()
   const { can } = useCan()
   const groups: NavGroup[] = [
-    { label: t('nav.overview'), items: [{ label: t('nav.dashboard'), icon: LayoutDashboard, href: '/dashboard' }] },
+    { label: t('nav.overview'), items: [
+      { label: t('nav.dashboard'), icon: LayoutDashboard, href: '/dashboard' },
+      { label: t('nav.notifications'), icon: Bell, href: '/notifications', required: 'notification.view' },
+    ] },
     {
       label: t('nav.inventory'),
       items: [
