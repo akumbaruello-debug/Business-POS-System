@@ -819,6 +819,24 @@ class SaleRepository:
         )
         return Decimal(str((row or {"s": 0})["s"]))
 
+    async def sum_active_returned_qty_for_sale(self, sale_id: int) -> Decimal:
+        """Sum of returned quantity across all ACTIVE (posted) returns for a
+        sale. Cancelled returns are excluded — their restoration movements
+        have already been reversed by sales_return_reversal rows. Mirrors the
+        purchase-side twin
+        (repositories/purchases.py::sum_active_returned_qty_for_purchase)."""
+        row = await self._uow.first_row(
+            """
+            SELECT COALESCE(SUM(srl.quantity), 0) AS s
+            FROM sales_return_lines srl
+            JOIN sales_returns sr ON sr.id = srl.sales_return_id
+            WHERE sr.sale_id = :sid
+              AND sr.lifecycle_status = 'posted'
+            """,
+            {"sid": sale_id},
+        )
+        return Decimal(str((row or {"s": 0})["s"]))
+
     # ========================================================================
     # stock_movements (append-only inserts; reversals are new rows)
     # ========================================================================

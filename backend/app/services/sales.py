@@ -1452,6 +1452,24 @@ class SaleService:
                 details={"reason": "lifecycle_state_invalid"},
             )
 
+        # V1.9 Accounting Event Matrix Events 4-6 prerequisite: cancellation
+        # reverses the sale at FULL original line quantity. A sale with
+        # active (posted) returns already had those units restored by
+        # sales_return movements — a full sale_reversal would double-restock
+        # inventory. Reject with 409; the operator must cancel the returns
+        # first (sales_return_reversal movements undo the restoration).
+        # Cancelled historical returns are excluded by the active-returns
+        # aggregate, mirroring the purchase-side twin.
+        active_returned = await self._repo.sum_active_returned_qty_for_sale(sale_id)
+        if active_returned > 0:
+            raise Conflict(
+                "Sale has active returns; cancel the returns before cancelling the sale.",
+                details={
+                    "reason": "active_returns_exist",
+                    "active_returned_qty": float(active_returned),
+                },
+            )
+
         current_etag, _v = self._etag_from_row(sale)
         check_if_match(provided=if_match, current_etag=current_etag)
 
@@ -1661,15 +1679,19 @@ class SaleService:
         #   completed -> partially_returned -> returned
         # The DB trigger forbids skipping partially_returned for a
         # completed sale, so we always go via partially_returned.
-        sold_qty = Decimal("0")
-        for cl in created_lines:
-            sl = await self._uow.first_row(
-                "SELECT quantity FROM sale_lines WHERE id = :lid",
-                {"lid": cl["sale_line_id"]},
-            )
-            sold_qty += _quant(sl["quantity"]) if sl else Decimal("0")
+        #
+        # 'returned' requires the ENTIRE sale returned: sold_qty is the sum
+        # over ALL sale_lines of the sale (not just the lines in this
+        # request — P0-2), and total_returned sums active per-line returned
+        # qty across every line. Mirrors the purchase-side fully_returned
+        # loop (services/purchases.py) including its 10_000 line-page cap.
+        sold_row = await self._uow.first_row(
+            "SELECT COALESCE(SUM(quantity), 0) AS q FROM sale_lines WHERE sale_id = :sid",
+            {"sid": sale_id},
+        )
+        sold_qty = Decimal(str((sold_row or {"q": 0})["q"]))
         total_returned = Decimal("0")
-        line_rows, _ = await self._repo.list_lines(sale_id)
+        line_rows, _ = await self._repo.list_lines(sale_id, per_page=10_000)
         for ln in line_rows:
             r = await self._repo.sum_returned_qty_for_line(int(ln["id"]))
             total_returned += r

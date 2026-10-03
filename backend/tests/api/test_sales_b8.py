@@ -874,6 +874,158 @@ async def test_return_quantity_bounds(app: AsyncClient, owner_user: dict[str, An
 
 
 # ---------------------------------------------------------------------------
+# P0-1 / P0-2 regressions (V1 release audit, Oct 2026)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cancel_sale_with_active_return_rejected_then_allowed_after_return_cancelled(
+    app: AsyncClient, owner_user: dict[str, Any]
+) -> None:
+    """P0-1: cancelling a sale that has an ACTIVE (posted) return must 409 —
+    the full-qty sale_reversal would double-restock units the sales_return
+    movement already restored. After the return is cancelled (its reversal
+    movement takes the units back out), the sale cancel succeeds and
+    restocks exactly once.
+    """
+    h = await _owner_headers(app, owner_user)
+
+    r = await app.post("/api/v1/sales", headers={**h, "Idempotency-Key": _idem()}, json={})
+    sale_id = r.json()["id"]
+    r_line = await app.post(
+        f"/api/v1/sales/{sale_id}/lines",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"product_id": 1, "quantity": "2.000", "unit_price": "50.00"},
+    )
+    line_id = r_line.json()["id"]
+
+    # (stock already seeded by the module's autouse _ensure_product_one fixture;
+    # calling _seed_stock() again would append a second opening_balance row.)
+    r_post = await app.post(
+        f"/api/v1/sales/{sale_id}/post", headers={**h, "Idempotency-Key": _idem()}, json={}
+    )
+    assert r_post.status_code == 200
+    # on_hand after post: seed - 2 sold
+
+    r_ret = await app.post(
+        f"/api/v1/sales/{sale_id}/returns",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"reason": "bad item", "lines": [{"sale_line_id": line_id, "quantity": "1.000"}]},
+    )
+    assert r_ret.status_code == 201
+    return_id = r_ret.json()["id"]
+    # sale now partially_returned with 1 active returned unit
+
+    # Cancel-with-active-return -> 409 active_returns_exist
+    r_cancel = await app.post(
+        f"/api/v1/sales/{sale_id}/cancel",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"reason": "whole order void"},
+    )
+    assert r_cancel.status_code == 409, r_cancel.text
+    body = r_cancel.json()["error"]
+    assert (body.get("details") or {}).get("reason") == "active_returns_exist"
+
+    # Sale is untouched by the rejected cancel
+    r_sale = await app.get(f"/api/v1/sales/{sale_id}", headers=h)
+    assert r_sale.json()["lifecycle_status"] == "partially_returned"
+
+    # Cancel the return first (reversal movement removes the 1 restored unit)
+    r_rc = await app.post(
+        f"/api/v1/sales-returns/{return_id}/cancel",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"reason": "return created in error"},
+    )
+    assert r_rc.status_code == 200
+
+    # Now the sale cancel is allowed
+    r_cancel2 = await app.post(
+        f"/api/v1/sales/{sale_id}/cancel",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"reason": "whole order void"},
+    )
+    assert r_cancel2.status_code == 200, r_cancel2.text
+    assert r_cancel2.json()["lifecycle_status"] == "cancelled"
+
+    # Inventory exactly back to the pre-sale level: the ONLY quantity-restoring
+    # movements are sale (-2) and sale_reversal (+2). The return cycle nets
+    # zero (+1 sales_return, -1 sales_return_reversal).
+    from sqlalchemy import text
+
+    from app.db import get_session_factory
+
+    async with get_session_factory()() as session:
+        on_hand = await session.scalar(
+            text("SELECT COALESCE(SUM(quantity),0) FROM stock_movements WHERE product_id = 1")
+        )
+    assert Decimal(str(on_hand or 0)) == Decimal("10")  # 10 seed, fully restored once
+
+
+@pytest.mark.asyncio
+async def test_multiline_sale_partial_line_return_keeps_sale_returnable(
+    app: AsyncClient, owner_user: dict[str, Any]
+) -> None:
+    """P0-2: on a 2-line sale, fully returning line A must leave the sale
+    partially_returned (not 'returned' — line B is untouched), and line B must
+    still be returnable; returning B last completes the sale to 'returned'.
+    """
+    h = await _owner_headers(app, owner_user)
+
+    r = await app.post("/api/v1/sales", headers={**h, "Idempotency-Key": _idem()}, json={})
+    sale_id = r.json()["id"]
+    r_a = await app.post(
+        f"/api/v1/sales/{sale_id}/lines",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"product_id": 1, "quantity": "2.000", "unit_price": "50.00"},
+    )
+    line_a = r_a.json()["id"]
+    r_b = await app.post(
+        f"/api/v1/sales/{sale_id}/lines",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"product_id": 1, "quantity": "3.000", "unit_price": "40.00"},
+    )
+    line_b = r_b.json()["id"]
+
+    await _seed_stock()
+    r_post = await app.post(
+        f"/api/v1/sales/{sale_id}/post", headers={**h, "Idempotency-Key": _idem()}, json={}
+    )
+    assert r_post.status_code == 200
+
+    # Return ALL of line A (2 of 2). Pre-fix this set sold_qty=2 from the
+    # request lines only, total_returned=2 >= 2 -> sale wrongly 'returned'.
+    r_ret_a = await app.post(
+        f"/api/v1/sales/{sale_id}/returns",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"reason": "line A bad", "lines": [{"sale_line_id": line_a, "quantity": "2.000"}]},
+    )
+    assert r_ret_a.status_code == 201, r_ret_a.text
+    r_sale = await app.get(f"/api/v1/sales/{sale_id}", headers=h)
+    assert r_sale.json()["lifecycle_status"] == "partially_returned"
+
+    # Line B still returnable: sale must NOT be blocked by a premature
+    # 'returned' state.
+    r_ret_b = await app.post(
+        f"/api/v1/sales/{sale_id}/returns",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"reason": "line B bad", "lines": [{"sale_line_id": line_b, "quantity": "1.000"}]},
+    )
+    assert r_ret_b.status_code == 201, r_ret_b.text
+    r_sale = await app.get(f"/api/v1/sales/{sale_id}", headers=h)
+    assert r_sale.json()["lifecycle_status"] == "partially_returned"  # 3 of 5 total
+
+    # Completing line B returns the WHOLE sale -> 'returned'.
+    r_ret_b2 = await app.post(
+        f"/api/v1/sales/{sale_id}/returns",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"reason": "rest of B", "lines": [{"sale_line_id": line_b, "quantity": "2.000"}]},
+    )
+    assert r_ret_b2.status_code == 201, r_ret_b2.text
+    r_sale = await app.get(f"/api/v1/sales/{sale_id}", headers=h)
+    assert r_sale.json()["lifecycle_status"] == "returned"
+
+
+# ---------------------------------------------------------------------------
 # Shared test helpers
 # ---------------------------------------------------------------------------
 
