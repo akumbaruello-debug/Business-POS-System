@@ -415,14 +415,14 @@ export default function PosPage() {
 
   if (!canCreate) {
     return (
-      <div className="page">
+      <div className="page pos-page">
         <div className="notice error">{t('common.accessRestricted')}</div>
       </div>
     )
   }
 
   return (
-    <div className="page">
+    <div className="page pos-page">
       <div className="page-header">
         <div>
           <h1>{t('pos.title')}</h1>

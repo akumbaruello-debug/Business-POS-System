@@ -196,3 +196,61 @@ to{background-position:0 0}
 .reports-toolbar-row{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap}
 .reports-toolbar-fields{display:flex;align-items:flex-end;gap:10px;flex:1 1 auto;min-width:0;flex-wrap:wrap}
 @media(max-width:620px){.sales-totals{max-width:none;padding:14px 16px}.sales-detail-head{padding:16px}.sales-detail-badges{padding:0 16px 14px}.sales-detail-actions{padding:14px 16px}}
+
+/* ---- POS workspace (V0 contract, scoped to /pos) ---- */
+.pos-page{display:flex;flex-direction:column;gap:16px;padding:32px 28px 56px}
+.pos-page .page-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.pos-page .page-header h1{margin:0;color:var(--foreground);font-size:22px;font-weight:700}
+.pos-page .muted{color:#718198;font-size:13px}
+.pos-page .muted.small,.pos-page .small{font-size:12px}
+.pos-page .notice{padding:12px 16px;color:#4b5c72;background:#f8fafc;border:1px solid var(--border);border-radius:10px;font-size:13px}
+.pos-page .notice.error{color:#b91c1c;background:#fef2f2;border-color:#fecaca}
+.pos-page .notice.info{color:#1e40af;background:#eff6ff;border-color:#bfdbfe}
+.pos-page .link{padding:0;color:var(--primary);background:none;border:0;font:inherit;font-size:13px;cursor:pointer;text-decoration:none}
+.pos-page .link:hover{text-decoration:underline}
+.pos-page .link.danger{color:#dc2626}
+.pos-page .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:36px;padding:0 16px;color:#fff;background:var(--primary);border:1px solid var(--primary);border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;cursor:pointer}
+.pos-page .btn:hover{background:#155bb5}
+.pos-page .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;color:var(--primary);background:#eaf2ff;border-radius:999px;font-size:12px;font-weight:600}
+.pos-page .field{display:flex;flex-direction:column;gap:6px;color:#4b5c72;font-size:13px}
+.pos-page .field>span{display:flex;align-items:center;gap:6px;font-weight:600}
+.pos-page .field input,.pos-page .field select{height:var(--control-h);padding:0 12px;color:var(--foreground);background:#fff;border:1px solid var(--border);border-radius:8px;font-family:inherit;font-size:13px}
+.pos-page .field input:disabled{color:#9aa7b8;background:#f2f6fc}
+.pos-page .search-box{display:flex;align-items:center;gap:8px;min-width:220px;height:var(--control-h);padding:0 12px;background:#fff;border:1px solid var(--border);border-radius:8px}
+.pos-page .search-box input{flex:1;color:var(--foreground);background:none;border:0;outline:0;font-size:13px}
+.pos-page .icon-btn{display:grid;place-items:center;width:28px;height:28px;color:#6b7a90;background:none;border:0;border-radius:6px;cursor:pointer}
+.pos-page .icon-btn:hover{color:var(--foreground);background:#f2f6fc}
+.pos-page .icon-btn.danger{color:#dc2626}
+.pos-page .icon-btn:disabled{opacity:.4;cursor:default}
+.pos-layout{display:grid;grid-template-columns:2fr 1fr;align-items:start;gap:16px}
+.pos-catalog{min-width:0}
+.pos-cart{position:sticky;top:76px;max-height:calc(100vh - 100px);overflow-y:auto}
+.pos-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;padding:16px 20px 20px}
+.pos-card{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:12px;text-align:left;background:#fff;border:1px solid var(--border);border-radius:10px;cursor:pointer;font-family:inherit}
+.pos-card:hover:not(:disabled){background:#f8fbff;border-color:var(--primary)}
+.pos-card:disabled{opacity:.55;cursor:default}
+.pos-card strong{color:var(--foreground);font-size:13px}
+.pos-price{color:var(--primary);font-size:14px;font-weight:700}
+.stock{color:#059669;font-size:11px;font-weight:600}
+.stock.low{color:#d97706}.stock.out{color:#dc2626}
+.cart-lines{display:flex;flex-direction:column;gap:10px;padding:0;margin:0;list-style:none}
+.cart-line{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--border);border-radius:10px}
+.cart-line-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.cart-line-top strong{font-size:13px}
+.cart-line-controls{display:flex;align-items:center;gap:6px}
+.cart-line-controls input{width:64px;height:32px;padding:0 8px;border:1px solid var(--border);border-radius:6px;font-size:13px}
+.cart-line-controls input:disabled{color:#9aa7b8;background:#f2f6fc}
+.cart-total{display:flex;align-items:center;justify-content:space-between;padding:12px 0;font-size:15px}
+.tender-summary{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:14px 0}
+.tender-summary>div{display:flex;flex-direction:column;gap:2px;padding:10px 12px;background:#f8fafc;border-radius:8px}
+.tender-summary span{color:#8a98ab;font-size:11px;letter-spacing:.4px;text-transform:uppercase}
+.tender-summary strong{font-size:15px}
+.tender-history{display:flex;flex-direction:column;gap:6px;padding:0;margin:0 0 12px;list-style:none}
+.tender-history li{display:flex;align-items:center;gap:8px;padding:8px 10px;color:#065f46;background:#ecfdf5;border-radius:8px;font-size:13px}
+.tender-form{display:flex;flex-direction:column;gap:10px;padding-top:4px}
+.receipt{display:flex;flex-direction:column;gap:10px;padding:16px;text-align:center;background:#ecfdf5;border-radius:10px}
+.receipt h3{margin:0;color:#065f46}
+.receipt-actions{display:flex;justify-content:center;gap:8px}
+.pos-body{display:flex;flex-direction:column;gap:12px;padding:16px 20px 20px}
+@media(max-width:1100px){.pos-layout{grid-template-columns:1fr}.pos-cart{position:static;max-height:none}}
+@media(max-width:900px){.pos-page{padding:28px 22px 48px}}
