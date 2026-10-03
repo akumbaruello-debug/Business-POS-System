@@ -30,3 +30,12 @@ export interface ContactListResponse {
   pagination: Pagination
   links?: Record<string, string>
 }
+
+/** GET /contacts/{id}/summary (G1) — server-computed totals.
+ *  Shape mirrors fetch_customer_summary_totals():
+ *  { total_sales, sales_count, receivable }. */
+export interface CustomerSummary {
+  total_sales: number
+  sales_count: number
+  receivable: number
+}
