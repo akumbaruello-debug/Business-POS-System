@@ -29,6 +29,19 @@ export function formatInt(value: number | null | undefined): string {
   return DEFAULT_INTL.format(value)
 }
 
+/** Format a stock quantity, keeping fractional decimals (NUMERIC(15,4)
+ *  schema columns allow e.g. 2.5 kg). Sign prefix is the caller's job —
+ *  negatives render as "-3" via id-ID, same as formatInt. */
+const QTY_INTL = new Intl.NumberFormat('id-ID', {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 4,
+})
+
+export function formatQty(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—'
+  return QTY_INTL.format(value)
+}
+
 /** Format a decimal as a signed percent string ("+12.8%" / "-3.4%"). */
 export function formatPct(value: number | null | undefined, signed = true): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '—'

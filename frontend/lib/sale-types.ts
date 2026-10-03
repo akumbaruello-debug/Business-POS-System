@@ -126,6 +126,10 @@ export interface Sale {
   version: number
   // Server-emitted (set by SaleService._enrich_sale when listing):
   etag?: string
+  /** Embedded payments — present only when the server enriches with
+   *  `include={"payments"}` (POST /sales/{id}/payments response).
+   *  GET /sales/{id} does NOT embed them. */
+  payments?: SalePayment[]
 }
 
 export interface SaleListResponse {
