@@ -14,14 +14,17 @@ import { initialsFor, useSession } from '@/lib/session'
 import {
   AlertCircle,
   ArrowUpRight,
+  Banknote,
   BarChart3,
   BarChartHorizontal,
   Boxes,
   CircleDollarSign,
+  History,
   Package,
   RefreshCw,
   ShoppingCart,
   TrendingUp,
+  Undo2,
   Users,
 } from 'lucide-react'
 
@@ -937,8 +940,35 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="quick-actions">
-            {/* Only live routes ship — dead quick-actions (New sale /pos,
-                Record payment /payments) withheld until pages exist. */}
+            {/* V1 P0-4: previously withheld quick-actions restored now that
+                the pages ship; each gated by the same capability the
+                destination page checks (mirrors sidebar). Labels reuse
+                existing dictionary keys. */}
+            {([
+              { href: '/pos', required: 'sale.create', icon: ShoppingCart, color: 'blue',
+                strong: 'sales.newSale', small: 'pos.subtitle' },
+              { href: '/payments', required: 'sale.view', icon: Banknote, color: 'green',
+                strong: 'payments.title', small: 'payments.subtitle' },
+              { href: '/finance/cash', required: 'finance.view_cash', icon: CircleDollarSign, color: 'amber',
+                strong: 'cash.title', small: 'cash.subtitle' },
+              { href: '/purchases/returns', required: 'purchase.view', icon: Undo2, color: 'green',
+                strong: 'purchaseReturns.title', small: 'purchaseReturns.subtitle' },
+              { href: '/inventory/movements', required: 'inventory.view', icon: History, color: 'blue',
+                strong: 'stockMovements.title', small: 'stockMovements.subtitle' },
+            ] as const)
+              .filter((a) => user.capabilities.includes(a.required))
+              .map((a) => (
+                <a key={a.href} href={a.href} className="quick-action-link">
+                  <span className={`action-icon ${a.color}`}>
+                    <a.icon size={16} />
+                  </span>
+                  <span>
+                    <strong>{t(a.strong)}</strong>
+                    <small>{t(a.small)}</small>
+                  </span>
+                  <ArrowUpRight size={15} />
+                </a>
+              ))}
             <a href="/products" className="quick-action-link">
               <span className="action-icon green">
                 <Package size={16} />

@@ -1,19 +1,24 @@
 'use client'
 
 import {
+  Banknote,
   Bell,
   Boxes,
+  CircleDollarSign,
   ClipboardList,
   Factory,
   FileText,
+  History,
   LayoutDashboard,
   Package,
   PieChart,
   Receipt,
   Settings,
   Shield,
+  ShoppingCart,
   Store,
   Truck,
+  Undo2,
   UserCog,
   Users,
 } from 'lucide-react'
@@ -36,6 +41,10 @@ interface NavGroup {
 function useNavigation(): NavGroup[] {
   const { t } = useLanguage()
   const { can } = useCan()
+  // V1 P0-4: /pos, /payments, /finance/cash, /purchases/returns,
+  // /inventory/movements added. required mirrors each page's own access gate
+  // (and the backend route capability); labels reuse existing page-title i18n
+  // keys — no dictionary changes (nav.* additions out of scope).
   const groups: NavGroup[] = [
     { label: t('nav.overview'), items: [
       { label: t('nav.dashboard'), icon: LayoutDashboard, href: '/dashboard' },
@@ -46,6 +55,7 @@ function useNavigation(): NavGroup[] {
       items: [
         { label: t('nav.products'), icon: Package, href: '/products' },
         { label: t('nav.inventory'), icon: Boxes, href: '/inventory' },
+        { label: t('stockMovements.title'), icon: History, href: '/inventory/movements', required: 'inventory.view' },
       ],
     },
     {
@@ -55,8 +65,10 @@ function useNavigation(): NavGroup[] {
     {
       label: t('nav.sales'),
       items: [
+        { label: t('pos.title'), icon: ShoppingCart, href: '/pos', required: 'sale.create' },
         { label: t('nav.sales'), icon: FileText, href: '/sales' },
         { label: t('nav.returnsRefunds'), icon: ClipboardList, href: '/sales/returns' },
+        { label: t('payments.title'), icon: Banknote, href: '/payments', required: 'sale.view' },
       ],
     },
     {
@@ -64,11 +76,13 @@ function useNavigation(): NavGroup[] {
       items: [
         { label: t('nav.purchases'), icon: ClipboardList, href: '/purchases' },
         { label: t('nav.suppliers'), icon: Truck, href: '/suppliers' },
+        { label: t('purchaseReturns.title'), icon: Undo2, href: '/purchases/returns', required: 'purchase.view' },
       ],
     },
     {
       label: t('nav.finance'),
       items: [
+        { label: t('cash.title'), icon: CircleDollarSign, href: '/finance/cash', required: 'finance.view_cash' },
         { label: t('nav.manualEntries'), icon: Receipt, href: '/finance/manual-entries', required: 'manual_entry.view' },
       ],
     },

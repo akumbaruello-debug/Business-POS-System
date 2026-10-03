@@ -2185,7 +2185,7 @@ FOR EACH ROW EXECUTE FUNCTION fn_bump_version_and_updated_at();
 
 CREATE TRIGGER trg_purchase_returns_bump_version
 BEFORE UPDATE ON purchase_returns
-FOR EACH ROW EXECUTE FUNCTION fn_bump_version_only();
+FOR EACH ROW EXECUTE FUNCTION fn_bump_version_and_updated_at();
 
 
 -- -----------------------------------------------------------------------------
