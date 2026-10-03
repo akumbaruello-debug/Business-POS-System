@@ -90,16 +90,6 @@ export interface PurchaseReturn {
   reason: string | null
   total_value_returned: number
   lifecycle_status: string
-  // Phase-E courier state (server-derived; absent on older payloads).
-  finalized_at?: string | null
-  finalized_by?: number | null
-  finalized_reason?: string | null
-  supplier_arrival_at?: string | null
-  supplier_arrival_by?: number | null
-  overdue_override_at?: string | null
-  overdue_override_by?: number | null
-  overdue_override_reason?: string | null
-  is_overdue?: boolean
   lines: PurchaseReturnLine[]
   created_at: string
   created_by: number

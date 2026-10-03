@@ -847,25 +847,7 @@ CREATE TABLE purchase_returns (
     CONSTRAINT ck_purchase_returns_value_pos
         CHECK (total_value_returned > 0),
     CONSTRAINT ck_purchase_returns_lifecycle
-        CHECK (lifecycle_status IN ('posted','cancelled')),
-    -- Finalization = courier handoff confirmed (manual). Irreversible once set.
-    -- supplier_arrival = supplier received the goods (manual, server-authoritative).
-    -- overdue is DERIVED (supplier_arrival_at + 5 days); not persisted.
-    -- overdue_override_* = durable record of an Owner-only window bypass.
-    finalized_at                TIMESTAMPTZ     NULL,
-    finalized_by                INT             NULL,
-    finalized_reason            TEXT            NULL,
-    supplier_arrival_at         TIMESTAMPTZ     NULL,
-    supplier_arrival_by         INT             NULL,
-    overdue_override_at         TIMESTAMPTZ     NULL,
-    overdue_override_by         INT             NULL,
-    overdue_override_reason     TEXT            NULL,
-    CONSTRAINT fk_purchase_returns_finalized_by
-        FOREIGN KEY (finalized_by) REFERENCES users (id) ON DELETE SET NULL,
-    CONSTRAINT fk_purchase_returns_arrival_by
-        FOREIGN KEY (supplier_arrival_by) REFERENCES users (id) ON DELETE SET NULL,
-    CONSTRAINT fk_purchase_returns_override_by
-        FOREIGN KEY (overdue_override_by) REFERENCES users (id) ON DELETE SET NULL
+        CHECK (lifecycle_status IN ('posted','cancelled'))
 );
 
 CREATE INDEX ix_purchase_returns_purchase ON purchase_returns (purchase_id);
@@ -1514,7 +1496,7 @@ CREATE TABLE audit_log (
         CHECK (action IN ('create','post','cancel','complete','return','adjust',
                           'movement','price_override','payment','refund',
                           'permission_grant','permission_revoke','settings_change',
-                          'deactivate','update','finalize','arrival','override'))
+                          'deactivate','update'))
 );
 
 CREATE INDEX ix_audit_entity ON audit_log (entity_type, entity_id);
@@ -1865,7 +1847,7 @@ BEGIN
             (OLD.lifecycle_status = 'draft' AND NEW.lifecycle_status IN ('posted','cancelled'))
          OR (OLD.lifecycle_status = 'posted' AND NEW.lifecycle_status IN ('completed','partially_returned','returned','cancelled'))
          OR (OLD.lifecycle_status = 'partially_returned' AND NEW.lifecycle_status IN ('returned','cancelled','posted'))
-         OR (OLD.lifecycle_status = 'returned' AND NEW.lifecycle_status IN ('cancelled','partially_returned','completed','posted'))
+         OR (OLD.lifecycle_status = 'returned' AND NEW.lifecycle_status = 'cancelled')
          OR (OLD.lifecycle_status = 'completed' AND NEW.lifecycle_status IN ('partially_returned','cancelled'))
         ) THEN
             RAISE EXCEPTION
@@ -2334,9 +2316,6 @@ INSERT INTO capabilities (code, description) VALUES
   ('purchase.complete', 'Complete a purchase (auto on full payment).'),
   ('purchase.cancel', 'Cancel a posted purchase.'),
   ('purchase.return', 'Process a purchase return.'),
-  ('purchase.return.finalize', 'Confirm courier handoff (finalize) on a posted purchase return. Irreversible.'),
-  ('purchase.return.arrival', 'Record supplier arrival on a posted purchase return (starts the 5-day confirmation window).'),
-  ('purchase.return.override', 'Owner-only: override an expired arrival-confirmation window on a posted purchase return.'),
   ('purchase.refund', 'Disburse a supplier refund / repayment.'),
   -- Inventory
   ('inventory.view', 'View inventory and stock movements.'),

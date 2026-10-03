@@ -13,28 +13,6 @@ import { Button } from '@/components/ui/button'
 import { useSession } from '@/lib/session'
 import { useLanguage } from '@/lib/i18n'
 
-// -----------------------------------------------------------------------------
-// Backend contract (backend/app/api/v1/purchase_returns.py):
-//
-//   GET  /purchase-returns?page=&per_page=&sort=
-///      &purchase_id=&supplier_id=&lifecycle_status=   (purchase.view)
-//     → { data: PurchaseReturn[], pagination } — rows carry Phase-E courier
-//       state (finalized_*, supplier_arrival_*, overdue_override_*, is_overdue)
-//   GET  /purchase-returns/{id}                        (purchase.view)
-//   POST /purchase-returns/{id}/cancel {reason}        (purchase.return)
-//     Idempotency-Key + If-Match REQUIRED.
-//   POST /purchase-returns/{id}/finalize {reason?}     (purchase.return.finalize)
-//   POST /purchase-returns/{id}/arrival {note?}        (purchase.return.arrival)
-//   POST /purchase-returns/{id}/override-expired-window {reason}
-//                                                     (purchase.return.override)
-//     Phase-E actions: Idempotency-Key required, If-Match optional (omitted;
-//     the backend compares a version etag the list payload does not carry).
-//
-// Creation lives on the purchase detail page (POST /purchases/{id}/returns).
-// Courier actions (finalize / arrival / override) live in this workspace.
-// Frontend gates are UX-only; the backend lifecycle is authoritative.
-// -----------------------------------------------------------------------------
-
 interface ReturnsListResponse {
   data: PurchaseReturn[]
   pagination: { page: number; per_page: number; total: number; total_pages: number }
@@ -45,9 +23,6 @@ export default function PurchaseReturnsPage() {
   const { t } = useLanguage()
   const canView = user.capabilities.includes('purchase.view')
   const canCancel = user.capabilities.includes('purchase.return')
-  const canFinalize = user.capabilities.includes('purchase.return.finalize')
-  const canArrive = user.capabilities.includes('purchase.return.arrival')
-  const canOverride = user.capabilities.includes('purchase.return.override')
 
   const [rows, setRows] = useState<PurchaseReturn[]>([])
   const [total, setTotal] = useState(0)
@@ -64,10 +39,6 @@ export default function PurchaseReturnsPage() {
   const [cancelId, setCancelId] = useState<number | null>(null)
   const [cancelReason, setCancelReason] = useState('')
   const [busy, setBusy] = useState(false)
-
-  // Phase-E courier action dialog: { kind, returnId } or null.
-  const [phaseAction, setPhaseAction] = useState<{ kind: 'finalize' | 'arrival' | 'override'; id: number } | null>(null)
-  const [phaseReason, setPhaseReason] = useState('')
 
   // Supplier-repayment rows linked to the expanded return (Part B: SREC
   // awareness). Fetched lazily on expand; keyed by return id.
@@ -134,19 +105,6 @@ export default function PurchaseReturnsPage() {
     setPage(1)
   }
 
-  // Visibility rules mirror the backend lifecycle gates
-  // (services/purchases.py): posted-only; finalize/arrival once each;
-  // override only when server-derived is_overdue and not yet overridden.
-  // These are UX gates — the backend remains authoritative.
-  const canFinalizeRow = (r: PurchaseReturn) =>
-    canFinalize && r.lifecycle_status === 'posted' && !r.finalized_at
-  const canArriveRow = (r: PurchaseReturn) =>
-    canArrive && r.lifecycle_status === 'posted' && !r.supplier_arrival_at
-  const canOverrideRow = (r: PurchaseReturn) =>
-    canOverride && r.lifecycle_status === 'posted' && !!r.is_overdue && !r.overdue_override_at
-  const needsOverrideNote = (r: PurchaseReturn) =>
-    r.lifecycle_status === 'posted' && !!r.is_overdue && !r.overdue_override_at && !canOverride
-
   const fetchSrecForReturn = useCallback(
     async (ret: PurchaseReturn) => {
       if (srecByReturn[ret.id] || srecLoading[ret.id]) return
@@ -170,55 +128,6 @@ export default function PurchaseReturnsPage() {
     const next = expanded === ret.id ? null : ret.id
     setExpanded(next)
     if (next != null) void fetchSrecForReturn(ret)
-  }
-
-  const openPhaseAction = (kind: 'finalize' | 'arrival' | 'override', id: number) => {
-    setPhaseAction({ kind, id })
-    setPhaseReason('')
-  }
-
-  const handlePhaseAction = async () => {
-    if (!phaseAction || busy) return
-    const { kind, id } = phaseAction
-    if (kind === 'override' && !phaseReason.trim()) return
-    setBusy(true)
-    setNotice(null)
-    try {
-      const path =
-        kind === 'finalize'
-          ? `/purchase-returns/${id}/finalize`
-          : kind === 'arrival'
-            ? `/purchase-returns/${id}/arrival`
-            : `/purchase-returns/${id}/override-expired-window`
-      // If-Match is optional on Phase-E endpoints (omitted: the list payload
-      // carries a version etag the backend would compare; tests omit it too).
-      const body =
-        kind === 'finalize'
-          ? { ...(phaseReason.trim() ? { reason: phaseReason.trim() } : {}) }
-          : kind === 'arrival'
-            ? { ...(phaseReason.trim() ? { note: phaseReason.trim() } : {}) }
-            : { reason: phaseReason.trim() }
-      await api.headers.post(path, body, { idempotencyKey: true })
-      setPhaseAction(null)
-      setPhaseReason('')
-      setNotice(
-        kind === 'finalize'
-          ? t('purchaseReturns.finalizedToast')
-          : kind === 'arrival'
-            ? t('purchaseReturns.arrivedToast')
-            : t('purchaseReturns.overriddenToast'),
-      )
-      await fetchRows()
-    } catch (e) {
-      if (isApiError(e) && (e.code === 'version_mismatch' || e.status === 412)) {
-        setNotice(t('purchaseReturns.staleRetry'))
-        await fetchRows()
-      } else {
-        setNotice(isApiError(e) ? e.message : t('purchaseReturns.actionFailed'))
-      }
-    } finally {
-      setBusy(false)
-    }
   }
 
   const handleCancel = async () => {
@@ -345,18 +254,6 @@ export default function PurchaseReturnsPage() {
                       ) : (
                         <span className="tag tag-green">{t('status.posted')}</span>
                       )}
-                      {r.lifecycle_status === 'posted' && r.finalized_at && (
-                        <span className="tag tag-blue">{t('purchaseReturns.finalized')}</span>
-                      )}
-                      {r.lifecycle_status === 'posted' && r.supplier_arrival_at && (
-                        <span className="tag tag-blue">{t('purchaseReturns.arrived')}</span>
-                      )}
-                      {r.lifecycle_status === 'posted' && !!r.is_overdue && !r.overdue_override_at && (
-                        <span className="tag tag-red">{t('purchaseReturns.overdue')}</span>
-                      )}
-                      {r.lifecycle_status === 'posted' && r.overdue_override_at && (
-                        <span className="tag tag-grey">{t('purchaseReturns.overridden')}</span>
-                      )}
                     </td>
                     <td className="row-actions">
                       <button
@@ -366,33 +263,6 @@ export default function PurchaseReturnsPage() {
                       >
                         {expanded === r.id ? t('common.close') : t('common.view')}
                       </button>
-                      {canFinalizeRow(r) && (
-                        <button
-                          type="button"
-                          className="link"
-                          onClick={() => openPhaseAction('finalize', r.id)}
-                        >
-                          {t('purchaseReturns.finalize')}
-                        </button>
-                      )}
-                      {canArriveRow(r) && (
-                        <button
-                          type="button"
-                          className="link"
-                          onClick={() => openPhaseAction('arrival', r.id)}
-                        >
-                          {t('purchaseReturns.recordArrival')}
-                        </button>
-                      )}
-                      {canOverrideRow(r) && (
-                        <button
-                          type="button"
-                          className="link"
-                          onClick={() => openPhaseAction('override', r.id)}
-                        >
-                          {t('purchaseReturns.overrideWindow')}
-                        </button>
-                      )}
                       {canCancel && r.lifecycle_status === 'posted' && (
                         <button
                           type="button"
@@ -420,25 +290,6 @@ export default function PurchaseReturnsPage() {
                             </li>
                           ))}
                         </ul>
-                        <p className="muted small" style={{ marginTop: 8, fontWeight: 700 }}>
-                          {t('purchaseReturns.courier')}
-                        </p>
-                        <ul className="tender-history">
-                          <li>
-                            {t('purchaseReturns.finalized')}: {r.finalized_at ? fmtDateTime(r.finalized_at) : '—'}
-                            {r.finalized_reason ? ` · ${r.finalized_reason}` : ''}
-                          </li>
-                          <li>
-                            {t('purchaseReturns.arrived')}: {r.supplier_arrival_at ? fmtDateTime(r.supplier_arrival_at) : '—'}
-                          </li>
-                          <li>
-                            {t('purchaseReturns.overridden')}: {r.overdue_override_at ? fmtDateTime(r.overdue_override_at) : '—'}
-                            {r.overdue_override_reason ? ` · ${r.overdue_override_reason}` : ''}
-                          </li>
-                        </ul>
-                        {needsOverrideNote(r) && (
-                          <p className="muted small">{t('purchaseReturns.overrideRequiresOwner')}</p>
-                        )}
                         <p className="muted small" style={{ marginTop: 8, fontWeight: 700 }}>
                           {t('purchaseReturns.srec')}
                         </p>
@@ -523,54 +374,7 @@ export default function PurchaseReturnsPage() {
         </div>
       )}
 
-      {phaseAction && (
-        <div className="search-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) setPhaseAction(null) }}>
-          <div className="search-dialog">
-            <div className="popover-head">
-              <strong>
-                {phaseAction.kind === 'finalize'
-                  ? t('purchaseReturns.finalizeTitle')
-                  : phaseAction.kind === 'arrival'
-                    ? t('purchaseReturns.arrivalTitle')
-                    : t('purchaseReturns.overrideTitle')}{' '}
-                #{phaseAction.id}
-              </strong>
-            </div>
-            <div className="pos-body">
-              <p className="muted small">
-                {phaseAction.kind === 'finalize'
-                  ? t('purchaseReturns.finalizeHelp')
-                  : phaseAction.kind === 'arrival'
-                    ? t('purchaseReturns.arrivalHelp')
-                    : t('purchaseReturns.overrideHelp')}
-              </p>
-              <label className="field">
-                <span>
-                  {phaseAction.kind === 'arrival'
-                    ? t('purchaseReturns.noteOptional')
-                    : t('purchaseReturns.reasonOptional')}
-                </span>
-                <input
-                  value={phaseReason}
-                  onChange={(e) => setPhaseReason(e.target.value)}
-                  maxLength={1000}
-                />
-              </label>
-              <div className="receipt-actions">
-                <Button variant="outline" onClick={() => setPhaseAction(null)} disabled={busy}>
-                  {t('common.cancel')}
-                </Button>
-                <Button
-                  onClick={() => void handlePhaseAction()}
-                  disabled={busy || (phaseAction.kind === 'override' && !phaseReason.trim())}
-                >
-                  {busy ? t('common.saving') : t('common.confirm')}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+
     </div>
   )
 }

@@ -110,18 +110,6 @@ _CANONICAL: Final[OrderedDict[str, tuple[CapabilityCategory, str]]] = OrderedDic
         ),
         "purchase.cancel": (CapabilityCategory.PURCHASE, "Cancel a posted purchase."),
         "purchase.return": (CapabilityCategory.PURCHASE, "Process a purchase return."),
-        "purchase.return.finalize": (
-            CapabilityCategory.PURCHASE,
-            "Confirm courier handoff (finalize) on a posted purchase return. Irreversible.",
-        ),
-        "purchase.return.arrival": (
-            CapabilityCategory.PURCHASE,
-            "Record supplier arrival on a posted purchase return (starts the 5-day confirmation window).",
-        ),
-        "purchase.return.override": (
-            CapabilityCategory.PURCHASE,
-            "Owner-only: override an expired arrival-confirmation window on a posted purchase return.",
-        ),
         "purchase.refund": (CapabilityCategory.PURCHASE, "Disburse a supplier refund / repayment."),
         # Inventory
         "inventory.view": (CapabilityCategory.INVENTORY, "View inventory and stock movements."),

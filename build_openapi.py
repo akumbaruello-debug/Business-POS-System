@@ -1867,15 +1867,6 @@ def build_schemas():
             "reason": {"type": ["string", "null"]},
             "total_value_returned": {"type": "number", "exclusiveMinimum": 0},
             "lifecycle_status": {"type": "string", "enum": ["posted", "cancelled"]},
-            "finalized_at": {"type": ["string", "null"], "format": "date-time"},
-            "finalized_by": {"type": ["integer", "null"]},
-            "finalized_reason": {"type": ["string", "null"]},
-            "supplier_arrival_at": {"type": ["string", "null"], "format": "date-time"},
-            "supplier_arrival_by": {"type": ["integer", "null"]},
-            "overdue_override_at": {"type": ["string", "null"], "format": "date-time"},
-            "overdue_override_by": {"type": ["integer", "null"]},
-            "overdue_override_reason": {"type": ["string", "null"]},
-            "is_overdue": {"type": "boolean"},
             "lines": {
                 "type": "array",
                 "items": {"$ref": "#/components/schemas/PurchaseReturnLine"},
@@ -1910,24 +1901,6 @@ def build_schemas():
     s["PurchaseReturnCancelRequest"] = {
         "$ref": "#/components/schemas/SalesReturnCancelRequest"
     }
-    s["PurchaseReturnFinalizeRequest"] = {
-        "type": "object",
-        "properties": {
-            "reason": {"type": ["string", "null"], "maxLength": 1000},
-        },
-    }
-    s["PurchaseReturnArrivalRequest"] = {
-        "type": "object",
-        "properties": {
-            "note": {"type": ["string", "null"], "maxLength": 1000},
-        },
-    }
-    s["PurchaseReturnOverrideRequest"] = {
-        "type": "object",
-        "required": ["reason"],
-        "properties": {"reason": {"type": "string", "minLength": 1, "maxLength": 1000}},
-    }
-
     s["SupplierRepaymentRequest"] = {
         "type": "object",
         "required": ["purchase_id", "amount", "payment_method_id"],
@@ -4017,46 +3990,6 @@ def build_paths():
             if_match_required=True,
         )
     }
-    p["/purchase-returns/{id}/finalize"] = {
-        "post": post_op(
-            "finalizePurchaseReturn",
-            "Confirm courier handoff on a posted purchase return (finalized_at set). Irreversible; blocks cancellation.",
-            tags=["Purchase Returns"],
-            capability="purchase.return.finalize",
-            has_path_id=True,
-            request_schema="PurchaseReturnFinalizeRequest",
-            responses_200="PurchaseReturn",
-            idempotency_required=True,
-            if_match_optional=True,
-        )
-    }
-    p["/purchase-returns/{id}/arrival"] = {
-        "post": post_op(
-            "recordPurchaseReturnArrival",
-            "Record supplier arrival on a posted purchase return (server-authoritative timestamp; starts the 5-day confirmation window).",
-            tags=["Purchase Returns"],
-            capability="purchase.return.arrival",
-            has_path_id=True,
-            request_schema="PurchaseReturnArrivalRequest",
-            responses_200="PurchaseReturn",
-            idempotency_required=True,
-            if_match_optional=True,
-        )
-    }
-    p["/purchase-returns/{id}/override-expired-window"] = {
-        "post": post_op(
-            "overridePurchaseReturnExpiredWindow",
-            "Owner-only: override an expired supplier-arrival confirmation window.",
-            tags=["Purchase Returns"],
-            capability="purchase.return.override",
-            has_path_id=True,
-            request_schema="PurchaseReturnOverrideRequest",
-            responses_200="PurchaseReturn",
-            idempotency_required=True,
-            if_match_optional=True,
-        )
-    }
-
     # ===== Supplier repayments =====
     p["/supplier-repayments"] = {
         "get": collection_get_op(
@@ -4946,7 +4879,7 @@ def build_openapi():
 
 def main():
     doc = build_openapi()
-    out_path = "C:/Users/ratus/Desktop/ello/projects/Business-POS-System/openapi.yaml"
+    out_path = "openapi.yaml"
     with open(out_path, "w", encoding="utf-8") as f:
         yaml.dump(
             doc,

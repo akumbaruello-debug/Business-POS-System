@@ -61,9 +61,7 @@ _PURCHASE_PAYMENT_COLS = (
 
 _PURCHASE_RETURN_COLS = (
     "id, purchase_id, return_date, reason, total_value_returned, "
-    "lifecycle_status, finalized_at, finalized_by, finalized_reason, "
-    "supplier_arrival_at, supplier_arrival_by, "
-    "overdue_override_at, overdue_override_by, overdue_override_reason, "
+    "lifecycle_status, "
     "created_at, created_by, version"
 )
 
@@ -711,18 +709,11 @@ class PurchaseRepository:
         self,
         return_id: int,
     ) -> dict[str, Any] | None:
-        """Cancel a purchase return by flipping ``lifecycle_status`` to
-        ``'cancelled'``. ``finalized_at`` is NOT cleared — finalization is
-        a historical fact and cannot be reversed by cancellation. The
-        service layer gates cancellation by ``finalized_at IS NULL``
-        (and ``received_amount = 0`` on the linked SREC) before reaching
-        this method.
+        """Cancel a return after checking any linked supplier repayment.
 
         The ``trg_purchase_returns_bump_version`` trigger fires
         ``fn_bump_version_and_updated_at()``, which bumps ``version``
-        (and sets ``updated_at``) automatically — so we do not set it
-        manually here. No ``session_replication_role`` bypass is needed
-        (the trigger was fixed in commit ``25fa0af``).
+        (and sets ``updated_at``) automatically.
         """
         row = await self._uow.first_row(
             f"""
@@ -882,84 +873,6 @@ class PurchaseRepository:
             RETURNING {_SUPPLIER_REPAYMENT_COLS}
             """,
             {"inc": received_increment, "pm": payment_method_id, "id": repayment_id},
-        )
-
-    # ========================================================================
-    # finalize / arrival / override (finalized_at)
-    # ========================================================================
-
-    async def finalize_return(
-        self,
-        return_id: int,
-        *,
-        finalized_by: int,
-        reason: str | None = None,
-    ) -> dict[str, Any] | None:
-        """Courier handoff confirmed. Idempotent: a return already finalized
-        is a no-op replay (the service layer guards the 409 path)."""
-        return await self._uow.first_row(
-            f"""
-            UPDATE purchase_returns
-            SET finalized_at   = :now,
-                finalized_by   = :finalized_by,
-                finalized_reason = :reason,
-                version = version + 1
-            WHERE id = :id
-            RETURNING {_PURCHASE_RETURN_COLS}
-            """,
-            {
-                "id": return_id,
-                "now": datetime.now(UTC),
-                "finalized_by": finalized_by,
-                "reason": reason,
-            },
-        )
-
-    async def record_arrival(
-        self, return_id: int, *, arrived_by: int
-    ) -> dict[str, Any] | None:
-        """Supplier arrival recorded. Idempotent via the service-layer
-        idempotency key (re-record is a no-op replay)."""
-        return await self._uow.first_row(
-            f"""
-            UPDATE purchase_returns
-            SET supplier_arrival_at = :now,
-                supplier_arrival_by = :arrived_by,
-                version = version + 1
-            WHERE id = :id
-            RETURNING {_PURCHASE_RETURN_COLS}
-            """,
-            {
-                "id": return_id,
-                "now": datetime.now(UTC),
-                "arrived_by": arrived_by,
-            },
-        )
-
-    async def override_expired_window(
-        self,
-        return_id: int,
-        *,
-        overridden_by: int,
-        reason: str,
-    ) -> dict[str, Any] | None:
-        """Owner-only durable overdue-window bypass."""
-        return await self._uow.first_row(
-            f"""
-            UPDATE purchase_returns
-            SET overdue_override_at     = :now,
-                overdue_override_by     = :overridden_by,
-                overdue_override_reason = :reason,
-                version = version + 1
-            WHERE id = :id
-            RETURNING {_PURCHASE_RETURN_COLS}
-            """,
-            {
-                "id": return_id,
-                "now": datetime.now(UTC),
-                "overridden_by": overridden_by,
-                "reason": reason,
-            },
         )
 
     async def sum_active_returned_qty_for_purchase(
