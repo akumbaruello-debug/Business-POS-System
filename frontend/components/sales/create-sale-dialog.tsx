@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { ChevronDown } from 'lucide-react'
 import { api } from '@/lib/api-client'
 import type { Contact } from '@/lib/contact-types'
 import type { Product } from '@/lib/product-types'
@@ -108,41 +109,45 @@ export function CreateSaleDialog({
       <div className="sales-dialog-body">
         <label className="sales-field">
           <span className="sales-field-label">Customer (optional)</span>
-          <select
-            className="sales-select"
-            value={customerId}
-            onChange={(e) => setCustomerId(e.target.value)}
-            disabled={busy}
-          >
-            <option value="">Walk-in customer</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+          <div className="sales-select">
+            <select
+              value={customerId}
+              onChange={(e) => setCustomerId(e.target.value)}
+              disabled={busy}
+            >
+              <option value="">Walk-in customer</option>
+              {customers.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={14} />
+          </div>
         </label>
         <label className="sales-field">
           <span className="sales-field-label">Product</span>
-          <select
-            className="sales-select"
-            value={productId}
-            onChange={(e) => {
-              setProductId(e.target.value)
-              const p = products.find((x) => String(x.id) === e.target.value)
-              if (p && unitPrice === '') setUnitPrice(String(p.selling_price))
-            }}
-            disabled={busy}
-          >
-            <option value="">Select…</option>
-            {products
-              .filter((p) => p.is_sellable && p.is_active)
-              .map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-          </select>
+          <div className="sales-select">
+            <select
+              value={productId}
+              onChange={(e) => {
+                setProductId(e.target.value)
+                const p = products.find((x) => String(x.id) === e.target.value)
+                if (p && unitPrice === '') setUnitPrice(String(p.selling_price))
+              }}
+              disabled={busy}
+            >
+              <option value="">Select…</option>
+              {products
+                .filter((p) => p.is_sellable && p.is_active)
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+            </select>
+            <ChevronDown size={14} />
+          </div>
         </label>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <label className="sales-field">
