@@ -1846,9 +1846,9 @@ BEGIN
         IF NOT (
             (OLD.lifecycle_status = 'draft' AND NEW.lifecycle_status IN ('posted','cancelled'))
          OR (OLD.lifecycle_status = 'posted' AND NEW.lifecycle_status IN ('completed','partially_returned','returned','cancelled'))
-         OR (OLD.lifecycle_status = 'partially_returned' AND NEW.lifecycle_status IN ('returned','cancelled','posted'))
-         OR (OLD.lifecycle_status = 'returned' AND NEW.lifecycle_status = 'cancelled')
-         OR (OLD.lifecycle_status = 'completed' AND NEW.lifecycle_status IN ('partially_returned','cancelled'))
+         OR (OLD.lifecycle_status = 'partially_returned' AND NEW.lifecycle_status IN ('returned','cancelled','posted','completed'))
+         OR (OLD.lifecycle_status = 'returned' AND NEW.lifecycle_status IN ('cancelled','partially_returned','completed','posted'))
+         OR (OLD.lifecycle_status = 'completed' AND NEW.lifecycle_status IN ('partially_returned','cancelled','posted'))
         ) THEN
             RAISE EXCEPTION
                 'purchase %: invalid lifecycle transition % -> %',
@@ -1877,14 +1877,10 @@ DECLARE
     v_returned    NUMERIC(15,2);
     v_allocated   NUMERIC(15,2);
 BEGIN
-    -- The purchases.total_amount is not stored; it is derived from
-    -- purchase_lines.line_total + purchase_shipping.amount. We compute
-    -- it here.
-    SELECT
-        COALESCE((SELECT SUM(line_total) FROM purchase_lines WHERE purchase_id = NEW.purchase_id), 0)
-        + COALESCE((SELECT amount FROM purchase_shipping WHERE purchase_id = NEW.purchase_id), 0)
-      INTO v_total;
-    IF v_total IS NULL THEN v_total := 0; END IF;
+    -- line_total already includes allocated shipping; mirror the service's
+    -- derived purchase total without adding shipping a second time.
+    SELECT COALESCE(SUM(line_total), 0) INTO v_total
+    FROM purchase_lines WHERE purchase_id = NEW.purchase_id;
 
     SELECT COALESCE(SUM(total_value_returned), 0) INTO v_returned
     FROM purchase_returns
