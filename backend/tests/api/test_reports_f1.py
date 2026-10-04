@@ -687,7 +687,12 @@ class TestPurchasesReport:
         r = await app.get(
             "/api/v1/reports/purchases",
             headers=h,
-            params={"page": 1, "per_page": 2},
+            params={
+                "page": 1,
+                "per_page": 2,
+                "from": "2026-09-01T00:00:00+00:00",
+                "to": "2026-09-30T23:59:59.999999+00:00",
+            },
         )
         assert r.status_code == 200
         body = r.json()
@@ -732,7 +737,11 @@ class TestPurchasesReport:
         r = await app.get(
             "/api/v1/reports/purchases",
             headers=h,
-            params={"sort": "-purchase_date"},
+            params={
+                "sort": "-purchase_date",
+                "from": "2026-09-01T00:00:00+00:00",
+                "to": "2026-09-30T23:59:59.999999+00:00",
+            },
         )
         body = r.json()
         assert body["data"][0]["id"] == 2
@@ -746,7 +755,14 @@ class TestPurchasesReport:
         now = datetime(2026, 9, 2, 10, 0, 0, tzinfo=timezone.utc)
         await _insert_purchase(1, purchase_date=now, cancelled=True)
         await _insert_purchase(2, purchase_date=now)
-        r = await app.get("/api/v1/reports/purchases", headers=h)
+        r = await app.get(
+            "/api/v1/reports/purchases",
+            headers=h,
+            params={
+                "from": "2026-09-01T00:00:00+00:00",
+                "to": "2026-09-30T23:59:59.999999+00:00",
+            },
+        )
         body = r.json()
         assert body["pagination"]["total"] == 1
         assert body["data"][0]["id"] == 2
@@ -944,7 +960,12 @@ class TestInventoryMovementsReport:
         r = await app.get(
             "/api/v1/reports/inventory-movements",
             headers=h,
-            params={"page": 1, "per_page": 10},
+            params={
+                "page": 1,
+                "per_page": 10,
+                "from": "2026-09-01T00:00:00+00:00",
+                "to": "2026-09-30T23:59:59.999999+00:00",
+            },
         )
         body = r.json()
         assert body["pagination"]["total"] == 25
@@ -964,7 +985,11 @@ class TestInventoryMovementsReport:
         r = await app.get(
             "/api/v1/reports/inventory-movements",
             headers=h,
-            params={"sort": "-movement_date"},
+            params={
+                "sort": "-movement_date",
+                "from": "2026-09-01T00:00:00+00:00",
+                "to": "2026-09-30T23:59:59.999999+00:00",
+            },
         )
         body = r.json()
         assert body["data"][0]["movement_date"] > body["data"][1]["movement_date"]
@@ -982,7 +1007,11 @@ class TestInventoryMovementsReport:
         r = await app.get(
             "/api/v1/reports/inventory-movements",
             headers=h,
-            params={"filter[product_id]": 961},
+            params={
+                "filter[product_id]": 961,
+                "from": "2026-09-01T00:00:00+00:00",
+                "to": "2026-09-30T23:59:59.999999+00:00",
+            },
         )
         body = r.json()
         assert body["pagination"]["total"] == 1
