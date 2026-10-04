@@ -91,16 +91,16 @@ export default function RoleDetailPageClient({ params }: { params: Promise<{ id:
   if (!role) return <div className="page"><div className="notice error">{formError || t('roles.notFound')}</div></div>
 
   return (
-    <div className="page detail-page">
+    <div className="page detail-page role-detail-page admin-form-page">
       <button className="btn btn-ghost back-link" onClick={() => router.push('/roles')}>
         <ArrowLeft size={16} /> {t('common.back')}
       </button>
 
-      <div className="page-header">
+      <div className="page-header compact">
         <div>
           <div className="eyebrow">{t('roles.eyebrow')}</div>
           <h1 className="page-title">{role.name}</h1>
-          <div className="subtitle">
+          <div className={`role-status ${role.is_system ? 'system' : 'custom'}`}>
             {role.is_system ? (
               <><Lock size={14} /> {t('roles.systemRoleReadOnly')}</>
             ) : t('roles.custom')}
@@ -110,10 +110,17 @@ export default function RoleDetailPageClient({ params }: { params: Promise<{ id:
 
       {formError && <div className="notice error">{formError}</div>}
 
-      <form className="card form-card" onSubmit={handleSave}>
-        <div className="form-section">
-          <h3><Shield size={18} /> {t('roles.roleInfo')}</h3>
-          <div className="form-grid">
+      <form className="admin-form-card role-info-card" onSubmit={handleSave}>
+        <section className="admin-form-section">
+          <div className="admin-form-section-heading">
+            <span className="admin-form-icon"><Shield size={18} /></span>
+            <div>
+              <h3>{t('roles.roleInfo')}</h3>
+              <p>{t('roles.roleDetailInfoHelp')}</p>
+            </div>
+            {role.is_system && <span className="role-lock-note"><Lock size={13} /> {t('roles.system')}</span>}
+          </div>
+          <div className="form-grid role-info-fields">
             <div className="field">
               <label>{t('roles.name')}</label>
               <input value={name} disabled={role.is_system || !canEdit} onChange={(e) => setName(e.target.value)} />
@@ -123,10 +130,10 @@ export default function RoleDetailPageClient({ params }: { params: Promise<{ id:
               <textarea value={description} disabled={role.is_system || !canEdit} onChange={(e) => setDescription(e.target.value)} />
             </div>
           </div>
-        </div>
+        </section>
 
         {!role.is_system && canEdit && (
-          <div className="form-actions">
+          <div className="admin-form-actions">
             <button type="submit" className="btn btn-primary" disabled={saving}>
               <Save size={16} /> {saving ? t('common.saving') : t('common.save')}
             </button>
@@ -134,9 +141,16 @@ export default function RoleDetailPageClient({ params }: { params: Promise<{ id:
         )}
       </form>
 
-      <div className="card form-card">
-        <div className="form-section">
-          <h3><Shield size={18} /> {t('roles.capabilities')}</h3>
+      <section className="admin-form-card role-capabilities-card">
+        <div className="admin-form-section capability-form-section">
+          <div className="admin-form-section-heading capability-form-heading">
+            <span className="admin-form-icon"><Shield size={18} /></span>
+            <div>
+              <h3>{t('roles.capabilities')}</h3>
+              <p>{t('roles.roleDetailCapabilitiesHelp')}</p>
+            </div>
+            <span className="role-capability-count">{capabilities.length} {t('roles.selectedCount')}</span>
+          </div>
           {role.is_system && (
             <div className="notice warning">
               <AlertTriangle size={16} /> {t('roles.systemRoleCapabilitiesReadOnly')}
@@ -150,13 +164,13 @@ export default function RoleDetailPageClient({ params }: { params: Promise<{ id:
           />
         </div>
         {!role.is_system && canEditCaps && (
-          <div className="form-actions">
+          <div className="admin-form-actions">
             <button className="btn btn-primary" onClick={handleCapabilitiesSave} disabled={saving}>
               <Save size={16} /> {saving ? t('common.saving') : t('roles.saveCapabilities')}
             </button>
           </div>
         )}
-      </div>
+      </section>
     </div>
   )
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowLeft, RefreshCw, AlertCircle, X } from 'lucide-react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
@@ -46,8 +46,10 @@ export default function ManualEntryDetailPage() {
   // Cancel dialog state
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  const requestVersion = useRef(0)
 
   const fetchEntry = useCallback(async () => {
+    const version = ++requestVersion.current
     if (!Number.isFinite(entryId) || entryId <= 0) {
       setNotFound(true)
       setLoading(false)
@@ -63,10 +65,12 @@ export default function ManualEntryDetailPage() {
     setNotFound(false)
     try {
       const res = await api.headers.get<ManualEntry>(`/manual-entries/${entryId}`)
+      if (version !== requestVersion.current) return
       setEntry(res.data)
       const headerEtag = sanitizeEtag(res.headers.get('etag'))
       setEtag(headerEtag)
     } catch (err) {
+      if (version !== requestVersion.current) return
       const msg = err instanceof Error ? err.message : t('manualEntries.failedToLoad')
       const code = (err as Error & { code?: string }).code
       if (code === 'not_found' || /not found|404/i.test(msg)) {
@@ -76,7 +80,7 @@ export default function ManualEntryDetailPage() {
         setError(msg)
       }
     } finally {
-      setLoading(false)
+      if (version === requestVersion.current) setLoading(false)
     }
   }, [entryId, canView, t])
 

@@ -351,9 +351,9 @@ export default function ManualEntriesPage() {
           </div>
         </label>
 
-        <label className="filter-field" style={{ flex: 1 }}>
+        <label className="filter-field manual-entry-search-field">
           <span className="filter-label">{t('manualEntries.filter.search')}</span>
-          <div className="search-box">
+          <div className="manual-entry-search">
             <Search size={15} />
             <input
               value={queryInput}

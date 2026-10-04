@@ -1,7 +1,7 @@
 'use client'
 
 import { ChevronDown, LogOut, Menu } from 'lucide-react'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { logout } from '@/lib/auth'
 import { useSession, initialsFor } from '@/lib/session'
 import { useLanguage } from '@/lib/i18n'
@@ -20,9 +20,14 @@ export function Header({
   setAccountOpen: (value: boolean) => void
 }) {
   const router = useRouter()
+  const pathname = usePathname()
   const user = useSession()
   const initials = initialsFor(user)
   const { t } = useLanguage()
+  const breadcrumb = (pathname || '/dashboard')
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => segment.replace(/-/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()))
 
   const handleSignOut = () => {
     logout()
@@ -37,8 +42,12 @@ export function Header({
         </button>
         <div className="breadcrumb">
           <span>{t('header.workspace')}</span>
-          <ChevronDown size={14} />
-          <strong>{t('nav.dashboard')}</strong>
+          {breadcrumb.map((label, index) => (
+            <span className="breadcrumb-part" key={`${label}-${index}`}>
+              <ChevronDown size={14} />
+              {index === breadcrumb.length - 1 ? <strong>{label}</strong> : <span>{label}</span>}
+            </span>
+          ))}
         </div>
       </div>
 
@@ -62,7 +71,7 @@ export function Header({
                 <span className="top-avatar">{initials}</span>
                 <span>
                   <strong>{user.full_name || user.username}</strong>
-                  <small>{user.email || user.username}</small>
+                  <small>{user.email || `@${user.username}`}</small>
                 </span>
               </div>
               <hr />

@@ -252,7 +252,7 @@ export default function InventoryPage() {
             <span className="metric-icon"><CircleDollarSign size={18} /></span>
           </div>
           <div className="metric-value">{loading ? '—' : formatIDR(stockValue)}</div>
-          <div className="metric-change positive"><span className="change-note">{t('inventory.onThisPage')}</span></div>
+          <div className="metric-change positive"><span className="change-note">{t('inventory.currentFilteredInventory')}</span></div>
         </article>
       </section>
 
@@ -312,13 +312,13 @@ export default function InventoryPage() {
           <>
             {/* Desktop table */}
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', minWidth: 960, textAlign: 'left', fontSize: 13, borderCollapse: 'collapse' }}>
+              <table style={{ width: '100%', minWidth: 900, textAlign: 'left', fontSize: 13, borderCollapse: 'collapse' }}>
                 <thead style={{ background: '#f8fafc', color: '#718198', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                   <tr>
                     <th style={{ width: 44, padding: '10px 14px' }}>
                       <input type="checkbox" aria-label="Select all stock items" checked={filteredRows.length > 0 && filteredRows.every((r) => selected.has(r.product_id))} onChange={toggleAll} />
                     </th>
-                    {([['product_id', t('inventory.productId')], ['product_name', t('common.name')], ['product_code', t('common.code')], ['on_hand_quantity', t('common.stock')], ['moving_average_unit_cost', t('inventory.avgUnitCost')], ['inventory_value', t('common.inventoryValue')], ['low_stock', t('common.status')]] as const).map(([key, label]) => (
+                    {([['product_id', t('inventory.product')], ['on_hand_quantity', t('common.stock')], ['moving_average_unit_cost', t('inventory.avgUnitCost')], ['inventory_value', t('common.inventoryValue')], ['low_stock', t('common.status')]] as const).map(([key, label]) => (
                       <th key={key} style={{ padding: '10px 14px' }}>
                         <button onClick={() => handleSort(key)} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 600, background: 'none', border: 0, cursor: 'pointer', color: sortKey === key ? 'var(--primary)' : 'inherit' }}>
                           {label}<ChevronsUpDown size={12} />
@@ -339,8 +339,8 @@ export default function InventoryPage() {
                         </td>
                         <td style={{ padding: '12px 14px' }}>
                           <div style={{ fontWeight: 600 }}>{r.product_name || t('inventory.productNumber', { id: r.product_id })}</div>
-                          <div style={{ fontSize: 11, color: '#718198', marginTop: 2 }}>
-                            {r.product_code ? `${r.product_code} · ` : ''}#{r.product_id} · {r.on_hand_quantity <= 0 ? t('status.outOfStock') : r.low_stock ? t('inventory.belowReorderPoint') : t('inventory.healthyLevel')}
+                          <div style={{ fontSize: 11, color: '#718198', marginTop: 3 }}>
+                            {r.product_code ? `${r.product_code} · ` : ''}{t('inventory.productNumber', { id: r.product_id })}
                           </div>
                         </td>
                         <td style={{ padding: '12px 14px', fontWeight: 600 }}>{Number(r.on_hand_quantity).toLocaleString('id-ID')}</td>
@@ -356,7 +356,8 @@ export default function InventoryPage() {
                           </span>
                         </td>
                         <td style={{ padding: '12px 14px' }}>{fmtDate(r.as_of)}</td>
-                        <td style={{ padding: '12px 14px', textAlign: 'right', display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                        <td style={{ padding: '12px 14px', textAlign: 'right' }}>
+                          <div style={{ display: 'inline-flex', gap: 4, justifyContent: 'flex-end' }}>
                           <Button variant="ghost" size="sm" onClick={() => { setHistoryRow(r); setHistoryOpen(true) }} aria-label={`History ${r.product_name || r.product_id}`}>
                             <ClipboardList size={13} />
                           </Button>
@@ -365,6 +366,7 @@ export default function InventoryPage() {
                               <Settings2 size={13} />
                             </Button>
                           )}
+                          </div>
                         </td>
                       </tr>
                     )

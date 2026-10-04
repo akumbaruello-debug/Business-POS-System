@@ -88,10 +88,10 @@ export function CancelEntryDialog({
   const amountStr = new Intl.NumberFormat('id-ID').format(entry.amount)
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-card border border-border rounded-lg shadow-xl w-full max-w-md mx-4">
-        <div className="flex items-center justify-between p-4 border-b border-border">
-          <h2 className="text-lg font-semibold">{t('manualEntries.cancelTitle')}</h2>
+    <div className="manual-entry-cancel-overlay">
+      <div className="manual-entry-cancel-dialog">
+        <div className="manual-entry-cancel-header">
+          <h2 className="text-lg font-semibold">{t('manualEntries.cancelTitle', { id: entry.id })}</h2>
           <button
             onClick={onClose}
             className="p-1 rounded hover:bg-muted text-muted-foreground"
@@ -100,8 +100,8 @@ export function CancelEntryDialog({
           </button>
         </div>
 
-        <div className="p-4 border-b border-border">
-          <div className="text-sm space-y-1">
+        <div className="manual-entry-cancel-summary">
+          <div>
             <div>
               <span className="text-muted-foreground">{t('manualEntries.entryType')}:</span>{' '}
               {entry.entry_type}
@@ -121,48 +121,48 @@ export function CancelEntryDialog({
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-4 space-y-4">
+        <form onSubmit={handleSubmit} className="manual-entry-cancel-form">
           {error && (
-            <div className="p-3 text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded">
+            <div className="manual-entry-cancel-error">
               {error}
             </div>
           )}
 
-          <div className="flex items-start gap-3 p-3 text-sm text-muted-foreground bg-muted/30 border border-border rounded">
-            <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+          <div className="manual-entry-cancel-warning">
+            <AlertTriangle size={17} />
             <span>{t('manualEntries.cancelWarning')}</span>
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">{t('manualEntries.cancelReason')}</label>
+            <label>{t('manualEntries.cancelReason')}</label>
             <textarea
               value={reason}
               onChange={(e) => setReason(e.target.value.slice(0, 1000))}
               disabled={isSubmitting}
               maxLength={1000}
               rows={3}
-              className="w-full px-3 py-2 border rounded bg-background resize-y"
+              className="manual-entry-cancel-reason"
               placeholder={t('manualEntries.cancelReasonPlaceholder')}
               required
             />
-            <div className="text-xs text-muted-foreground mt-1">
+            <div className="manual-entry-cancel-count">
               {reason.length}/1000
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="manual-entry-cancel-actions">
             <button
               type="button"
               onClick={onClose}
               disabled={isSubmitting}
-              className="px-4 py-2 text-sm border rounded hover:bg-muted"
+              className="btn btn-ghost"
             >
               {t('manualEntries.cancel')}
             </button>
             <button
               type="submit"
               disabled={isSubmitting || !reason.trim()}
-              className="px-4 py-2 text-sm bg-destructive text-destructive-foreground rounded hover:bg-destructive/90 disabled:opacity-50"
+              className="btn btn-danger"
             >
               {isSubmitting ? t('manualEntries.cancelling') : t('manualEntries.confirmCancel')}
             </button>

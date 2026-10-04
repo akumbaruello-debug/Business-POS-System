@@ -61,7 +61,7 @@ export default function NewRolePageClient() {
   }
 
   return (
-    <div className="page form-page">
+    <div className="page form-page admin-form-page role-create-page">
       <button className="btn btn-ghost back-link" onClick={() => router.push('/roles')}>
         <ArrowLeft size={16} /> {t('common.back')}
       </button>
@@ -70,34 +70,48 @@ export default function NewRolePageClient() {
         <div>
           <div className="eyebrow">{t('roles.eyebrow')}</div>
           <h1 className="page-title">{t('roles.addRole')}</h1>
+          <p className="page-subtitle">{t('roles.createSubtitle')}</p>
         </div>
       </div>
 
       {formError && <div className="notice error">{formError}</div>}
 
-      <form className="card form-card" onSubmit={handleSubmit}>
-        <div className="form-section">
-          <h3><ShieldPlus size={18} /> {t('roles.roleInfo')}</h3>
+      <form className="card form-card admin-form-card" onSubmit={handleSubmit}>
+        <div className="form-section admin-form-section">
+          <div className="admin-form-section-heading">
+            <span className="admin-form-icon"><ShieldPlus size={18} /></span>
+            <div>
+              <h3>{t('roles.roleInfo')}</h3>
+              <p>{t('roles.createIntro')}</p>
+            </div>
+            <span className="required-note">{t('users.requiredFields')}</span>
+          </div>
           <div className="form-grid">
             <div className="field">
-              <label>{t('roles.name')} *</label>
-              <input value={form.name} onChange={(e) => update('name', e.target.value)} />
+              <label htmlFor="new-role-name">{t('roles.name')} <span>*</span></label>
+              <input id="new-role-name" required aria-invalid={!!errors.name} value={form.name} onChange={(e) => update('name', e.target.value)} />
               {errors.name && <span className="field-error">{errors.name}</span>}
             </div>
             <div className="field full">
-              <label>{t('roles.description')}</label>
-              <textarea value={form.description || ''} onChange={(e) => update('description', e.target.value)} />
+              <label htmlFor="new-role-description">{t('roles.description')} <span className="optional-label">{t('users.optional')}</span></label>
+              <textarea id="new-role-description" rows={3} value={form.description || ''} onChange={(e) => update('description', e.target.value)} />
             </div>
           </div>
         </div>
 
-        <div className="form-section">
-          <h3><ShieldPlus size={18} /> {t('roles.capabilities')}</h3>
-          <p className="muted small">{t('roles.createCapabilitiesHelp')}</p>
+        <div className="form-section admin-form-section capability-form-section">
+          <div className="admin-form-section-heading capability-form-heading">
+            <span className="admin-form-icon"><ShieldPlus size={18} /></span>
+            <div>
+              <h3>{t('roles.capabilities')}</h3>
+              <p>{t('roles.createCapabilitiesHelp')}</p>
+            </div>
+            <span className="optional-badge">{capabilities.length} {t('roles.selectedCount')}</span>
+          </div>
           <CapabilityPicker selected={capabilities} onChange={setCapabilities} />
         </div>
 
-        <div className="form-actions">
+        <div className="form-actions admin-form-actions">
           <button type="button" className="btn btn-ghost" onClick={() => router.push('/roles')} disabled={saving}>
             {t('common.cancel')}
           </button>

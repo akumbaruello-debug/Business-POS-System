@@ -8,6 +8,7 @@ import type {
   DashboardResponse,
   InventoryReportResponse,
 } from '@/lib/dashboard-types'
+import type { SalesReportResponse } from '@/lib/report-types'
 import { COMPARE_OPTIONS, PERIOD_OPTIONS } from '@/lib/dashboard-types'
 import { formatIDR, formatInt, formatPct } from '@/lib/format'
 import { initialsFor, useSession } from '@/lib/session'
@@ -16,7 +17,6 @@ import {
   ArrowUpRight,
   Banknote,
   BarChart3,
-  BarChartHorizontal,
   Boxes,
   CircleDollarSign,
   History,
@@ -63,6 +63,43 @@ function fmtLongDate(d: Date): string {
 function fmtAsOf(iso: string): string {
   const d = new Date(iso)
   return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+function currentMonthWindow(now = new Date()): { from: string; to: string } {
+  const start = new Date(now.getFullYear(), now.getMonth(), 1)
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 1)
+  return {
+    from: start.toISOString(),
+    to: new Date(end.getTime() - 1).toISOString(),
+  }
+}
+
+function localDayKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+function completeTrendWindow(data: TrendPoint[], from: Date, to: Date): TrendPoint[] {
+  const byDay = new Map<string, TrendPoint>(
+    data
+      .filter((point) => point.period_start != null)
+      .map((point) => [localDayKey(new Date(point.period_start!)), point]),
+  )
+  const start = new Date(from.getFullYear(), from.getMonth(), from.getDate())
+  const end = new Date(to.getFullYear(), to.getMonth(), to.getDate())
+  const days = Math.max(0, Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1)
+  return Array.from({ length: days }, (_, index) => {
+    const day = new Date(start.getFullYear(), start.getMonth(), start.getDate() + index)
+    const key = localDayKey(day)
+    return byDay.get(key) ?? { period_start: day.toISOString(), revenue: 0, sales_count: 0 }
+  })
+}
+
+function completeCurrentMonthTrend(data: TrendPoint[], now = new Date()): TrendPoint[] {
+  return completeTrendWindow(
+    data,
+    new Date(now.getFullYear(), now.getMonth(), 1),
+    new Date(now.getFullYear(), now.getMonth() + 1, 0),
+  )
 }
 
 // -----------------------------------------------------------------------
@@ -163,11 +200,16 @@ interface TrendPoint {
 // inside the SVG, bottom keeps X labels + tooltip room.
 const CHART_PAD = { top: 12, right: 16, bottom: 26, left: 74 }
 
-function SalesTrendChart({ data, loading }: { data: TrendPoint[]; loading: boolean }) {
+function SalesTrendChart({ data, comparisonData = null, loading }: {
+  data: TrendPoint[]
+  comparisonData?: TrendPoint[] | null
+  loading: boolean
+}) {
   const { t } = useLanguage()
   const containerRef = useRef<HTMLDivElement>(null)
   const [dims, setDims] = useState<{ width: number; height: number }>({ width: 0, height: 0 })
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+  const [hoveredSeries, setHoveredSeries] = useState<'current' | 'previous'>('current')
 
   // Measure the actual container size via ResizeObserver — responds to sidebar open/close
   useLayoutEffect(() => {
@@ -222,8 +264,9 @@ function SalesTrendChart({ data, loading }: { data: TrendPoint[]; loading: boole
     )
   }
 
-  const { pathD, points, yScale, tickVals, labelFn } = computeChartGeometry({
+  const { pathD, points, yScale, tickVals, labelFn, plotBottom, barWidth } = computeChartGeometry({
     data,
+    comparisonData: comparisonData ?? undefined,
     plotW,
     plotH,
     pad: CHART_PAD,
@@ -238,9 +281,15 @@ function SalesTrendChart({ data, loading }: { data: TrendPoint[]; loading: boole
     hoveredIdx !== null && hoveredIdx >= 0 && hoveredIdx < points.length
       ? points[hoveredIdx]
       : null
-  const hoverRevenue = hovered?.revenue ?? 0
-  const hoverLabel = hovered?.label ?? null
-  const hoverSalesCount = hovered?.salesCount
+  const hoverRevenue = comparisonData && hoveredSeries === 'previous'
+    ? comparisonData[hoveredIdx ?? -1]?.revenue ?? 0
+    : hovered?.revenue ?? 0
+  const hoverLabel = hovered?.label
+    ? `${hovered.label}${comparisonData ? ` · ${hoveredSeries === 'current' ? t('dashboard.currentPeriod') : t('dashboard.vsPrevPeriod')}` : ''}`
+    : null
+  const hoverSalesCount = comparisonData && hoveredSeries === 'previous'
+    ? comparisonData[hoveredIdx ?? -1]?.sales_count as number | undefined
+    : hovered?.salesCount
 
   return (
     <div className="line-chart" ref={containerRef}>
@@ -253,7 +302,6 @@ function SalesTrendChart({ data, loading }: { data: TrendPoint[]; loading: boole
         {/* horizontal gridlines */}
         {tickVals.map((val, i) => {
           const y = yScale(val)
-          const skipZero = i === 0 && tickVals.length > 1
           return (
             <g key={i}>
               <line
@@ -263,16 +311,14 @@ function SalesTrendChart({ data, loading }: { data: TrendPoint[]; loading: boole
                 x2={svgWidth - CHART_PAD.right}
                 y2={y}
               />
-              {!skipZero && (
-                <text
+              <text
                   className="line-chart-axis-text"
                   x={CHART_PAD.left - 8}
                   y={y + 3}
                   textAnchor="end"
                 >
                   {labelFn(val)}
-                </text>
-              )}
+              </text>
             </g>
           )
         })}
@@ -303,11 +349,40 @@ function SalesTrendChart({ data, loading }: { data: TrendPoint[]; loading: boole
             )
         )}
 
-        {/* the line */}
-        <path className="line-chart-line" d={pathD} />
+        {comparisonData ? (
+          <g className="line-chart-comparison-bars">
+            {points.map((point, i) => {
+              const currentWidth = Math.max(2, barWidth * 0.42)
+              const previousWidth = currentWidth
+              const previousValue = comparisonData[i]?.revenue ?? 0
+              const currentX = point.x - barWidth / 2
+              const previousX = point.x + barWidth / 2 - previousWidth
+              return (
+                <g key={i}>
+                  <rect className="line-chart-bar-current" x={currentX} y={point.y} width={currentWidth} height={Math.max(0, plotBottom - point.y)} rx={2} onMouseEnter={() => { setHoveredIdx(i); setHoveredSeries('current') }} onMouseLeave={() => setHoveredIdx(null)} />
+                  <rect className="line-chart-bar-previous" x={previousX} y={yScale(previousValue)} width={previousWidth} height={Math.max(0, plotBottom - yScale(previousValue))} rx={2} onMouseEnter={() => { setHoveredIdx(i); setHoveredSeries('previous') }} onMouseLeave={() => setHoveredIdx(null)} />
+                </g>
+              )
+            })}
+            {hovered && hoveredIdx !== null && (
+              <SvgTooltip cx={hovered.x} cy={hoveredSeries === 'previous' ? yScale(hoverRevenue) : hovered.y} svgWidth={svgWidth} svgHeight={svgHeight} label={hoverLabel} revenue={hoverRevenue} salesCount={hoverSalesCount} />
+            )}
+          </g>
+        ) : (
+          <>
+            <defs>
+              <linearGradient id="sales-area-fill" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stopColor="var(--primary)" stopOpacity="0.28" />
+                <stop offset="100%" stopColor="var(--primary)" stopOpacity="0.02" />
+              </linearGradient>
+            </defs>
+            <path className="line-chart-area" d={`${pathD} L ${points[points.length - 1].x} ${plotBottom} L ${points[0].x} ${plotBottom} Z`} />
+            <path className="line-chart-line" d={pathD} />
+          </>
+        )}
 
         {/* data points + hover markers */}
-        {points.map((p, i) => {
+        {!comparisonData && points.map((p, i) => {
           const isHovered = hoveredIdx === i
           return (
             <g key={i}>
@@ -315,7 +390,7 @@ function SalesTrendChart({ data, loading }: { data: TrendPoint[]; loading: boole
                 className={`line-chart-dot${isHovered ? ' hovered' : ''}`}
                 cx={p.x}
                 cy={p.y}
-                r={isHovered ? 5 : 4}
+                r={isHovered ? 5 : points.length > 14 ? 2.5 : 4}
                 onMouseEnter={() => setHoveredIdx(i)}
                 onMouseLeave={() => setHoveredIdx(null)}
               />
@@ -419,12 +494,14 @@ function SvgTooltip({
  */
 function computeChartGeometry({
   data,
+  comparisonData,
   plotW,
   plotH,
   pad,
   tension = 0.3,
 }: {
   data: TrendPoint[]
+  comparisonData?: TrendPoint[]
   plotW: number
   plotH: number
   pad: { top: number; right: number; bottom: number; left: number }
@@ -467,8 +544,11 @@ function computeChartGeometry({
     p.showLabel = (n - 1 - i) % labelStep === 0
   })
 
-  const revenues = points.map((p) => p.revenue)
-  const maxRev = Math.max(...revenues, 1)
+  const revenues = [
+    ...points.map((p) => p.revenue),
+    ...(comparisonData ?? []).map((p) => p.revenue ?? 0),
+  ]
+  const maxRev = Math.max(...revenues, 1) * 1.15
 
   // Y-scale: map [0, maxRev] → [plotH+pad.top, pad.top] (inverted)
   const yScale = (v: number) => pad.top + plotH - (plotH * v) / maxRev
@@ -482,6 +562,8 @@ function computeChartGeometry({
   const tickVals = Array.from({ length: ticks + 1 }, (_, i) => Math.round(step * i))
 
   const labelFn = (v: number) => formatIDR(v)
+  const plotBottom = pad.top + plotH
+  const barWidth = Math.min(18, Math.max(4, xStep * 0.8))
 
   // Barely-curved connection: cubic segment per pair with tension t.
   // cp1 keeps y0 (horizontal out of the start), cp2 keeps y1 (horizontal into
@@ -506,72 +588,64 @@ function computeChartGeometry({
     }
   }
 
-  return { pathD, points, yScale, tickVals, labelFn }
+  return { pathD, points, yScale, tickVals, labelFn, plotBottom, barWidth }
 }
 
 // -----------------------------------------------------------------------
-// DataTable — best sellers / expense breakdown
+// Donut breakdowns — category share with exact values and percentages.
 // -----------------------------------------------------------------------
 
-interface TableRow {
+interface BreakdownRow {
   name: string
   value: number
 }
 
-function DataTable({
+const BREAKDOWN_COLORS = ['#1769e0', '#10a879', '#f59e0b', '#8b5cf6', '#ef5b52', '#0891b2', '#84a20b', '#db2777', '#64748b', '#a16207']
+
+function DonutBreakdown({
   data,
   loading,
-  unit,
+  emptyMessage,
+  centerLabel,
 }: {
-  data: TableRow[]
+  data: BreakdownRow[]
   loading: boolean
-  unit?: string
+  emptyMessage: string
+  centerLabel?: string
 }) {
   const { t } = useLanguage()
+  const rows = data.filter((row) => Number.isFinite(row.value) && row.value > 0)
+  const total = rows.reduce((sum, row) => sum + row.value, 0)
+
   if (loading) {
-    return (
-      <div className="data-table">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="data-table-row-skeleton">
-            <div className="skeleton skeleton-cell" />
-            <div className="skeleton skeleton-cell short" />
+    return <div className="donut-loading"><div className="skeleton skeleton-donut" /><div className="donut-loading-legend">{[0, 1, 2, 3].map((i) => <div className="skeleton" key={i} />)}</div></div>
+  }
+  if (rows.length === 0 || total <= 0) {
+    return <div className="donut-empty"><div className="donut-empty-icon"><BarChart3 size={20} /></div><strong>{t('dashboard.noDataYet')}</strong><p>{emptyMessage}</p></div>
+  }
+
+  let running = 0
+  const stops = rows.map((row, index) => {
+    const start = running
+    running += (row.value / total) * 100
+    return `${BREAKDOWN_COLORS[index % BREAKDOWN_COLORS.length]} ${start}% ${running}%`
+  })
+
+  return (
+    <div className="donut-breakdown">
+      <div className="donut-plot" role="img" aria-label={rows.map((row) => `${row.name}: ${(row.value / total * 100).toFixed(1)}%, ${formatIDR(row.value)}`).join('; ')} style={{ background: `conic-gradient(${stops.join(', ')})` }}>
+        <div className="donut-hole"><strong>{formatIDR(total)}</strong><span>{centerLabel ?? t('dashboard.periodTotal')}</span></div>
+      </div>
+      <div className="donut-legend">
+        {rows.map((row, index) => (
+          <div className="donut-legend-row" key={`${row.name}-${index}`} title={`${row.name}: ${formatIDR(row.value)} (${(row.value / total * 100).toFixed(1)}%)`}>
+            <i style={{ background: BREAKDOWN_COLORS[index % BREAKDOWN_COLORS.length] }} />
+            <span className="donut-legend-name">{row.name}</span>
+            <span className="donut-legend-share">{(row.value / total * 100).toFixed(1)}%</span>
+            <strong>{formatIDR(row.value)}</strong>
           </div>
         ))}
       </div>
-    )
-  }
-
-  if (!data || data.length === 0) {
-    return (
-      <div className="empty-workspace">
-        <div className="empty-icon">
-          <BarChartHorizontal size={22} />
-        </div>
-        <strong>{t('dashboard.noDataYet')}</strong>
-        <p>{t('dashboard.recordsAppearHere')}</p>
-      </div>
-    )
-  }
-
-  const max = Math.max(...data.map((d) => d.value ?? 0))
-
-  return (
-    <div className="data-table">
-      {data.map((row, i) => (
-        <div key={i} className="data-table-row">
-          <span className="data-table-rank">{i + 1}</span>
-          <span className="data-table-name">{row.name}</span>
-          <div className="data-table-bar-wrap">
-            <div
-              className="data-table-bar"
-              style={{ width: max > 0 ? `${((row.value ?? 0) / max) * 100}%` : '0%' }}
-            />
-          </div>
-          <span className="data-table-value">
-            {unit ? formatIDR(row.value ?? 0) : formatInt(row.value ?? 0)}
-          </span>
-        </div>
-      ))}
     </div>
   )
 }
@@ -588,6 +662,8 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null)
+  const [comparisonTrend, setComparisonTrend] = useState<TrendPoint[] | null>(null)
+  const [salesBreakdown, setSalesBreakdown] = useState<SalesReportResponse['data'] | null>(null)
   const [inventory, setInventory] = useState<InventoryReportResponse | null>(null)
   const [refreshing, setRefreshing] = useState(false)
 
@@ -600,19 +676,39 @@ export default function DashboardPage() {
       if (!opts?.quiet) setLoading(true)
       setError(null)
       try {
-        const params: Record<string, string> = { period }
+        const params: Record<string, string> = period === 'this_month'
+          ? { period: 'custom', ...currentMonthWindow() }
+          : { period }
         if (compareTo !== 'none') params.compare_to = compareTo
         // Fetch independently: /dashboard requires finance.view_profit
         // (Staff → 403), /dashboard/inventory only inventory.view (Staff OK).
         // A forbidden financial block must not hide the inventory KPIs.
-        const [dashRes, invRes] = await Promise.allSettled([
+        const [dashRes, invRes, salesRes] = await Promise.allSettled([
           fetchDashboard(params),
           fetchInventory(),
+          api.get<SalesReportResponse>('/reports/sales', { params }),
         ])
+        setSalesBreakdown(salesRes.status === 'fulfilled' ? salesRes.value.data : null)
         if (dashRes.status === 'fulfilled') {
           setDashboard(dashRes.value)
+          const previous = dashRes.value.comparison?.previous_period
+          if (compareTo !== 'none' && previous) {
+            try {
+              const comparisonDashboard = await fetchDashboard({
+                period: 'custom',
+                from: previous.from,
+                to: previous.to,
+              })
+              setComparisonTrend(comparisonDashboard.charts?.sales_trend ?? [])
+            } catch {
+              setComparisonTrend(null)
+            }
+          } else {
+            setComparisonTrend(null)
+          }
         } else if (isForbidden(dashRes.reason)) {
           setDashboard(null)
+          setComparisonTrend(null)
           setError('forbidden')
         } else {
           setError(dashRes.reason instanceof Error ? dashRes.reason.message : t('common.failedToLoad', { resource: 'dashboard' }))
@@ -874,14 +970,20 @@ export default function DashboardPage() {
       </section>
 
       {/* Charts row */}
-      <section className="dashboard-grid">
+      <section className="dashboard-grid dashboard-visuals-grid">
         {/* Sales trend */}
-        <article className="panel">
+        <article className="panel dashboard-trend-panel">
           <div className="panel-header">
             <div>
               <h2>{t('dashboard.salesTrend')}</h2>
-              <p>{t('dashboard.salesTrendDesc')}</p>
+              <p>{compareTo !== 'none' ? `${t('dashboard.currentPeriod')} ${t('dashboard.vsPrevPeriod')}` : t('dashboard.salesTrendDesc')}</p>
             </div>
+            {compareTo !== 'none' && (
+              <div className="chart-legend" aria-label="Chart legend">
+                <span><i className="chart-legend-current" />{t('dashboard.currentPeriod')}</span>
+                <span><i className="chart-legend-previous" />{t('dashboard.vsPrevPeriod')}</span>
+              </div>
+            )}
             {comparison && (
               <ComparisonBadge
                 delta={comparison.delta['total_sales']}
@@ -890,7 +992,39 @@ export default function DashboardPage() {
               />
             )}
           </div>
-          <SalesTrendChart data={dashboard?.charts?.sales_trend ?? []} loading={loading} />
+          <SalesTrendChart
+            data={period === 'this_month'
+              ? completeCurrentMonthTrend(dashboard?.charts?.sales_trend ?? [])
+              : dashboard?.charts?.sales_trend ?? []}
+            comparisonData={compareTo === 'none' || !comparisonTrend
+              ? null
+              : period === 'this_month' && comparison?.previous_period
+                ? completeTrendWindow(
+                    comparisonTrend,
+                    new Date(comparison.previous_period.from),
+                    new Date(comparison.previous_period.to),
+                  )
+                : comparisonTrend}
+            loading={loading}
+          />
+        </article>
+
+        {/* Sales composition */}
+        <article className="panel">
+          <div className="panel-header">
+            <div>
+              <h2>{t('dashboard.revenueComposition')}</h2>
+              <p>{t('dashboard.revenueCompositionDesc')}</p>
+            </div>
+          </div>
+          <DonutBreakdown
+            data={salesBreakdown ? [
+              { name: t('reports.cogs'), value: salesBreakdown.cogs },
+              { name: t('reports.grossProfit'), value: salesBreakdown.gross_profit },
+            ] : []}
+            loading={loading}
+            emptyMessage={t('dashboard.noSalesData')}
+          />
         </article>
 
         {/* Best sellers */}
@@ -901,13 +1035,14 @@ export default function DashboardPage() {
               <p>{t('dashboard.bestSellersDesc')}</p>
             </div>
           </div>
-          <DataTable
+          <DonutBreakdown
             data={(dashboard?.charts?.best_sellers ?? []).map((p) => ({
               name: p.name || '—',
               value: p.revenue ?? 0,
             }))}
             loading={loading}
-            unit="IDR"
+            emptyMessage={t('dashboard.noProductSalesThisPeriod')}
+            centerLabel={t('dashboard.topProductsTotal')}
           />
         </article>
 
@@ -919,13 +1054,13 @@ export default function DashboardPage() {
               <p>{t('dashboard.expenseBreakdownDesc')}</p>
             </div>
           </div>
-          <DataTable
+          <DonutBreakdown
             data={(dashboard?.charts?.expense_breakdown ?? []).map((e) => ({
               name: e.category || '—',
               value: e.total ?? 0,
             }))}
             loading={loading}
-            unit="IDR"
+            emptyMessage={t('dashboard.noExpensesThisPeriod')}
           />
         </article>
       </section>

@@ -71,7 +71,7 @@ export default function NewUserPageClient() {
   }
 
   return (
-    <div className="page form-page">
+    <div className="page form-page admin-form-page user-create-page">
       <button className="btn btn-ghost back-link" onClick={() => router.push('/users')}>
         <ArrowLeft size={16} /> {t('common.back')}
       </button>
@@ -80,37 +80,46 @@ export default function NewUserPageClient() {
         <div>
           <div className="eyebrow">{t('users.eyebrow')}</div>
           <h1 className="page-title">{t('users.addUser')}</h1>
+          <p className="page-subtitle">{t('users.createSubtitle')}</p>
         </div>
       </div>
 
       {formError && <div className="notice error">{formError}</div>}
 
-      <form className="card form-card" onSubmit={handleSubmit}>
-        <div className="form-section">
-          <h3><UserPlus size={18} /> {t('users.accountInfo')}</h3>
+      <form className="card form-card admin-form-card" onSubmit={handleSubmit}>
+        <div className="form-section admin-form-section">
+          <div className="admin-form-section-heading">
+            <span className="admin-form-icon"><UserPlus size={18} /></span>
+            <div>
+              <h3>{t('users.accountInfo')}</h3>
+              <p>{t('users.createIntro')}</p>
+            </div>
+            <span className="required-note">{t('users.requiredFields')}</span>
+          </div>
           <div className="form-grid">
             <div className="field">
-              <label>{t('users.username')} *</label>
-              <input value={form.username} onChange={(e) => update('username', e.target.value)} />
+              <label htmlFor="new-user-username">{t('users.username')} <span>*</span></label>
+              <input id="new-user-username" autoComplete="username" required aria-invalid={!!errors.username} value={form.username} onChange={(e) => update('username', e.target.value)} />
               {errors.username && <span className="field-error">{errors.username}</span>}
             </div>
             <div className="field">
-              <label>{t('users.fullName')} *</label>
-              <input value={form.full_name} onChange={(e) => update('full_name', e.target.value)} />
+              <label htmlFor="new-user-full-name">{t('users.fullName')} <span>*</span></label>
+              <input id="new-user-full-name" autoComplete="name" required aria-invalid={!!errors.full_name} value={form.full_name} onChange={(e) => update('full_name', e.target.value)} />
               {errors.full_name && <span className="field-error">{errors.full_name}</span>}
             </div>
             <div className="field full">
-              <label>{t('users.email')}</label>
-              <input type="email" value={form.email || ''} onChange={(e) => update('email', e.target.value)} />
+              <label htmlFor="new-user-email">{t('users.email')} <span className="optional-label">{t('users.optional')}</span></label>
+              <input id="new-user-email" type="email" autoComplete="email" value={form.email || ''} onChange={(e) => update('email', e.target.value)} />
             </div>
             <div className="field">
-              <label>{t('users.password')} *</label>
-              <input type="password" value={form.password} onChange={(e) => update('password', e.target.value)} />
+              <label htmlFor="new-user-password">{t('users.password')} <span>*</span></label>
+              <input id="new-user-password" type="password" autoComplete="new-password" minLength={8} required aria-invalid={!!errors.password} value={form.password} onChange={(e) => update('password', e.target.value)} />
+              <small className="field-hint">{t('users.passwordHint')}</small>
               {errors.password && <span className="field-error">{errors.password}</span>}
             </div>
             <div className="field">
-              <label>{t('users.role')} *</label>
-              <select value={String(form.role_id)} onChange={(e) => update('role_id', e.target.value)}>
+              <label htmlFor="new-user-role">{t('users.role')} <span>*</span></label>
+              <select id="new-user-role" required aria-invalid={!!errors.role_id} value={String(form.role_id)} onChange={(e) => update('role_id', e.target.value)}>
                 <option value="">{t('users.selectRole')}</option>
                 {roles.map((r) => (
                   <option key={r.id} value={r.id}>{r.name}</option>
@@ -121,7 +130,7 @@ export default function NewUserPageClient() {
           </div>
         </div>
 
-        <div className="form-actions">
+        <div className="form-actions admin-form-actions">
           <button type="button" className="btn btn-ghost" onClick={() => router.push('/users')} disabled={saving}>
             {t('common.cancel')}
           </button>

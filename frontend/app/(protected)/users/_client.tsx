@@ -298,6 +298,15 @@ export default function UsersPage() {
 
       <div className="table-wrap">
         <table className="data-table">
+          <colgroup>
+            <col className="user-col-name" />
+            <col className="user-col-username" />
+            <col className="user-col-email" />
+            <col className="user-col-role" />
+            <col className="user-col-status" />
+            <col className="user-col-created" />
+            <col className="user-col-actions" />
+          </colgroup>
           <thead>
             <tr>
               <th className="sortable" onClick={() => handleSort('full_name')}>
@@ -324,10 +333,10 @@ export default function UsersPage() {
             )}
             {users.map((u) => (
               <tr key={u.id}>
-                <td><strong>{u.full_name}</strong></td>
-                <td>{u.username}</td>
-                <td>{u.email || '-'}</td>
-                <td>{u.role_name}</td>
+                <td title={u.full_name}><strong>{u.full_name}</strong></td>
+                <td title={u.username}>{u.username}</td>
+                <td title={u.email || '-'}>{u.email || '-'}</td>
+                <td title={u.role_name}>{u.role_name}</td>
                 <td>
                   <span className={`badge ${u.is_active ? 'active' : 'inactive'}`}>
                     {u.is_active ? t('status.active') : t('status.inactive')}

@@ -102,9 +102,9 @@ export function CreateEntryDialog({
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-card border border-border rounded-lg shadow-xl w-full max-w-lg mx-4">
-        <div className="flex items-center justify-between p-4 border-b border-border">
+    <div className="manual-entry-overlay">
+      <div className="manual-entry-dialog">
+        <div className="manual-entry-dialog-header">
           <h2 className="text-lg font-semibold">
             {t(entryType === 'income' ? 'manualEntries.createIncome' : 'manualEntries.createExpense')}
           </h2>

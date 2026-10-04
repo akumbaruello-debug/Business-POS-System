@@ -576,43 +576,55 @@ export default function PosPage() {
                             <Minus size={14} />
                           </button>
                           <input
+                            type="number"
+                            min="1"
+                            step="any"
                             value={l.quantity}
                             inputMode="numeric"
-                            onChange={(e) => setQty(l.product.id, Number(e.target.value))}
+                            onChange={(e) => {
+                              const value = e.currentTarget.valueAsNumber
+                              if (Number.isFinite(value) && value > 0) setQty(l.product.id, value)
+                            }}
                           />
                           <button type="button" className="icon-btn" onClick={() => setQty(l.product.id, l.quantity + 1)}>
                             <Plus size={14} />
                           </button>
                           <input
+                            type="number"
+                            min="0"
+                            step="any"
                             value={l.unitPrice}
                             inputMode="decimal"
                             disabled={!canPriceOverride}
                             title={t('pos.price')}
-                            onChange={(e) =>
+                            onChange={(e) => {
+                              const value = e.currentTarget.valueAsNumber
+                              if (!Number.isFinite(value) || value < 0) return
                               setCart((prev) =>
                                 prev.map((x) =>
-                                  x.product.id === l.product.id
-                                    ? { ...x, unitPrice: Number(e.target.value) }
-                                    : x,
+                                  x.product.id === l.product.id ? { ...x, unitPrice: value } : x,
                                 ),
                               )
-                            }
+                            }}
                           />
                           {canDiscount && (
                             <input
+                              type="number"
+                              min="0"
+                              step="any"
                               value={l.discount}
                               inputMode="decimal"
                               title={t('pos.discount')}
                               placeholder="0"
-                              onChange={(e) =>
+                              onChange={(e) => {
+                                const value = e.currentTarget.valueAsNumber
+                                if (!Number.isFinite(value) || value < 0) return
                                 setCart((prev) =>
                                   prev.map((x) =>
-                                    x.product.id === l.product.id
-                                      ? { ...x, discount: Number(e.target.value) }
-                                      : x,
+                                    x.product.id === l.product.id ? { ...x, discount: value } : x,
                                   ),
                                 )
-                              }
+                              }}
                             />
                           )}
                         </div>

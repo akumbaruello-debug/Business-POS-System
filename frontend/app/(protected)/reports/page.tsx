@@ -38,6 +38,172 @@ import {
 import { formatDate, formatIDR, formatInt, formatPct } from '@/lib/format'
 import { API_BASE_URL } from '@/lib/constants'
 
+function SalesReportVisuals({
+  revenue,
+  cogs,
+  grossProfit,
+  comparison,
+  formatMoney,
+}: {
+  revenue: number
+  cogs: number
+  grossProfit: number
+  comparison: PeriodComparison | null
+  formatMoney: (value: number) => string
+}) {
+  const { t } = useLanguage()
+  const total = Math.max(cogs + grossProfit, 0)
+  const cogsShare = total > 0 ? (Math.min(Math.max(cogs, 0), total) / total) * 100 : 0
+  const bars = [
+    { key: 'revenue', label: t('reports.revenue'), value: revenue, color: 'report-bar-revenue' },
+    { key: 'cogs', label: t('reports.cogs'), value: cogs, color: 'report-bar-cogs' },
+    { key: 'gross_profit', label: t('reports.grossProfit'), value: grossProfit, color: 'report-bar-profit' },
+  ]
+  return (
+    <section className="report-visuals">
+      <article className="report-visual-card">
+        <div className="report-visual-heading">
+          <h2>Revenue composition</h2>
+          <p>Cost of goods sold and gross profit</p>
+        </div>
+        <div className="report-donut-layout">
+          <div
+            className="report-donut"
+            role="img"
+            aria-label={`Revenue composition: ${formatMoney(cogs)} cost and ${formatMoney(grossProfit)} gross profit`}
+            style={{ background: `conic-gradient(#2563eb 0 ${cogsShare}%, #10b981 ${cogsShare}% 100%)` }}
+          >
+            <div><strong>{formatMoney(revenue)}</strong><span>{t('reports.revenue')}</span></div>
+          </div>
+          <div className="report-visual-legend">
+            <span><i className="report-bar-cogs" />{t('reports.cogs')} <b>{formatMoney(cogs)}</b></span>
+            <span><i className="report-bar-profit" />{t('reports.grossProfit')} <b>{formatMoney(grossProfit)}</b></span>
+          </div>
+        </div>
+      </article>
+      <article className="report-visual-card">
+        <div className="report-visual-heading">
+          <h2>Sales performance</h2>
+          <p>{comparison ? 'Current period and previous period' : 'Revenue, costs, and profit'}</p>
+        </div>
+        <div className="report-bars">
+          {bars.map((bar) => {
+            const previous = comparison ? Math.max(0, bar.value - (comparison.delta[bar.key] ?? 0)) : null
+            const maxValue = Math.max(revenue, previous ?? 0, 1)
+            return (
+              <div className="report-bar-row" key={bar.key}>
+                <div className="report-bar-label"><span>{bar.label}</span><b>{formatMoney(bar.value)}</b></div>
+                <div className="report-bar-track">
+                  <i className={bar.color} style={{ width: `${Math.max(1, (bar.value / maxValue) * 100)}%` }} />
+                  {previous !== null && <i className="report-bar-old" style={{ width: `${Math.max(1, (previous / maxValue) * 100)}%` }} />}
+                </div>
+                {previous !== null && <small>Previous: {formatMoney(previous)}</small>}
+              </div>
+            )
+          })}
+        </div>
+      </article>
+    </section>
+  )
+}
+
+const REPORT_CHART_FIELDS: Partial<Record<ReportKind, { label: string[]; value: string[]; title: string; format?: 'money' | 'count' | 'quantity' }>> = {
+  purchases: { label: ['lifecycle_status', 'purchase_date'], value: [], title: 'Purchases by status', format: 'count' },
+  'inventory-movements': { label: ['trigger'], value: ['quantity'], title: 'Stock activity by source', format: 'quantity' },
+  'sales-returns': { label: ['reason', 'lifecycle_status'], value: ['total_selling_price_returned'], title: 'Returned sales value by reason' },
+  'purchase-returns': { label: ['reason', 'lifecycle_status'], value: ['total_value_returned'], title: 'Purchase return value by reason' },
+  production: { label: ['output_product_id'], value: ['output_quantity'], title: 'Production output by product', format: 'quantity' },
+  'manual-income': { label: ['category_name', 'category'], value: ['amount'], title: 'Income by category' },
+  'manual-expense': { label: ['category_name', 'category'], value: ['amount'], title: 'Expenses by category' },
+  refunds: { label: ['reason'], value: ['amount'], title: 'Refunds by reason' },
+  'supplier-repayments': { label: ['purchase_id', 'reason'], value: ['received_amount'], title: 'Cash received by supplier repayment' },
+  'cash-flow': { label: ['direction', 'trigger'], value: ['amount'], title: 'Cash flow by direction' },
+  receivables: { label: ['customer_id', 'sale_id'], value: ['open_balance'], title: 'Open receivable by customer sale' },
+  payables: { label: ['supplier_id', 'purchase_id'], value: ['open_balance'], title: 'Open payable by supplier purchase' },
+  'supplier-receivables': { label: ['supplier_id', 'purchase_id'], value: ['open_balance'], title: 'Open supplier receivable' },
+  'customer-refund-liabilities': { label: ['customer_id', 'sale_id'], value: ['open_balance'], title: 'Open refund liability' },
+}
+
+function asFinite(value: unknown): number | null {
+  if (typeof value !== 'number' && typeof value !== 'string') return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function ReportCategoryChart({ kind, rows, language }: { kind: ReportKind; rows: Record<string, unknown>[]; language: string }) {
+  const spec = REPORT_CHART_FIELDS[kind]
+  if (!spec || rows.length === 0) return null
+  const groups = new Map<string, number>()
+  let hasNumericValues = false
+  for (const row of rows) {
+    const key = spec.label.map((field) => row[field]).find((value) => value !== undefined && value !== null && String(value).trim() !== '')
+    if (key === undefined) continue
+    const raw = spec.value.map((field) => asFinite(row[field])).find((value) => value !== null)
+    if (raw !== undefined && raw !== null) hasNumericValues = true
+    const value = raw ?? 1
+    groups.set(String(key), (groups.get(String(key)) ?? 0) + value)
+  }
+  const values = Array.from(groups, ([label, value]) => ({ label, value })).sort((a, b) => Math.abs(b.value) - Math.abs(a.value)).slice(0, 7)
+  if (values.length === 0) return null
+  const max = Math.max(...values.map((entry) => Math.abs(entry.value)), 1)
+  const valueFormat = spec.format ?? (!hasNumericValues ? 'count' : 'money')
+  const formatValue = (value: number) => valueFormat === 'count'
+    ? formatInt(value)
+    : valueFormat === 'quantity'
+      ? new Intl.NumberFormat(language === 'id' ? 'id-ID' : 'en-US', { maximumFractionDigits: 3 }).format(value)
+      : formatIDR(value, language)
+  return (
+    <section className="report-generic-visual" aria-label={spec.title}>
+      <div className="report-generic-visual-heading"><div><h2>{spec.title}</h2><p>Grouped from records returned for the selected filters</p></div><span>{rows.length} records</span></div>
+      <div className="report-category-bars">
+        {values.map((entry) => (
+          <div className="report-category-row" key={entry.label}>
+            <div className="report-category-label"><span title={entry.label}>{entry.label.replace(/_/g, ' ')}</span><strong>{formatValue(entry.value)}</strong></div>
+            <div className="report-category-track"><i style={{ width: `${Math.max(2, Math.abs(entry.value) / max * 100)}%` }} /></div>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function AggregateReportVisual({ kind, data, language }: { kind: ReportKind; data: Record<string, unknown>; language: string }) {
+  let entries: { label: string; value: number; color?: string }[] = []
+  let title = ''
+  let subtitle = ''
+  if (kind === 'p-and-l') {
+    title = 'Profit and loss composition'
+    subtitle = 'Compare revenue, cost, and profit for the selected period'
+    const keys = [
+      ['revenue', 'Revenue', '#3b82f6'], ['cogs', 'Cost of goods sold', '#8aa5c8'],
+      ['other_income', 'Other income', '#16a777'], ['operating_expenses', 'Operating expenses', '#ed9a24'], ['net_profit', 'Net profit', '#1c55c8'],
+    ] as const
+    entries = keys.map(([key, label, color]) => ({ label, value: asFinite(data[key]) ?? 0, color }))
+  } else if (kind === 'inventory') {
+    title = 'Stock health'
+    subtitle = 'Products needing attention compared with the active catalogue'
+    entries = [
+      { label: 'Products tracked', value: asFinite(data.products_count) ?? 0, color: '#3b82f6' },
+      { label: 'Low stock', value: asFinite(data.low_stock_count) ?? 0, color: '#ed9a24' },
+      { label: 'Out of stock', value: asFinite(data.out_of_stock_count) ?? 0, color: '#dc5b58' },
+    ]
+  }
+  if (!entries.length) return null
+  const max = Math.max(...entries.map((entry) => Math.abs(entry.value)), 1)
+  const counts = kind === 'inventory'
+  return (
+    <section className="report-generic-visual" aria-label={title}>
+      <div className="report-generic-visual-heading"><div><h2>{title}</h2><p>{subtitle}</p></div></div>
+      <div className="report-category-bars">
+        {entries.map((entry) => <div className="report-category-row" key={entry.label}>
+          <div className="report-category-label"><span>{entry.label}</span><strong>{counts ? formatInt(entry.value) : formatIDR(entry.value, language)}</strong></div>
+          <div className="report-category-track"><i style={{ width: `${Math.max(2, Math.abs(entry.value) / max * 100)}%`, background: entry.color }} /></div>
+        </div>)}
+      </div>
+    </section>
+  )
+}
+
 // -----------------------------------------------------------------------------
 // Reports workspace — one reusable page covering every backend /reports/* endpoint.
 //
@@ -382,22 +548,36 @@ export default function ReportsPage() {
       })
     }
     return (
-      <section className="metrics">
-        {metrics.map((m) => (
-          <article key={m.label} className="metric-card">
-            <div className="metric-top">
-              <span className="metric-label">{m.label}</span>
-              <span className="metric-icon">
-                <BarChart3 size={17} />
-              </span>
-            </div>
-            <div className="metric-value">{m.value}</div>
-            <div className="metric-change">
-              <span className="change-note">{t('reports.currentPeriod')}</span>
-            </div>
-          </article>
-        ))}
-      </section>
+      <>
+        <section className="metrics">
+          {metrics.map((m) => (
+            <article key={m.label} className="metric-card">
+              <div className="metric-top">
+                <span className="metric-label">{m.label}</span>
+                <span className="metric-icon">
+                  <BarChart3 size={17} />
+                </span>
+              </div>
+              <div className="metric-value">{m.value}</div>
+              <div className="metric-change">
+                <span className="change-note">{t('reports.currentPeriod')}</span>
+              </div>
+            </article>
+          ))}
+        </section>
+        {kind === 'sales' && (
+          <SalesReportVisuals
+            revenue={Number((d as unknown as SalesReportResponse['data']).revenue) || 0}
+            cogs={Number((d as unknown as SalesReportResponse['data']).cogs) || 0}
+            grossProfit={Number((d as unknown as SalesReportResponse['data']).gross_profit) || 0}
+            comparison={comparison}
+            formatMoney={(value) => formatIDR(value, language)}
+          />
+        )}
+        {(kind === 'p-and-l' || kind === 'inventory') && (
+          <AggregateReportVisual kind={kind} data={d} language={language} />
+        )}
+      </>
     )
   }
 
@@ -456,6 +636,7 @@ export default function ReportsPage() {
     const columns = Object.keys(rows[0])
     return (
       <>
+        <ReportCategoryChart kind={kind} rows={rows} language={language} />
         <div className="sales-table-wrap">
           <table className="sales-table">
             <thead>
