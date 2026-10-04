@@ -29,6 +29,7 @@ from app.concurrency.etag import check_if_match
 from app.concurrency.master_etag import etag_and_version_from_updated_at
 from app.db import UnitOfWork
 from app.errors import BusinessRuleViolation, NegativeStockDisallowed, NotFound
+from app.util import iso_utc
 from app.inventory.repo import (
     count_inventory,
     count_low_stock,
@@ -87,15 +88,9 @@ def _enrich_summary(
     )
     updated_at = row.get("updated_at")
     if isinstance(updated_at, datetime):
-        # Use the same ISO-8601 form Pydantic emits in JSON
-        # (``Z`` for UTC, microsecond precision) so the value can be
-        # round-tripped as an ETag for ``If-Match`` on POST
-        # /inventory/adjustments.
-        from pydantic import TypeAdapter
-
-        updated_at_iso = TypeAdapter(datetime).dump_python(
-            updated_at, mode="json"
-        )
+        # Keep the response timestamp aligned with the canonical ETag form
+        # so clients can round-trip it in If-Match.
+        updated_at_iso = iso_utc(updated_at)
     else:
         updated_at_iso = str(updated_at) if updated_at is not None else None
     return {

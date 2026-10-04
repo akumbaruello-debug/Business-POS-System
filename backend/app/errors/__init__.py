@@ -57,6 +57,7 @@ __all__ = [
     "ReturnCannotBeCancelled",
     "SessionExpired",
     "SessionRevoked",
+    "SystemRoleImmutable",
     "TenderedNotAllowedForNonCash",
     "Unauthenticated",
     "ValidationFailed",
@@ -89,6 +90,7 @@ DEFAULT_STATUS: Final[dict[ErrorCode, int]] = {
     ErrorCode.PASSWORD_UNSET: 401,
     ErrorCode.PERMISSION_DENIED: 403,
     ErrorCode.ORIGIN_NOT_ALLOWED: 403,
+    ErrorCode.SYSTEM_ROLE_IMMUTABLE: 403,
     ErrorCode.NOT_FOUND: 404,
     ErrorCode.ROUTE_NOT_FOUND: 404,
     ErrorCode.CONFLICT: 409,
@@ -224,6 +226,19 @@ class OriginNotAllowed(AppError):
 
     code = ErrorCode.ORIGIN_NOT_ALLOWED
     default_message = "Origin not allowed."
+
+
+class SystemRoleImmutable(PermissionDenied):
+    """403 — a mutating request targeted a system role.
+
+    Per the OpenAPI contract, ``Owner`` and ``Staff`` are seeded with
+    ``is_system_role = TRUE`` and cannot be renamed, deleted, or have
+    their capability set replaced through the API.
+    """
+
+    code = ErrorCode.SYSTEM_ROLE_IMMUTABLE
+    status = 403
+    default_message = "System roles cannot be modified or deleted."
 
 
 class NotFound(AppError):

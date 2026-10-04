@@ -24,22 +24,12 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime
 
-from pydantic import TypeAdapter
-
-from app.util import format_etag
+from app.util import format_etag, iso_utc
 
 __all__ = [
     "etag_and_version_from_content",
     "etag_and_version_from_updated_at",
 ]
-
-# Single source of truth for the canonical ISO-8601 form used in the
-# response body. Pydantic v2's JSON serialization emits UTC timestamps
-# with a ``Z`` suffix and full microsecond precision, so the ETag MUST
-# match that exact form for the If-Match round-trip to succeed. See
-# ``app.api.v1.financial_categories`` for the proven pattern.
-_DATETIME_ADAPTER = TypeAdapter(datetime)
-
 
 def _epoch_micro(updated_at: datetime) -> int:
     ts = updated_at
@@ -52,14 +42,13 @@ def etag_and_version_from_updated_at(updated_at: datetime) -> tuple[str, int]:
     """Canonical ETag + version derived from a ``updated_at`` timestamp.
 
     Returns ``(etag, version)`` where ``etag`` is the quoted ISO-8601
-    string (canonical ``Z`` form for UTC, matching the response
+    string (canonical ``+00:00`` form for UTC, matching the response
     serialization) and ``version`` is a microsecond-epoch integer.
     """
     ts = updated_at
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=UTC)
-    iso = _DATETIME_ADAPTER.dump_python(ts, mode="json")
-    return format_etag(iso), _epoch_micro(ts)
+    return format_etag(iso_utc(ts)), _epoch_micro(ts)
 
 
 def etag_and_version_from_content(*parts: object) -> tuple[str, int]:

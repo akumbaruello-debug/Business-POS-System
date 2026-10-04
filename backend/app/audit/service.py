@@ -45,6 +45,8 @@ ENTITY_SALES = "sale"
 ENTITY_SALE_LINES = "sale_line"
 ENTITY_SALE_PAYMENTS = "sale_payment"
 ENTITY_SALES_RETURNS = "sales_return"
+ENTITY_ROLES = "role"
+ENTITY_USERS = "user"
 ENTITY_PURCHASES = "purchase"
 ENTITY_PURCHASE_LINES = "purchase_line"
 ENTITY_PURCHASE_PAYMENTS = "purchase_payment"
@@ -178,12 +180,14 @@ __all__ = [
     "ENTITY_PURCHASE_RETURNS",
     "ENTITY_PURCHASE_SHIPPING",
     "ENTITY_REFUNDS",
+    "ENTITY_ROLES",
     "ENTITY_SALES",
     "ENTITY_SALES_RETURNS",
     "ENTITY_SALE_LINES",
     "ENTITY_SALE_PAYMENTS",
     "ENTITY_SUPPLIER_REPAYMENTS",
     "ENTITY_UNITS",
+    "ENTITY_USERS",
     "AuditAction",
     "AuditContext",
     "write_audit",

@@ -52,6 +52,7 @@ class ErrorCode(StrEnum):
     # ---- 403 Forbidden ------------------------------------------------
     PERMISSION_DENIED = "permission_denied"
     ORIGIN_NOT_ALLOWED = "origin_not_allowed"
+    SYSTEM_ROLE_IMMUTABLE = "system_role_immutable"
 
     # ---- 404 Not Found -----------------------------------------------
     NOT_FOUND = "not_found"

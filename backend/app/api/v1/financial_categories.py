@@ -19,21 +19,18 @@ returns 400 ``manual_entry_duplicate_of_derived``.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, Path, Query, Request, status
-from pydantic import TypeAdapter
 
 from app.api.deps import get_uow, require_capability
 from app.audit.service import AuditContext
 from app.auth.principal import Principal
-from app.concurrency.etag import check_if_match
+from app.concurrency.etag import check_if_match, make_etag_from_updated_at
 from app.db import UnitOfWork
 from app.domain.blacklist import assert_not_blacklisted
 from app.errors import ManualEntryDuplicateOfDerived
 from app.services.finance import FinancialCategoryService
-from app.util import format_etag
 from app.validation.enums import FinancialEntryType
 from app.validation.headers import parse_idempotency_key, parse_if_match
 from app.validation.pagination import MetaEnvelope, make_pagination
@@ -43,9 +40,6 @@ from app.validation.schemas import (
     FinancialCategoryRequest,
     FinancialCategoryResponse,
 )
-
-# Module-level adapter for datetime serialization (ETag round-trip).
-_DATETIME_ADAPTER = TypeAdapter(datetime)
 
 router = APIRouter(prefix="/financial-categories", tags=["financial_categories"])
 
@@ -221,20 +215,10 @@ async def update_financial_category(
         assert_not_blacklisted(body.name, field="name")
 
     svc = FinancialCategoryService(uow)
-    # If-Match check: read current ETag (updated_at), compare to client's.
-    # NOTE: The client obtains the ETag from the ``updated_at`` field in
-    # the POST/PATCH response body, which Pydantic v2 serializes to ISO-8601
-    # with a ``Z`` suffix and full microseconds
-    # (e.g. ``2026-08-28T16:21:14.164165Z``). To keep the round-trip
-    # byte-exact, we reproduce that exact form rather than using
-    # ``app.util.iso_utc`` (which strips sub-second digits and breaks the
-    # round-trip — see test_patch_with_stale_if_match_returns_412).
-    # ``pydantic.TypeAdapter(datetime).dump_python(d, mode='json')`` is the
-    # single source of truth for the canonical response form.
+    # If-Match check: derive the canonical timestamp ETag and compare it
+    # to the client's token.
     current = await svc.get(id)
-    cur_updated = current["updated_at"]
-    cur_iso = _DATETIME_ADAPTER.dump_python(cur_updated, mode="json")
-    current_etag = format_etag(cur_iso)
+    current_etag = make_etag_from_updated_at(current["updated_at"])
     # parse_if_match already raises InvalidHeader on malformed values.
     # When the header is absent we MUST reject (OpenAPI declares
     # IfMatchRequired on PATCH /financial-categories/{id}).

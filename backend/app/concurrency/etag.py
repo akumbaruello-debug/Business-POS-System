@@ -19,12 +19,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from pydantic import TypeAdapter
-
 from app.errors import VersionMismatch
-from app.util import format_etag, parse_etag
-
-_DATETIME_ADAPTER = TypeAdapter(datetime)
+from app.util import format_etag, iso_utc, parse_etag
 
 __all__ = [
     "check_if_match",
@@ -63,12 +59,12 @@ def make_etag_from_updated_at(updated_at: datetime) -> str:
     """Render the canonical strong ETag for a resource.
 
     The ETag value is the resource's ``updated_at`` serialised in the
-    canonical ISO 8601 form (``Z`` for UTC, matching the response
+    canonical ISO 8601 form (``+00:00`` for UTC, matching the response
     serialization) surrounded by double quotes (RFC 7232 strong-validator).
     """
     if updated_at.tzinfo is None:
         updated_at = updated_at.replace(tzinfo=UTC)
-    return format_etag(_DATETIME_ADAPTER.dump_python(updated_at, mode="json"))
+    return format_etag(iso_utc(updated_at))
 
 
 def check_if_match(*, provided: str | None, current_etag: str) -> None:

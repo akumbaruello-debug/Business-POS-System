@@ -21,6 +21,7 @@ from typing import Any
 from fastapi import FastAPI
 
 from app.api.v1.router import router as v1_router
+from app.concurrency.middleware import ETagDatetimeNormalizationMiddleware
 from app.config import Settings, get_settings
 from app.errors.handlers import register_error_handlers
 from app.lifespan import lifespan
@@ -90,6 +91,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # after security — it must be outside the v1 router so even error
     # responses get a request id).
     app.add_middleware(RequestIDMiddleware)
+    app.add_middleware(ETagDatetimeNormalizationMiddleware)
 
     # 7. Mount the v1 router.
     app.include_router(v1_router, prefix="/api/v1")

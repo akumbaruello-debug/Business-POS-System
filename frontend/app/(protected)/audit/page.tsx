@@ -72,7 +72,6 @@ const ACTION_OPTIONS = [
   'create', 'post', 'cancel', 'complete', 'return', 'adjust', 'movement',
   'price_override', 'payment', 'refund', 'permission_grant',
   'permission_revoke', 'settings_change', 'deactivate', 'update',
-  'finalize', 'arrival', 'override',
 ]
 
 // Whitelisted sort keys — must match backend _SORT_MAP

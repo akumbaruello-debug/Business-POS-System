@@ -181,20 +181,11 @@ async def _seed_adjustment_products() -> list[dict[str, Any]]:
 
 
 async def _read_updated_at(product_id: int) -> str:
-    """Read the product's ``updated_at`` so tests can build the If-Match value.
-
-    The canonical ETag form (per ``app.util.iso_utc``) is the timezone-aware
-    ``datetime.isoformat()`` form, which emits ``+00:00`` for UTC — NOT the
-    ``Z`` shorthand. We return that form unchanged.
-
-    Phase 3A: Use Pydantic's JSON form (Z suffix) so test ETags match the
-    production ETag computation in ``etag_and_version_from_updated_at()``.
-    """
+    """Read the product timestamp in canonical form for an If-Match value."""
     from app.db import get_session_factory
-    from pydantic import TypeAdapter
     from datetime import datetime
 
-    DATETIME_ADAPTER = TypeAdapter(datetime)
+    from app.util import iso_utc
 
     factory = get_session_factory()
     async with factory() as session:
@@ -207,9 +198,7 @@ async def _read_updated_at(product_id: int) -> str:
         assert row is not None, f"product {product_id} missing"
         ts = row["updated_at"]
     if isinstance(ts, datetime):
-        # Use Pydantic's JSON form (Z suffix, microseconds preserved) to match
-        # the production ETag computation.
-        return DATETIME_ADAPTER.dump_python(ts, mode="json")
+        return iso_utc(ts)
     return str(ts)
 
 
