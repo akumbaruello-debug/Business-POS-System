@@ -89,6 +89,12 @@ export default function PosPage() {
   const [payReference, setPayReference] = useState('')
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  // Ref in-flight guard: `busy` is React state, so two click handlers in the
+  // same tick can both read false before the re-render lands. A ref closes
+  // that window so a fast double-click on "Record payment" can't fire two
+  // POSTs (each gets a fresh UUID idempotency key → two payments on the
+  // backend).
+  const paymentInFlight = useRef(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -366,37 +372,49 @@ export default function PosPage() {
       : 0
 
   const handlePayment = async () => {
-    if (!sale || payMethod === '' || busy) return
-    const amount = Number(payAmount)
-    if (!Number.isFinite(amount) || amount <= 0) {
-      setNotice(t('pos.invalidAmount'))
-      return
-    }
-    if (cashTender) {
-      if (tenderedNum == null || !Number.isFinite(tenderedNum)) {
-        setNotice(t('pos.tenderRequired'))
-        return
-      }
-      if (tenderedNum < amount) {
-        setNotice(t('pos.tenderBelowTotal'))
-        return
-      }
-    }
+    if (!sale || payMethod === '' || busy || paymentInFlight.current) return
+    paymentInFlight.current = true
     setBusy(true)
     setNotice(null)
     try {
+      const amount = Number(payAmount)
+      if (!Number.isFinite(amount) || amount <= 0) {
+        setNotice(t('pos.invalidAmount'))
+        return
+      }
+      if (cashTender) {
+        if (tenderedNum == null || !Number.isFinite(tenderedNum)) {
+          setNotice(t('pos.tenderRequired'))
+          return
+        }
+        if (tenderedNum < amount) {
+          setNotice(t('pos.tenderBelowTotal'))
+          return
+        }
+      }
       const body: SalePaymentInput = {
         payment_method_id: Number(payMethod),
         amount,
         ...(cashTender ? { tendered_amount: tenderedNum } : {}),
         reference: payReference.trim() || null,
       }
-      const res = await api.headers.post<SalePayment>(
+      // POST /payments returns the enriched SALE with payments embedded
+      // (backend add_payment → _enrich_sale(include={"payments"}) then
+      // resp["payments"] = [payment_dict]). The UUID idempotency key is
+      // fresh per call, so replays (same key) never occur here; the Map
+      // dedupe only guards against the sale object itself being re-inserted.
+      const res = await api.headers.post<Sale>(
         `/sales/${sale.id}/payments`,
         body,
         { idempotencyKey: true, ifMatch: etag || undefined },
       )
-      setRecorded((prev) => [...prev, res.data])
+      const newPayment = res.data.payments?.find((p) => p.sale_id === sale.id)
+      setRecorded((prev) => {
+        if (!newPayment) return prev
+        const map = new Map(prev.map((p) => [p.id, p]))
+        map.set(newPayment.id, newPayment)
+        return Array.from(map.values())
+      })
       const fresh = await refreshSale(sale.id)
       setPayAmount(String(num(fresh.outstanding)))
       setPayTendered('')
@@ -410,6 +428,7 @@ export default function PosPage() {
       setNotice(isApiError(e) ? e.message : t('pos.paymentFailed'))
     } finally {
       setBusy(false)
+      paymentInFlight.current = false
     }
   }
 

@@ -22,6 +22,7 @@ import {
   UserCog,
   Users,
 } from 'lucide-react'
+import Link from 'next/link'
 import { useSession, initialsFor } from '@/lib/session'
 import { useLanguage } from '@/lib/i18n'
 import { useCan } from '@/lib/authz'
@@ -160,17 +161,11 @@ export function Sidebar({
           <div className="nav-group" key={group.label}>
             <div className="nav-label">{group.label}</div>
             {group.items.map((item) => (
-              <a
-                key={item.label}
-                href={item.href}
-                className="nav-item"
-                onClick={onNavigate}
-                title={collapsed ? item.label : undefined}
-              >
-                <item.icon size={17} />
-                <span>{item.label}</span>
-              </a>
-            ))}
+                          <Link key={item.label} href={item.href} className="nav-item" onClick={onNavigate} title={collapsed ? item.label : undefined}>
+                            <item.icon size={17} />
+                            <span>{item.label}</span>
+                          </Link>
+                        ))}
           </div>
         ))}
       </nav>

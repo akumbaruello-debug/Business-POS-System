@@ -39,3 +39,15 @@ export interface CustomerSummary {
   sales_count: number
   receivable: number
 }
+
+export interface UserResponse {
+  id: number
+  username: string
+  full_name: string
+  email?: string | null
+  is_active?: boolean
+  role_id: number
+  role_name: string
+  capabilities: string[]
+  has_permission?: 'owner'
+}

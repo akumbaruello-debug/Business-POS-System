@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api } from '@/lib/api-client'
+import Link from 'next/link'
 import { useLanguage } from '@/lib/i18n'
 import type {
   CompareValue,
@@ -1093,7 +1094,7 @@ export default function DashboardPage() {
             ] as const)
               .filter((a) => user.capabilities.includes(a.required))
               .map((a) => (
-                <a key={a.href} href={a.href} className="quick-action-link">
+                <Link key={a.href} href={a.href} className="quick-action-link">
                   <span className={`action-icon ${a.color}`}>
                     <a.icon size={16} />
                   </span>
@@ -1102,9 +1103,9 @@ export default function DashboardPage() {
                     <small>{t(a.small)}</small>
                   </span>
                   <ArrowUpRight size={15} />
-                </a>
+                </Link>
               ))}
-            <a href="/products" className="quick-action-link">
+            <Link href="/products" className="quick-action-link">
               <span className="action-icon green">
                 <Package size={16} />
               </span>
@@ -1113,7 +1114,7 @@ export default function DashboardPage() {
                 <small>{t('dashboard.updateCatalogue')}</small>
               </span>
               <ArrowUpRight size={15} />
-            </a>
+            </Link>
           </div>
         </article>
       </section>
