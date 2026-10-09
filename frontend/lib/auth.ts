@@ -10,6 +10,7 @@ export interface SessionUser {
   role_id: number
   role_name: string
   capabilities: string[]
+  has_permission?: 'owner'
 }
 
 interface LoginResponse {
@@ -24,6 +25,8 @@ export async function login(username: string, password: string): Promise<Session
   const res = await api.post<LoginResponse>('/auth/login', { username, password }, {
     idempotencyKey: true,
   })
+  // Store tokens in localStorage for client components.
+  // (Backend also sets httpOnly cookies for server components.)
   localStorage.setItem('access_token', res.access_token)
   localStorage.setItem('refresh_token', res.refresh_token)
   return res.user
@@ -36,8 +39,11 @@ export async function logout(): Promise<void> {
   } catch {
     // Session may already be expired/revoked — still sign out locally.
   } finally {
+    // Clear localStorage tokens (client components still use these)
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
+    // Redirect to login (cookies cleared server-side by /auth/logout)
+    window.location.href = '/login'
   }
 }
 
