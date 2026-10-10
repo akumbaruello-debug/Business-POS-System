@@ -1,0 +1,64 @@
+name: POS performance CI
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/app/main.py'
+      - 'backend/app/middleware/**'
+      - 'backend/app/concurrency/**'
+      - 'backend/tests/api/test_compression_gzip.py'
+      - 'backend/tests/api/test_manual_entries.py'
+      - 'backend/tests/conftest.py'
+      - 'backend/pyproject.toml'
+      - 'backend/requirements*.txt'
+      - '.github/workflows/pos-performance-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'backend/app/main.py'
+      - 'backend/app/middleware/**'
+      - 'backend/app/concurrency/**'
+      - 'backend/tests/api/test_compression_gzip.py'
+      - 'backend/tests/api/test_manual_entries.py'
+      - 'backend/tests/conftest.py'
+      - 'backend/pyproject.toml'
+      - 'backend/requirements*.txt'
+      - '.github/workflows/pos-performance-ci.yml'
+permissions:
+  contents: read
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pos_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d pos_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      POS_DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/pos_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@v5
+      - name: Install backend dependencies
+        run: uv sync --extra dev --frozen
+      - name: Run focused compression and ETag tests
+        run: >-
+          uv run --no-sync pytest
+          tests/api/test_compression_gzip.py
+          tests/api/test_manual_entries.py
+          -q
