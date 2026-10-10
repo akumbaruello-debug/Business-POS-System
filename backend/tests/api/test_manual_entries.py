@@ -385,6 +385,11 @@ async def test_cancel_ok(app, owner_user, income_entry) -> None:
     h = await _owner(app, owner_user)
     eid = income_entry["id"]
     etag = (await app.get(f"/api/v1/manual-entries/{eid}", headers=h)).headers["ETag"]
+    async with UnitOfWork() as uow:
+        audit_before = await uow.scalar(
+            "SELECT COUNT(*) FROM audit_log WHERE entity_type='manual_entry' AND entity_id=:id AND action='cancel'",
+            {"id": eid},
+        )
     r = await app.post(
         f"/api/v1/manual-entries/{eid}/cancel",
         json={"reason": "Test cancel"},
@@ -406,12 +411,20 @@ async def test_cancel_ok(app, owner_user, income_entry) -> None:
         assert cms[1]["direction"] == "out"
         assert cms[1]["amount"] == -cms[0]["amount"]
         assert cms[1]["trigger"] == "manual_expense"
-        # audit
-        a = await uow.scalar(
+        # The append-only audit log may contain a prior row for a reused ID.
+        audit_after = await uow.scalar(
             "SELECT COUNT(*) FROM audit_log WHERE entity_type='manual_entry' AND entity_id=:id AND action='cancel'",
             {"id": eid},
         )
-        assert a == 1
+        assert audit_after == audit_before + 1
+        audit = await uow.first_row(
+            "SELECT reason, new_values FROM audit_log "
+            "WHERE entity_type='manual_entry' AND entity_id=:id AND action='cancel' "
+            "ORDER BY id DESC LIMIT 1",
+            {"id": eid},
+        )
+        assert audit["reason"] == "Test cancel"
+        assert audit["new_values"]["lifecycle_status"] == "cancelled"
 
 
 @pytest.mark.asyncio
