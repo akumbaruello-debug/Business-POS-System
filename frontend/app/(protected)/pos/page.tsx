@@ -107,7 +107,7 @@ export default function PosPage() {
         api.get<ContactListResponse>('/contacts', {
           params: { 'filter[type]': 'customer', per_page: 500, sort: 'name' },
         }),
-        api.get<{ data: PaymentMethod[]; pagination: Pagination }>('/payment-methods', {
+        api.get<{ data: PaymentMethod[]; pagination: Pagination }>('/payment-methods/', {
           params: { per_page: 200 },
         }),
       ])
