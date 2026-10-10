@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import FastAPI
+from starlette.middleware.gzip import GZipMiddleware
 
 from app.api.v1.router import router as v1_router
 from app.concurrency.middleware import ETagDatetimeNormalizationMiddleware
@@ -92,6 +93,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # responses get a request id).
     app.add_middleware(RequestIDMiddleware)
     app.add_middleware(ETagDatetimeNormalizationMiddleware)
+
+    # 6b. GZip compression for sufficiently large responses
+    # (>= 1024 bytes) when the client sends Accept-Encoding: gzip.
+    # Uses Starlette's built-in middleware (no new dependency).
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
 
     # 7. Mount the v1 router.
     app.include_router(v1_router, prefix="/api/v1")
