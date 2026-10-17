@@ -34,9 +34,10 @@ export function createInFlightGuard() {
  * of the same payment (same id) never duplicates a tender-history row while
  * a genuinely new payment is appended. Last-write-wins per id.
  *
- * @param {Array<{id: number | string}>} payments
- * @param {{id: number | string}} next
- * @returns {Array<{id: number | string}>}
+ * @template P
+ * @param {P[]} payments
+ * @param {P} next
+ * @returns {P[]}
  */
 export function dedupeRecordedPayments(payments, next) {
   const map = new Map(payments.map((p) => [p.id, p]))
