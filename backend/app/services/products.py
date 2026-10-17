@@ -263,6 +263,43 @@ class ProductService:
         return row
 
     # ------------------------------------------------------------------
+    # Response enrichment (shared by the read routes + the PATCH mutation)
+    # ------------------------------------------------------------------
+
+    async def build_enrichment(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Read the derived fields required to compose a product response.
+
+        Three extra reads: the ``product_valuation`` view, the moving-average
+        unit cost, and the ``default_negative_stock_allowed`` system setting.
+        They are part of the successful response contract, so a mutation must
+        perform them *before* committing: a failure then aborts the whole
+        transaction instead of leaving the update committed but reported to
+        the client as failed.
+
+        Returns keyword names matching the route's ``_to_response``.
+        """
+        product_id = int(row["id"])
+        valuation = await self.get_valuation(product_id)
+        on_hand = int(valuation["on_hand_quantity"]) if valuation else 0
+        inv_value = float(valuation["inventory_value"]) if valuation else 0.0
+        avg_cost = await self.get_moving_average_unit_cost(product_id)
+
+        threshold = row.get("low_stock_threshold")
+        low_stock = threshold is not None and on_hand <= float(threshold)
+
+        fallback_supported = bool(row["allow_negative_stock"]) or bool(
+            await self.get_system_setting_bool("default_negative_stock_allowed")
+        )
+
+        return {
+            "on_hand_quantity": on_hand,
+            "inventory_value": inv_value,
+            "moving_average_unit_cost": avg_cost,
+            "low_stock": low_stock,
+            "negative_stock_fallback_supported": fallback_supported,
+        }
+
+    # ------------------------------------------------------------------
     # Update (PATCH)
     # ------------------------------------------------------------------
 
@@ -284,8 +321,12 @@ class ProductService:
         is_active: bool | None = None,
         if_match: str | None = None,
         ctx: AuditContext | None = None,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Update a product. If-Match is REQUIRED (OpenAPI IfMatchRequired).
+
+        Returns ``(row, enrichment)``. ``enrichment`` is computed by
+        :meth:`build_enrichment` *before* the commit, because it is part of
+        the successful response contract.
 
         * If-Match omitted -> 428/400 MissingHeader.
         * If-Match mismatch -> 412 VersionMismatch.
@@ -293,6 +334,8 @@ class ProductService:
           product_price_history row.
         * ``updated_by`` is set to the authenticated principal's user_id
           (NOT NULL on the products table).
+        * A failure in the enrichment reads rolls back the update, the
+          price-history row, and the audit row.
         """
 
         existing = await self._repo.get(id)
@@ -354,8 +397,15 @@ class ProductService:
                 ctx=ctx,
             )
 
+        # Enrichment is part of the mandatory successful response. Compute it
+        # BEFORE the commit so a failure here rolls back the product update,
+        # its price-history row, and its audit row — never a mutation that is
+        # committed server-side but reported to the client as failed. The
+        # reads run inside this transaction, so they see the new values.
+        enrichment = await self.build_enrichment(row)
+
         await self._uow.commit()
-        return row
+        return row, enrichment
 
     async def _write_price_history(
         self,

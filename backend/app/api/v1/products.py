@@ -150,23 +150,22 @@ async def _compose_response(
     row: dict[str, Any],
     etag: str,
     version: int,
+    enrichment: dict[str, Any] | None = None,
 ) -> ProductResponse:
-    """Enrich a raw product row with valuation fields from the service."""
-    valuation = await svc.get_valuation(row["id"])
-    on_hand = int(valuation["on_hand_quantity"]) if valuation else 0
-    inv_value = float(valuation["inventory_value"]) if valuation else 0.0
-    # moving_average_unit_cost: use get_moving_average_unit_cost (computed from
-    # the product_valuation view columns per app.inventory.valuation).
-    avg_cost = await svc.get_moving_average_unit_cost(row["id"])
+    """Enrich a raw product row with valuation fields from the service.
 
-    # low_stock: computed boolean — on_hand <= threshold when threshold is set.
-    threshold = row.get("low_stock_threshold")
-    low_stock = threshold is not None and on_hand <= float(threshold)
-
-    # negative_stock_fallback_supported: product flag OR system setting default.
-    fallback_supported = bool(row["allow_negative_stock"]) or bool(
-        await svc.get_system_setting_bool("default_negative_stock_allowed")
-    )
+    ``enrichment`` may be supplied by a mutation that had to compute these
+    reads before its commit (see ``ProductService.build_enrichment``). When
+    omitted, the reads happen here — correct for read-only routes, which have
+    no mutation to roll back.
+    """
+    if enrichment is None:
+        enrichment = await svc.build_enrichment(row)
+    on_hand = int(enrichment["on_hand_quantity"])
+    inv_value = float(enrichment["inventory_value"])
+    avg_cost = enrichment["moving_average_unit_cost"]
+    low_stock = bool(enrichment["low_stock"])
+    fallback_supported = bool(enrichment["negative_stock_fallback_supported"])
 
     return _to_response(
         row,
@@ -329,7 +328,7 @@ async def update_product(
     payload = ProductPatch(**body)
 
     svc = ProductService(uow)
-    row = await svc.update(
+    row, enrichment = await svc.update(
         id,
         name=payload.name,
         category_id=payload.category_id,
@@ -347,7 +346,9 @@ async def update_product(
         ctx=_audit_ctx(request, principal),
     )
     resp_etag, version = _etag_from_row(row)
-    return await _compose_response(svc, row, resp_etag, version)
+    return await _compose_response(
+        svc, row, resp_etag, version, enrichment=enrichment
+    )
 
 
 # ---------------------------------------------------------------------------
