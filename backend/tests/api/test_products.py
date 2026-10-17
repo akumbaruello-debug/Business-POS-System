@@ -25,11 +25,16 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+import httpx
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
 
+from app.config import get_settings
 from app.db import get_session_factory
 from app.errors.codes import ErrorCode
+from app.main import create_app
+from app.services.products import ProductService
 
 
 def _idem() -> str:
@@ -865,3 +870,255 @@ class TestProductDBConstraints:
         )
         assert r.status_code == 404
         assert r.json()["error"]["code"] == ErrorCode.NOT_FOUND.value
+
+
+# ---------------------------------------------------------------------------
+# Transaction boundary - mandatory response enrichment must not fail post-commit
+#
+# PATCH commits the product update, its price-history row, and its audit row.
+# The derived response fields (valuation / moving-average cost / the
+# negative-stock system setting) used to be read AFTER that commit, in the
+# route's _compose_response - so a failure there returned an error to the
+# client while the mutation stayed committed. They are now read inside the
+# service before the commit (ProductService.build_enrichment).
+# ---------------------------------------------------------------------------
+
+
+class TestPatchTransactionBoundary:
+    async def test_patch_returns_enrichment_and_etag(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        """Test A: the success contract is unchanged - enrichment + ETag."""
+        headers = await _owner_headers(app, owner_user)
+        r = await app.post(
+            "/api/v1/products",
+            json=_valid_product(name=f"txa_{uuid.uuid4().hex[:6]}"),
+            headers={**headers, "Idempotency-Key": _idem()},
+        )
+        assert r.status_code == 201, r.text
+        pid = r.json()["id"]
+        updated_at = r.json()["updated_at"]
+
+        r2 = await app.patch(
+            f"/api/v1/products/{pid}",
+            json={"name": "tx_a_renamed", "selling_price": 4321},
+            headers={**headers, "If-Match": f'"{updated_at}"'},
+        )
+        assert r2.status_code == 200, r2.text
+        body = r2.json()
+        assert body["name"] == "tx_a_renamed"
+        assert float(body["selling_price"]) == 4321.0
+        # enrichment fields are still present and well-typed
+        assert float(body["on_hand_quantity"]) == 0
+        assert float(body["inventory_value"]) == 0.0
+        assert body["moving_average_unit_cost"] is None
+        assert body["low_stock"] is False
+        assert isinstance(body["negative_stock_fallback_supported"], bool)
+        # ETag semantics: a new updated_at means the old token is now stale
+        assert body["updated_at"] != updated_at
+        assert int(body["version"]) > 0
+
+    async def test_enrichment_failure_rolls_back_every_write(
+        self, app: AsyncClient, owner_user: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test B: a failure in a mandatory enrichment read aborts everything."""
+        headers = await _owner_headers(app, owner_user)
+        r = await app.post(
+            "/api/v1/products",
+            json=_valid_product(name=f"txb_{uuid.uuid4().hex[:6]}", selling_price=1000),
+            headers={**headers, "Idempotency-Key": _idem()},
+        )
+        assert r.status_code == 201, r.text
+        pid = r.json()["id"]
+        updated_at = r.json()["updated_at"]
+
+        factory = get_session_factory()
+        async with factory() as session:
+            history_before = (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) FROM product_price_history "
+                        "WHERE product_id = :pid"
+                    ),
+                    {"pid": pid},
+                )
+            ).scalar()
+            audit_before = (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) FROM audit_log "
+                        "WHERE entity_type = 'product' AND entity_id = :pid"
+                    ),
+                    {"pid": pid},
+                )
+            ).scalar()
+
+        # One-shot failure: the first enrichment read of the PATCH raises, so
+        # the retry below can proceed on the same still-valid ETag.
+        calls = {"n": 0}
+        real = ProductService.build_enrichment
+
+        async def flaky(self: ProductService, row: dict[str, Any]) -> dict[str, Any]:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("injected enrichment failure")
+            return await real(self, row)
+
+        monkeypatch.setattr(ProductService, "build_enrichment", flaky)
+
+        # The shared `app` fixture uses httpx's default
+        # raise_app_exceptions=True, which would re-raise the injected
+        # RuntimeError into the test instead of returning the HTTP error
+        # response. Build a test-local client over the SAME app (same
+        # settings, same Origin) with propagation disabled so the test can
+        # assert the real 500 envelope. The shared fixture is untouched, so
+        # the suite-wide behavior is unchanged.
+        test_app = create_app(get_settings())
+        transport = httpx.ASGITransport(app=test_app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            headers={"Origin": "http://test"},
+        ) as strict_client:
+            r2 = await strict_client.patch(
+                f"/api/v1/products/{pid}",
+                json={"name": "tx_b_should_not_persist", "selling_price": 9999},
+                headers={**headers, "If-Match": f'"{updated_at}"'},
+            )
+        assert r2.status_code == 500, r2.text
+        assert r2.json()["error"]["code"] == ErrorCode.INTERNAL_ERROR.value
+        assert calls["n"] == 1
+
+        # No partial mutation survived the failed attempt.
+        async with factory() as session:
+            row = (
+                await session.execute(
+                    text("SELECT name, selling_price FROM products WHERE id = :pid"),
+                    {"pid": pid},
+                )
+            ).mappings().first()
+            history_after = (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) FROM product_price_history "
+                        "WHERE product_id = :pid"
+                    ),
+                    {"pid": pid},
+                )
+            ).scalar()
+            audit_after = (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) FROM audit_log "
+                        "WHERE entity_type = 'product' AND entity_id = :pid"
+                    ),
+                    {"pid": pid},
+                )
+            ).scalar()
+        assert row is not None
+        assert row["name"] != "tx_b_should_not_persist"
+        assert float(row["selling_price"]) == 1000.0
+        assert history_after == history_before
+        assert audit_after == audit_before
+
+        # Test C-1: the rollback left the original ETag current, so the retry
+        # succeeds and produces exactly one set of writes.
+        r3 = await app.patch(
+            f"/api/v1/products/{pid}",
+            json={"name": "tx_c_retry_ok", "selling_price": 2500},
+            headers={**headers, "If-Match": f'"{updated_at}"'},
+        )
+        assert r3.status_code == 200, r3.text
+        assert r3.json()["name"] == "tx_c_retry_ok"
+
+        async with factory() as session:
+            history_final = (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) FROM product_price_history "
+                        "WHERE product_id = :pid"
+                    ),
+                    {"pid": pid},
+                )
+            ).scalar()
+        assert history_final == history_before + 1
+
+    async def test_retry_after_commit_with_stale_etag_writes_nothing(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        """Test C-2: a committed update makes the old ETag stale - no extra writes."""
+        headers = await _owner_headers(app, owner_user)
+        r = await app.post(
+            "/api/v1/products",
+            json=_valid_product(name=f"txd_{uuid.uuid4().hex[:6]}", selling_price=700),
+            headers={**headers, "Idempotency-Key": _idem()},
+        )
+        assert r.status_code == 201, r.text
+        pid = r.json()["id"]
+        updated_at = r.json()["updated_at"]
+
+        r2 = await app.patch(
+            f"/api/v1/products/{pid}",
+            json={"selling_price": 800},
+            headers={**headers, "If-Match": f'"{updated_at}"'},
+        )
+        assert r2.status_code == 200, r2.text
+
+        factory = get_session_factory()
+        async with factory() as session:
+            history_before = (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) FROM product_price_history "
+                        "WHERE product_id = :pid"
+                    ),
+                    {"pid": pid},
+                )
+            ).scalar()
+            audit_before = (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) FROM audit_log "
+                        "WHERE entity_type = 'product' AND entity_id = :pid"
+                    ),
+                    {"pid": pid},
+                )
+            ).scalar()
+
+        # Replay the original request: stale If-Match -> 412, no new writes.
+        r3 = await app.patch(
+            f"/api/v1/products/{pid}",
+            json={"selling_price": 900},
+            headers={**headers, "If-Match": f'"{updated_at}"'},
+        )
+        assert r3.status_code == 412
+        assert r3.json()["error"]["code"] == ErrorCode.VERSION_MISMATCH.value
+
+        async with factory() as session:
+            row = (
+                await session.execute(
+                    text("SELECT selling_price FROM products WHERE id = :pid"),
+                    {"pid": pid},
+                )
+            ).mappings().first()
+            history_after = (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) FROM product_price_history "
+                        "WHERE product_id = :pid"
+                    ),
+                    {"pid": pid},
+                )
+            ).scalar()
+            audit_after = (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) FROM audit_log "
+                        "WHERE entity_type = 'product' AND entity_id = :pid"
+                    ),
+                    {"pid": pid},
+                )
+            ).scalar()
+        assert float(row["selling_price"]) == 800.0
+        assert history_after == history_before
+        assert audit_after == audit_before
