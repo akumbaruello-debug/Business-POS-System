@@ -34,6 +34,7 @@ from fastapi.exceptions import HTTPException, RequestValidationError
 from pydantic import ValidationError
 from starlette.responses import JSONResponse
 
+from app.config import get_settings
 from app.core.ids import new_request_id
 from app.errors import AppError
 from app.errors.codes import ErrorCode
@@ -233,6 +234,32 @@ def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse
 # ---------------------------------------------------------------------------
 
 
+def _cors_headers_for_allowed_origin(request: Request) -> dict[str, str]:
+    """CORS response headers when the request Origin is allow-listed.
+
+    ``unhandled_handler`` is registered for ``Exception``, so Starlette
+    promotes it to ``ServerErrorMiddleware`` — the OUTERMOST middleware.
+    By the time it renders, ``CORSMiddleware`` has already been unwound,
+    so the 500 would otherwise carry no CORS headers. A cross-origin
+    browser then refuses to expose the response and the client surfaces
+    an opaque network failure instead of the error envelope.
+
+    Re-attaching the allow-listed origin here keeps unhandled 500s
+    readable. Origins outside the configured allow-list get nothing —
+    the same set ``CORSMiddleware`` and ``OriginCheckMiddleware`` use.
+
+    No ``Vary: Origin`` is emitted: the allow-list is explicit, so the
+    response is not origin-dependent for any origin outside it.
+    """
+    origin = request.headers.get("origin")
+    if not origin or origin not in get_settings().cors_origins_list:
+        return {}
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Credentials": "true",
+    }
+
+
 def unhandled_handler(request: Request, exc: Exception) -> JSONResponse:
     """Last-resort handler. Logs the traceback, returns a generic 500."""
     rid = _get_request_id(request)
@@ -252,6 +279,7 @@ def unhandled_handler(request: Request, exc: Exception) -> JSONResponse:
                 "request_id": str(rid),
             },
         },
+        headers=_cors_headers_for_allowed_origin(request),
     )
 
 
