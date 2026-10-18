@@ -5,7 +5,8 @@ it to ``ServerErrorMiddleware`` — the **outermost** middleware. By the time it
 renders the 500, ``CORSMiddleware`` has already been unwound, so the response
 would carry no CORS headers. A cross-origin browser then refuses to expose it
 and the client surfaces an opaque network failure instead of the error
-envelope (the mechanism behind the production Purchase ``Failed to fetch``).
+envelope — a mechanism that can produce the production Purchase
+``Failed to fetch`` symptom.
 
 These tests pin:
 
