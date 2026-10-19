@@ -244,6 +244,92 @@ class TestCreateUnit:
         assert r.status_code == 400
         assert r.json()["error"]["code"] == ErrorCode.MISSING_HEADER.value
 
+    async def test_create_with_dimension_and_factor(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        headers = await _owner_headers(app, owner_user)
+        r = await app.post(
+            "/api/v1/units/",
+            json={"code": "kg", "name": "Kilogram", "dimension": "mass", "factor_to_base": 1},
+            headers={**headers, "Idempotency-Key": _idem()},
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["dimension"] == "mass"
+        assert r.json()["factor_to_base"] == 1
+        kg_id = r.json()["id"]
+        r2 = await app.post(
+            "/api/v1/units/",
+            json={"code": "ton", "name": "Ton", "dimension": "mass", "factor_to_base": 1000, "base_unit_id": kg_id},
+            headers={**headers, "Idempotency-Key": _idem()},
+        )
+        assert r2.status_code == 201, r2.text
+        assert r2.json()["base_unit_id"] == kg_id
+        assert r2.json()["factor_to_base"] == 1000
+
+    async def test_invalid_dimension_rejected(self, app: AsyncClient, owner_user: dict[str, Any]) -> None:
+        headers = await _owner_headers(app, owner_user)
+        body = _valid_unit()
+        body["dimension"] = "volume"  # not mass/count
+        body["factor_to_base"] = 5
+        r = await app.post(
+            "/api/v1/units/",
+            json=body,
+            headers={**headers, "Idempotency-Key": _idem()},
+        )
+        assert r.status_code == 400
+
+    async def test_cross_dimension_base_rejected(self, app: AsyncClient, owner_user: dict[str, Any]) -> None:
+        headers = await _owner_headers(app, owner_user)
+        # Create a kg base unit (mass)
+        kg = await app.post(
+            "/api/v1/units/",
+            json={"code": f"kg_{uuid.uuid4().hex[:6]}", "name": "Kilogram", "dimension": "mass", "factor_to_base": 1},
+            headers={**headers, "Idempotency-Key": _idem()},
+        )
+        assert kg.status_code == 201, kg.text
+        kg_id = kg.json()["id"]
+        # Creating a count-dimension unit pointing at the kg base unit must fail
+        r = await app.post(
+            "/api/v1/units/",
+            json={"code": "buah", "name": "Buah", "dimension": "count", "factor_to_base": 1, "base_unit_id": kg_id},
+            headers={**headers, "Idempotency-Key": _idem()},
+        )
+        assert r.status_code == 400
+        assert "Cross-dimension" in r.json()["error"]["message"] or "dimension" in r.json()["error"]["message"].lower()
+
+    async def test_create_with_nonexistent_base_returns_404(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        """A nonexistent base_unit_id is a proper 404 (not_found), never a 500."""
+        headers = await _owner_headers(app, owner_user)
+        r = await app.post(
+            "/api/v1/units/",
+            json={"code": "ton", "name": "Ton", "dimension": "mass", "factor_to_base": 1000, "base_unit_id": 999999},
+            headers={**headers, "Idempotency-Key": _idem()},
+        )
+        assert r.status_code == 404, r.text
+        assert r.json()["error"]["code"] == ErrorCode.NOT_FOUND.value
+        assert r.status_code != 500
+
+    async def test_create_self_reference_rejected(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        """A unit referencing itself as its base is invalid (no self-loop)."""
+        headers = await _owner_headers(app, owner_user)
+        r = await app.post(
+            "/api/v1/units/",
+            json=_valid_unit(),
+            headers={**headers, "Idempotency-Key": _idem()},
+        )
+        uid = r.json()["id"]
+        r2 = await app.patch(
+            f"/api/v1/units/{uid}",
+            json={"base_unit_id": uid},
+            headers=headers,
+        )
+        assert r2.status_code == 400, r2.text
+        assert r2.status_code != 500
+
     async def test_create_with_extra_fields_returns_400(
         self, app: AsyncClient, owner_user: dict[str, Any]
     ) -> None:

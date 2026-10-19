@@ -20,7 +20,7 @@ import {
   X,
 } from 'lucide-react'
 import { api } from '@/lib/api-client'
-import type { Category, Pagination, Product, Unit } from '@/lib/product-types'
+import type { Category, Pagination, Product, ProductAttribute, ProductAttributeKind, Unit } from '@/lib/product-types'
 import { formatIDR } from '@/lib/format'
 import { useSession } from '@/lib/session'
 import { useLanguage } from '@/lib/i18n'
@@ -73,6 +73,7 @@ interface UnitListResponse {
   data: Unit[]
   pagination: Pagination
 }
+interface ProductAttributeListResponse { data: ProductAttribute[]; pagination: Pagination }
 
 const DEFAULT_PAGINATION: Pagination = {
   page: 1, per_page: 25, total: 0, total_pages: 1, has_next: false, has_prev: false,
@@ -90,8 +91,15 @@ interface ProductFormValues {
   code: string
   category_id: string
   unit_id: string
+  jenis_id: string
+  size_id: string
+  kualitas_id: string
   selling_price: string
   purchase_price: string
+  selling_price_per_kg: string
+  purchase_price_per_kg: string
+  selling_price_override: string
+  purchase_price_override: string
   low_stock_threshold: string
   notes: string
   is_sellable: boolean
@@ -106,8 +114,13 @@ function emptyForm(): ProductFormValues {
     code: '',
     category_id: '',
     unit_id: '',
+    jenis_id: '', size_id: '', kualitas_id: '',
     selling_price: '',
     purchase_price: '',
+    selling_price_per_kg: '',
+    purchase_price_per_kg: '',
+    selling_price_override: '',
+    purchase_price_override: '',
     low_stock_threshold: '',
     notes: '',
     is_sellable: true,
@@ -130,6 +143,7 @@ export default function ProductsPage() {
   const [pagination, setPagination] = useState<Pagination>(DEFAULT_PAGINATION)
   const [categories, setCategories] = useState<Category[]>([])
   const [units, setUnits] = useState<Unit[]>([])
+  const [productAttributes, setProductAttributes] = useState<ProductAttribute[]>([])
 
   // Filters
   const [query, setQuery] = useState('')
@@ -168,17 +182,25 @@ export default function ProductsPage() {
     units.forEach((u) => m.set(u.id, u.name))
     return m
   }, [units])
+  const productAttributeName = useMemo(() => new Map(productAttributes.map((attribute) => [attribute.id, attribute.name])), [productAttributes])
+  const productDimensions = (product: Product) => ([
+    [product.jenis_id, t('products.jenis')],
+    [product.size_id, t('products.size')],
+    [product.kualitas_id, t('products.kualitas')],
+  ] as const).filter(([id]) => id != null).map(([id, label]) => `${label}: ${productAttributeName.get(id!) ?? '—'}`).join(' · ') || '—'
 
   const fetchLookups = useCallback(async () => {
     // Best-effort: category/unit lists power name columns + filter dropdowns.
     // Both endpoints use category.view / unit.view which every product-viewer holds.
     try {
-      const [catRes, unitRes] = await Promise.all([
+      const [catRes, unitRes, attrRes] = await Promise.allSettled([
         api.get<CategoryListResponse>('/categories?per_page=500'),
         api.get<UnitListResponse>('/units?per_page=200'),
+        api.get<ProductAttributeListResponse>('/product-attributes?per_page=500'),
       ])
-      setCategories(catRes.data)
-      setUnits(unitRes.data)
+      if (catRes.status === 'fulfilled') setCategories(catRes.value.data)
+      if (unitRes.status === 'fulfilled') setUnits(unitRes.value.data)
+      if (attrRes.status === 'fulfilled') setProductAttributes(attrRes.value.data)
     } catch {
       // Lookups are enrichment only — never block the product list on them.
     }
@@ -296,6 +318,10 @@ export default function ProductsPage() {
         name: values.name.trim(),
         selling_price: Number(values.selling_price || 0),
         purchase_price: Number(values.purchase_price || 0),
+        selling_price_per_kg: values.selling_price_per_kg !== '' ? Number(values.selling_price_per_kg) : null,
+        purchase_price_per_kg: values.purchase_price_per_kg !== '' ? Number(values.purchase_price_per_kg) : null,
+        selling_price_override: values.selling_price_override !== '' ? Number(values.selling_price_override) : null,
+        purchase_price_override: values.purchase_price_override !== '' ? Number(values.purchase_price_override) : null,
         is_sellable: values.is_sellable,
         is_purchasable: values.is_purchasable,
         is_producible: values.is_producible,
@@ -304,6 +330,7 @@ export default function ProductsPage() {
       if (values.code.trim()) body.code = values.code.trim()
       if (values.category_id) body.category_id = Number(values.category_id)
       if (values.unit_id) body.unit_id = Number(values.unit_id)
+      for (const key of ['jenis_id', 'size_id', 'kualitas_id'] as const) if (values[key]) body[key] = Number(values[key])
       if (values.low_stock_threshold !== '') body.low_stock_threshold = Number(values.low_stock_threshold)
       if (values.notes.trim()) body.notes = values.notes.trim()
 
@@ -331,6 +358,10 @@ export default function ProductsPage() {
         name: values.name.trim(),
         selling_price: Number(values.selling_price || 0),
         purchase_price: Number(values.purchase_price || 0),
+        selling_price_per_kg: values.selling_price_per_kg !== '' ? Number(values.selling_price_per_kg) : null,
+        purchase_price_per_kg: values.purchase_price_per_kg !== '' ? Number(values.purchase_price_per_kg) : null,
+        selling_price_override: values.selling_price_override !== '' ? Number(values.selling_price_override) : null,
+        purchase_price_override: values.purchase_price_override !== '' ? Number(values.purchase_price_override) : null,
         is_sellable: values.is_sellable,
         is_purchasable: values.is_purchasable,
         is_producible: values.is_producible,
@@ -340,6 +371,7 @@ export default function ProductsPage() {
       else body.category_id = null
       if (values.unit_id) body.unit_id = Number(values.unit_id)
       else body.unit_id = null
+      for (const key of ['jenis_id', 'size_id', 'kualitas_id'] as const) body[key] = values[key] ? Number(values[key]) : null
       if (values.low_stock_threshold !== '') body.low_stock_threshold = Number(values.low_stock_threshold)
       else body.low_stock_threshold = null
       if (values.notes.trim()) body.notes = values.notes.trim()
@@ -544,11 +576,11 @@ export default function ProductsPage() {
                     <th style={{ width: 44, padding: '10px 14px' }}>
                       <input type="checkbox" aria-label="Select all" checked={products.length > 0 && products.every((p) => selected.has(p.id))} onChange={toggleAll} />
                     </th>
-                    {([['name', t('products.product')], ['code', t('common.code')], ['category_id', t('common.category')], ['unit_id', t('common.unit')], ['selling_price', t('products.sellPrice')], ['purchase_price', t('common.cost')], ['on_hand_quantity', t('common.stock')], ['is_active', t('common.status')]] as const).map(([key, label]) => (
+                    {([['name', t('products.product')], ['dimensions', t('products.dimensions')], ['code', t('common.code')], ['category_id', t('common.category')], ['unit_id', t('common.unit')], ['selling_price', t('products.sellPrice')], ['purchase_price', t('common.cost')], ['on_hand_quantity', t('common.stock')], ['is_active', t('common.status')]] as const).map(([key, label]) => (
                       <th key={key} style={{ padding: '10px 14px' }}>
-                        <button onClick={() => handleSort(key)} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 600, background: 'none', border: 0, cursor: 'pointer', color: sortKey === key ? 'var(--primary)' : 'inherit' }}>
+                        {key === 'dimensions' ? <span style={{ padding: '0 8px', fontWeight: 600 }}>{label}</span> : <button onClick={() => handleSort(key)} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 600, background: 'none', border: 0, cursor: 'pointer', color: sortKey === key ? 'var(--primary)' : 'inherit' }}>
                           {label}<ChevronsUpDown size={12} />
-                        </button>
+                        </button>}
                       </th>
                     ))}
                     <th style={{ padding: '10px 14px' }}>{t('common.actions')}</th>
@@ -566,11 +598,12 @@ export default function ProductsPage() {
                           {p.notes && <div style={{ fontSize: 11, color: '#718198', marginTop: 2 }}>{p.notes.slice(0, 60)}</div>}
                         </button>
                       </td>
+                      <td style={{ padding: '12px 14px', minWidth: 190 }}>{productDimensions(p)}</td>
                       <td style={{ padding: '12px 14px', fontFamily: 'monospace', fontSize: 12 }}>{p.code ?? '—'}</td>
                       <td style={{ padding: '12px 14px' }}>{p.category_id != null ? (categoryName.get(p.category_id) ?? '—') : '—'}</td>
                       <td style={{ padding: '12px 14px' }}>{p.unit_id != null ? (unitName.get(p.unit_id) ?? '—') : '—'}</td>
-                      <td style={{ padding: '12px 14px', fontWeight: 600 }}>{formatIDR(p.selling_price)}</td>
-                      <td style={{ padding: '12px 14px' }}>{formatIDR(p.purchase_price)}</td>
+                      <td style={{ padding: '12px 14px', fontWeight: 600 }}>{formatIDR(p.selling_price_default ?? p.selling_price)}</td>
+                      <td style={{ padding: '12px 14px' }}>{formatIDR(p.purchase_price_default ?? p.purchase_price)}</td>
                       <td style={{ padding: '12px 14px' }}>
                         <span style={{ color: p.low_stock ? '#dc2626' : 'inherit' }}>{p.on_hand_quantity}</span>
                         {p.low_stock && <span style={{ marginLeft: 6, fontSize: 10, color: '#dc2626', fontWeight: 600 }}>{t('common.low')}</span>}
@@ -619,7 +652,8 @@ export default function ProductsPage() {
                     </span>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 12, fontSize: 13 }}>
-                    <div><span style={{ fontSize: 11, color: '#718198' }}>{t('products.sellPrice')}</span><div style={{ fontWeight: 600 }}>{formatIDR(p.selling_price)}</div></div>
+                    <div style={{ gridColumn: '1 / -1' }}><span style={{ fontSize: 11, color: '#718198' }}>{t('products.dimensions')}</span><div>{productDimensions(p)}</div></div>
+                    <div><span style={{ fontSize: 11, color: '#718198' }}>{t('products.sellPrice')}</span><div style={{ fontWeight: 600 }}>{formatIDR(p.selling_price_default ?? p.selling_price)}</div></div>
                     <div><span style={{ fontSize: 11, color: '#718198' }}>{t('common.stock')}</span><div>{p.on_hand_quantity}{p.low_stock && ' ⚠'}</div></div>
                   </div>
                   <Button variant="outline" size="sm" style={{ width: '100%', marginTop: 12 }} onClick={() => openView(p)}>{t('products.viewProduct')}</Button>
@@ -659,6 +693,7 @@ export default function ProductsPage() {
           product={activeProduct}
           categories={categories}
           units={units}
+          productAttributes={productAttributes}
           categoryName={categoryName}
           unitName={unitName}
           canEdit={canEdit}
@@ -673,6 +708,7 @@ export default function ProductsPage() {
           mode="add"
           categories={categories}
           units={units}
+          productAttributes={productAttributes}
           categoryName={categoryName}
           unitName={unitName}
           canManage
@@ -689,6 +725,7 @@ export default function ProductsPage() {
           product={activeProduct}
           categories={categories}
           units={units}
+          productAttributes={productAttributes}
           categoryName={categoryName}
           unitName={unitName}
           canManage
@@ -763,6 +800,7 @@ interface ProductFormDialogProps {
   product?: Product | null
   categories: Category[]
   units: Unit[]
+  productAttributes: ProductAttribute[]
   categoryName: Map<number, string>
   unitName: Map<number, string>
   canEdit?: boolean
@@ -778,6 +816,7 @@ function ProductFormDialog({
   product,
   categories,
   units,
+  productAttributes,
   categoryName,
   unitName,
   canEdit,
@@ -796,8 +835,15 @@ function ProductFormDialog({
         code: product.code ?? '',
         category_id: product.category_id != null ? String(product.category_id) : '',
         unit_id: product.unit_id != null ? String(product.unit_id) : '',
+        jenis_id: product.jenis_id != null ? String(product.jenis_id) : '',
+        size_id: product.size_id != null ? String(product.size_id) : '',
+        kualitas_id: product.kualitas_id != null ? String(product.kualitas_id) : '',
         selling_price: String(product.selling_price ?? 0),
         purchase_price: String(product.purchase_price ?? 0),
+        selling_price_per_kg: product.selling_price_per_kg != null ? String(product.selling_price_per_kg) : '',
+        purchase_price_per_kg: product.purchase_price_per_kg != null ? String(product.purchase_price_per_kg) : '',
+        selling_price_override: product.selling_price_override != null ? String(product.selling_price_override) : '',
+        purchase_price_override: product.purchase_price_override != null ? String(product.purchase_price_override) : '',
         low_stock_threshold: product.low_stock_threshold != null ? String(product.low_stock_threshold) : '',
         notes: product.notes ?? '',
         is_sellable: product.is_sellable,
@@ -818,8 +864,15 @@ function ProductFormDialog({
       code: product.code ?? '',
       category_id: product.category_id != null ? String(product.category_id) : '',
       unit_id: product.unit_id != null ? String(product.unit_id) : '',
+      jenis_id: product.jenis_id != null ? String(product.jenis_id) : '',
+      size_id: product.size_id != null ? String(product.size_id) : '',
+      kualitas_id: product.kualitas_id != null ? String(product.kualitas_id) : '',
       selling_price: String(product.selling_price ?? 0),
       purchase_price: String(product.purchase_price ?? 0),
+      selling_price_per_kg: product.selling_price_per_kg != null ? String(product.selling_price_per_kg) : '',
+      purchase_price_per_kg: product.purchase_price_per_kg != null ? String(product.purchase_price_per_kg) : '',
+      selling_price_override: product.selling_price_override != null ? String(product.selling_price_override) : '',
+      purchase_price_override: product.purchase_price_override != null ? String(product.purchase_price_override) : '',
       low_stock_threshold: product.low_stock_threshold != null ? String(product.low_stock_threshold) : '',
       notes: product.notes ?? '',
       is_sellable: product.is_sellable,
@@ -834,6 +887,8 @@ function ProductFormDialog({
 
   const isView = mode === 'view'
   const editing = mode === 'edit'
+  const selectedUnit = units.find((unit) => String(unit.id) === form.unit_id)
+  const canUsePerKgPricing = selectedUnit?.dimension === 'mass' && selectedUnit.factor_to_base != null
   const readonly = isView || (editing && !canManage)
 
   const submit = (e: React.FormEvent) => {
@@ -862,8 +917,8 @@ function ProductFormDialog({
               [t('common.code'), product?.code ?? '—'],
               [t('common.category'), product?.category_id != null ? (categoryName.get(product.category_id) ?? '—') : '—'],
               [t('common.unit'), product?.unit_id != null ? (unitName.get(product.unit_id) ?? '—') : '—'],
-              [t('common.sellPrice'), formatIDR(product?.selling_price)],
-              [t('common.purchasePrice'), formatIDR(product?.purchase_price)],
+              [t('common.sellPrice'), formatIDR(product?.selling_price_default ?? product?.selling_price)],
+              [t('common.purchasePrice'), formatIDR(product?.purchase_price_default ?? product?.purchase_price)],
               [t('common.onHand'), String(product?.on_hand_quantity ?? 0)],
               [t('common.lowStockThreshold'), product?.low_stock_threshold != null ? formatIDR(product.low_stock_threshold) : '—'],
               [t('common.inventoryValue'), formatIDR(product?.inventory_value)],
@@ -938,6 +993,19 @@ function ProductFormDialog({
             </select>
           </label>
 
+          {(['jenis', 'size', 'kualitas'] as const).map((kind) => {
+            const key = `${kind}_id` as 'jenis_id' | 'size_id' | 'kualitas_id'
+            const selectedId = form[key] ? Number(form[key]) : null
+            const options = productAttributes.filter((attribute) => attribute.kind === kind && (attribute.is_active || attribute.id === selectedId))
+            return <label key={kind} style={labelStyle}>
+              {t(`products.${kind}`)}
+              <select value={form[key]} onChange={(event) => set(key, event.target.value)} style={inputStyle}>
+                <option value="">{t('products.noProductAttribute')}</option>
+                {options.map((attribute) => <option key={attribute.id} value={String(attribute.id)}>{attribute.name}</option>)}
+              </select>
+            </label>
+          })}
+
           <label style={labelStyle}>
             {t('common.sellPrice')} (Rp)
             <input type="number" min={0} step="any" value={form.selling_price} onChange={(e) => set('selling_price', e.target.value)} style={inputStyle} />
@@ -947,6 +1015,29 @@ function ProductFormDialog({
             {t('common.purchasePrice')} (Rp)
             <input type="number" min={0} step="any" value={form.purchase_price} onChange={(e) => set('purchase_price', e.target.value)} style={inputStyle} />
           </label>
+
+          {canEdit && <>
+            <label style={labelStyle}>
+              Selling unit override (Rp)
+              <input type="number" min={0} step="0.01" value={form.selling_price_override} onChange={(e) => set('selling_price_override', e.target.value)} style={inputStyle} placeholder="Use derived/default price" />
+            </label>
+            <label style={labelStyle}>
+              Purchase unit override (Rp)
+              <input type="number" min={0} step="0.01" value={form.purchase_price_override} onChange={(e) => set('purchase_price_override', e.target.value)} style={inputStyle} placeholder="Use derived/default price" />
+            </label>
+          </>}
+
+          {canUsePerKgPricing && <>
+            <label style={labelStyle}>
+              {t('products.sellPricePerKg')} (Rp/kg)
+              <input type="number" min={0} step="0.01" value={form.selling_price_per_kg} onChange={(e) => set('selling_price_per_kg', e.target.value)} style={inputStyle} />
+            </label>
+
+            <label style={labelStyle}>
+              {t('products.purchasePricePerKg')} (Rp/kg)
+              <input type="number" min={0} step="0.01" value={form.purchase_price_per_kg} onChange={(e) => set('purchase_price_per_kg', e.target.value)} style={inputStyle} />
+            </label>
+          </>}
 
           <label style={{ ...labelStyle, gridColumn: '1 / -1' }}>
             {t('common.lowStockThreshold')}

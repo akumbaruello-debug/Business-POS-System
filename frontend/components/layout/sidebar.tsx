@@ -16,6 +16,7 @@ import {
   Settings,
   Shield,
   ShoppingCart,
+  Scissors,
   Store,
   Truck,
   Undo2,
@@ -57,6 +58,7 @@ function useNavigation(): NavGroup[] {
         { label: t('nav.products'), icon: Package, href: '/products' },
         { label: t('nav.inventory'), icon: Boxes, href: '/inventory' },
         { label: t('stockMovements.title'), icon: History, href: '/inventory/movements', required: 'inventory.view' },
+        { label: t('sorting.title'), icon: Scissors, href: '/inventory/sorting', required: 'inventory.sort' },
       ],
     },
     {

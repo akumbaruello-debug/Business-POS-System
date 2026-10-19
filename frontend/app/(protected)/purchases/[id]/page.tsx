@@ -17,10 +17,13 @@ import {
 import { api } from '@/lib/api-client'
 import type { Contact } from '@/lib/contact-types'
 import type { PaymentMethod, Purchase, PurchaseLine } from '@/lib/purchase-types'
-import type { Product } from '@/lib/product-types'
+import type { Product, Unit } from '@/lib/product-types'
 import { formatIDR } from '@/lib/format'
 import { Button } from '@/components/ui/button'
 import { useSession } from '@/lib/session'
+
+type PurchaseCostCategory = { id: number; name: string; capitalizable: boolean; financial_category_id: number | null; is_active: boolean }
+type PurchaseCost = { id: number; category_id: number; category_name: string; amount: number; allocation_method: string; capitalizable: boolean; posted_at: string | null }
 
 // ---------------------------------------------------------------------------
 // Detail: GET /purchases/{id}?include=lines,shipping,payments,returns
@@ -139,9 +142,13 @@ export default function PurchaseDetailPage() {
   const [supplierContact, setSupplierContact] = useState<Contact | null>(null)
   const [productMap, setProductMap] = useState<Map<number, string>>(new Map())
   const [productOptions, setProductOptions] = useState<Product[]>([])
+  const [unitOptions, setUnitOptions] = useState<Unit[]>([])
   const [suppliers, setSuppliers] = useState<Contact[]>([])
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([])
   const [paymentMap, setPaymentMap] = useState<Map<number, PaymentMethod>>(new Map())
+  const [purchaseCosts, setPurchaseCosts] = useState<PurchaseCost[]>([])
+  const [purchaseCostCategories, setPurchaseCostCategories] = useState<PurchaseCostCategory[]>([])
+  const [purchaseCostDefault, setPurchaseCostDefault] = useState('line_value')
 
   // Phase B — draft editing (lifecycle_status === 'draft' + capability).
   const [busy, setBusy] = useState(false)
@@ -150,6 +157,7 @@ export default function PurchaseDetailPage() {
   const [headerOpen, setHeaderOpen] = useState(false)
   const [lineDialog, setLineDialog] = useState<{ mode: 'add' | 'edit'; line?: PurchaseLine } | null>(null)
   const [shippingOpen, setShippingOpen] = useState(false)
+  const [purchaseCostOpen, setPurchaseCostOpen] = useState(false)
   const [paymentOpen, setPaymentOpen] = useState(false)
   const [repaymentOpen, setRepaymentOpen] = useState(false)
   const router = useRouter()
@@ -182,6 +190,12 @@ export default function PurchaseDetailPage() {
         (data.updated_at ? `"${data.updated_at}"` : null)
       setEtag(derived)
       setPurchase(data)
+      try {
+        const costs = await api.get<{ data: PurchaseCost[] }>(`/purchases/${purchaseId}/costs`)
+        setPurchaseCosts(costs.data)
+      } catch {
+        setPurchaseCosts([])
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load purchase'
       const code = (err as Error & { code?: string }).code
@@ -195,6 +209,15 @@ export default function PurchaseDetailPage() {
       setLoading(false)
     }
   }, [purchaseId, canView])
+
+  useEffect(() => {
+    if (!canView) return
+    let cancelled = false
+    api.get<{ data: PurchaseCostCategory[]; default_allocation: string }>('/purchase-cost-categories')
+      .then((result) => { if (!cancelled) { setPurchaseCostCategories(result.data); setPurchaseCostDefault(result.default_allocation) } })
+      .catch(() => { if (!cancelled) setPurchaseCostCategories([]) })
+    return () => { cancelled = true }
+  }, [canView])
 
   useEffect(() => {
     fetchPurchase()
@@ -243,6 +266,14 @@ export default function PurchaseDetailPage() {
     return () => {
       cancelled = true
     }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    api.get<{ data: Unit[] }>('/units?per_page=500&filter[is_active]=true')
+      .then((response) => { if (!cancelled) setUnitOptions(response.data) })
+      .catch(() => { if (!cancelled) setUnitOptions([]) })
+    return () => { cancelled = true }
   }, [])
 
   const supplierDisplayName = useMemo(() => {
@@ -402,13 +433,13 @@ export default function PurchaseDetailPage() {
       },
     )
 
-  const addLine = (product_id: number, quantity: number, unit_price: number) =>
+  const addLine = (line: { product_id: number | null; receipt_type: 'classified' | 'unsorted'; unit_id: number | null; quantity: number; unit_price: number }) =>
     runMutation(
       'Line added',
       async () => {
         await api.post(
           `/purchases/${purchaseId}/lines`,
-          { product_id, quantity, unit_price },
+          line,
           { headers: { 'If-Match': etag ?? '', 'Idempotency-Key': crypto.randomUUID() } },
         )
         setLineDialog(null)
@@ -447,6 +478,20 @@ export default function PurchaseDetailPage() {
         setShippingOpen(false)
       },
     )
+
+  const addPurchaseCost = (category_id: number, amount: number, allocation_method: string, allocations: { purchase_line_id: number; amount: number }[]) =>
+    runMutation('Purchase cost saved', async () => {
+      await api.post(`/purchases/${purchaseId}/costs`, {
+        category_id, amount,
+        allocation_method: allocation_method === 'default' ? null : allocation_method,
+        allocations: (allocation_method === 'manual' || (allocation_method === 'default' && purchaseCostDefault === 'manual')) ? allocations : [],
+      }, { headers: { 'Idempotency-Key': crypto.randomUUID(), 'If-Match': etag ?? '' } })
+      setPurchaseCostOpen(false)
+    })
+
+  const deletePurchaseCost = (costId: number) => runMutation('Purchase cost removed', async () => {
+    await api.delete(`/purchases/${purchaseId}/costs/${costId}`, { headers: { 'If-Match': etag ?? '', 'Idempotency-Key': crypto.randomUUID() } })
+  })
 
   // Phase D — record a payment. Backend enforces the ceiling (allocation_exceeds_payable)
   // + idempotency + ETag. Frontend only does UX pre-check (amount > 0, <= outstanding)
@@ -585,7 +630,7 @@ export default function PurchaseDetailPage() {
     for (const { line, qty } of linesPayload) {
       const remaining = remainingQtyForLine(line)
       if (qty > remaining) {
-        const name = productMap.get(line.product_id) ?? `Product #${line.product_id}`
+        const name = line.product_id === null ? 'Unsorted receipt' : productMap.get(line.product_id) ?? `Product #${line.product_id}`
         setReturnError(`Quantity for ${name} exceeds the remaining ${remaining}.`)
         return
       }
@@ -775,13 +820,15 @@ export default function PurchaseDetailPage() {
                       <th style={{ padding: '10px 14px', fontWeight: 700, textAlign: 'right' }}>Quantity</th>
                       <th style={{ padding: '10px 14px', fontWeight: 700, textAlign: 'right' }}>Unit price</th>
                       <th style={{ padding: '10px 14px', fontWeight: 700, textAlign: 'right' }}>Allocated shipping</th>
+                      <th style={{ padding: '10px 14px', fontWeight: 700, textAlign: 'right' }}>Capitalizable costs</th>
+                      <th style={{ padding: '10px 14px', fontWeight: 700, textAlign: 'right' }}>Operating costs</th>
                       <th style={{ padding: '10px 14px', fontWeight: 700, textAlign: 'right' }}>Line total</th>
                       {editable && <th style={{ padding: '10px 14px', width: 90 }} />}
                     </tr>
                   </thead>
                   <tbody>
                     {purchase.lines.map((ln) => {
-                      const name = productMap.get(ln.product_id) ?? `Product #${ln.product_id}`
+                      const name = ln.product_id === null ? `Unsorted receipt · ${unitOptions.find((u) => u.id === ln.unit_id)?.code ?? 'mass'}` : productMap.get(ln.product_id) ?? `Product #${ln.product_id}`
                       return (
                         <tr key={ln.id} style={{ borderTop: '1px solid #f0f4f9' }}>
                           <td style={{ padding: '11px 14px' }}>
@@ -791,13 +838,15 @@ export default function PurchaseDetailPage() {
                               </span>
                               <div>
                                 <div style={{ fontWeight: 600, color: '#0f172a' }}>{name}</div>
-                                <div style={{ fontSize: 11, color: '#94a3b8' }}>Line #{ln.line_number} · Product {ln.product_id}</div>
+                                <div style={{ fontSize: 11, color: '#94a3b8' }}>Line #{ln.line_number} · {ln.receipt_type === 'unsorted' ? 'Pending classification' : `Product ${ln.product_id}`}</div>
                               </div>
                             </div>
                           </td>
                           <td style={{ padding: '11px 14px', textAlign: 'right', fontWeight: 600 }}>{ln.quantity}</td>
                           <td style={{ padding: '11px 14px', textAlign: 'right' }}>{formatIDR(ln.unit_price)}</td>
                           <td style={{ padding: '11px 14px', textAlign: 'right', color: '#475569' }}>{formatIDR(ln.allocated_shipping)}</td>
+                          <td style={{ padding: '11px 14px', textAlign: 'right', color: '#475569' }}>{formatIDR(ln.allocated_capitalizable_cost)}</td>
+                          <td style={{ padding: '11px 14px', textAlign: 'right', color: '#475569' }}>{formatIDR(ln.allocated_operating_cost)}</td>
                           <td style={{ padding: '11px 14px', textAlign: 'right', fontWeight: 700 }}>{formatIDR(ln.line_total)}</td>
                           {editable && (
                             <td style={{ padding: '11px 14px', textAlign: 'right', whiteSpace: 'nowrap' }}>
@@ -868,6 +917,30 @@ export default function PurchaseDetailPage() {
             ) : (
               <div style={{ padding: 20, fontSize: 13, color: '#718198', textAlign: 'center' }}>No shipping recorded.</div>
             )}
+          </Card>
+
+          <Card
+            title="Additional purchase costs"
+            description="Capitalizable costs enter inventory value; operating costs enter the P&L when posted."
+            action={editable ? <Button variant="outline" size="sm" onClick={() => setPurchaseCostOpen(true)} disabled={busy || purchaseCostCategories.filter((c) => c.is_active).length === 0}><Plus size={13} className="mr-1" /> Add cost</Button> : undefined}
+          >
+            {purchaseCosts.length ? (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead><tr style={{ background: '#f8fafc', textAlign: 'left', color: '#64748b' }}>
+                    <th style={{ padding: '10px 14px' }}>Category</th><th style={{ padding: '10px 14px' }}>Treatment</th><th style={{ padding: '10px 14px' }}>Allocation</th><th style={{ padding: '10px 14px', textAlign: 'right' }}>Amount</th>{editable && <th />}
+                  </tr></thead>
+                  <tbody>{purchaseCosts.map((cost) => <tr key={cost.id} style={{ borderTop: '1px solid #f0f4f9' }}>
+                    <td style={{ padding: '10px 14px', fontWeight: 600 }}>{cost.category_name}</td>
+                    <td style={{ padding: '10px 14px' }}>{cost.capitalizable ? 'Capitalized into inventory' : 'Operating expense'}</td>
+                    <td style={{ padding: '10px 14px' }}>{cost.allocation_method.replace('_', ' ')}</td>
+                    <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 700 }}>{formatIDR(cost.amount)}</td>
+                    {editable && <td style={{ padding: '8px' }}><button onClick={() => deletePurchaseCost(cost.id)} disabled={busy} aria-label="Remove purchase cost" style={{ border: 0, background: 'none', color: '#dc2626' }}><Trash2 size={14} /></button></td>}
+                  </tr>)}</tbody>
+                </table>
+              </div>
+            ) : <div style={{ padding: 20, fontSize: 13, color: '#718198', textAlign: 'center' }}>No additional costs recorded.</div>}
+            {editable && purchaseCostCategories.filter((c) => c.is_active).length === 0 && <div style={{ padding: '0 16px 16px', fontSize: 12, color: '#64748b' }}>Configure purchase cost categories in Settings before adding costs.</div>}
           </Card>
 
           <Card title="Payment history" description="Recorded payments on this purchase">
@@ -1179,13 +1252,14 @@ export default function PurchaseDetailPage() {
           mode={lineDialog.mode}
           line={lineDialog.line}
           products={productOptions}
+          units={unitOptions}
           productName={productMap}
           busy={busy}
           onCancel={() => setLineDialog(null)}
-          onSave={(productId, quantity, unitPrice) =>
+          onSave={(lineInput) =>
             lineDialog.mode === 'add'
-              ? addLine(productId, quantity, unitPrice)
-              : updateLine(lineDialog.line!.id, quantity, unitPrice)
+              ? addLine(lineInput)
+              : updateLine(lineDialog.line!.id, lineInput.quantity, lineInput.unit_price)
           }
         />
       )}
@@ -1198,6 +1272,16 @@ export default function PurchaseDetailPage() {
           busy={busy}
           onCancel={() => setShippingOpen(false)}
           onSave={saveShipping}
+        />
+      )}
+      {purchaseCostOpen && purchase && (
+        <PurchaseCostDialog
+          categories={purchaseCostCategories.filter((category) => category.is_active)}
+          defaultAllocation={purchaseCostDefault}
+          lines={purchase.lines ?? []}
+          busy={busy}
+          onCancel={() => setPurchaseCostOpen(false)}
+          onSave={addPurchaseCost}
         />
       )}
 
@@ -1228,7 +1312,7 @@ export default function PurchaseDetailPage() {
       {returnOpen && purchase && (
         <ReturnDialog
           lines={purchase.lines ?? []}
-          productName={(id) => productMap.get(id) ?? `Product #${id}`}
+          productName={(id) => id === null ? 'Unsorted receipt' : productMap.get(id) ?? `Product #${id}`}
           remainingFor={remainingQtyForLine}
           reason={returnReason}
           quantities={returnQuantities}
@@ -1537,6 +1621,7 @@ function LineDialog({
   mode,
   line,
   products,
+  units,
   productName,
   busy,
   onCancel,
@@ -1545,12 +1630,15 @@ function LineDialog({
   mode: 'add' | 'edit'
   line?: PurchaseLine
   products: Product[]
+  units: Unit[]
   productName: Map<number, string>
   busy: boolean
   onCancel: () => void
-  onSave: (productId: number, quantity: number, unitPrice: number) => void
+  onSave: (line: { product_id: number | null; receipt_type: 'classified' | 'unsorted'; unit_id: number | null; quantity: number; unit_price: number }) => void
 }) {
-  const [productId, setProductId] = useState(line ? String(line.product_id) : '')
+  const [productId, setProductId] = useState(line?.product_id ? String(line.product_id) : '')
+  const [receiptType, setReceiptType] = useState<'classified' | 'unsorted'>(line?.receipt_type ?? 'classified')
+  const [unitId, setUnitId] = useState(line?.unit_id ? String(line.unit_id) : '')
   const [quantity, setQuantity] = useState(line ? String(line.quantity) : '1')
   const [unitPrice, setUnitPrice] = useState(line ? String(line.unit_price) : '')
   const [localError, setLocalError] = useState<string | null>(null)
@@ -1560,7 +1648,7 @@ function LineDialog({
 
   const submit = () => {
     setLocalError(null)
-    if (!productId) {
+    if (receiptType === 'classified' && !productId) {
       setLocalError('Select a product.')
       return
     }
@@ -1574,7 +1662,12 @@ function LineDialog({
       setLocalError('Unit price must be 0 or greater.')
       return
     }
-    onSave(Number(productId), q, u)
+    if (receiptType === 'unsorted' && !unitId) {
+      setLocalError('Choose a configured mass unit for pending stock.')
+      return
+    }
+    onSave({ product_id: receiptType === 'classified' ? Number(productId) : null, receipt_type: receiptType,
+      unit_id: receiptType === 'unsorted' ? Number(unitId) : null, quantity: q, unit_price: u })
   }
 
   return (
@@ -1588,6 +1681,19 @@ function LineDialog({
       width={520}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {mode === 'add' && <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label style={FIELD_LABEL}>Receipt classification</label>
+          <select value={receiptType} onChange={(e) => setReceiptType(e.target.value as 'classified' | 'unsorted')} style={FIELD_INPUT}>
+            <option value="classified">Classified product</option><option value="unsorted">Unsorted pending stock</option>
+          </select>
+        </div>}
+        {mode === 'add' && receiptType === 'unsorted' && <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label style={FIELD_LABEL}>Mass unit</label>
+          <select value={unitId} onChange={(e) => setUnitId(e.target.value)} style={FIELD_INPUT}>
+            <option value="">Select mass unit…</option>{units.filter((unit) => unit.dimension === 'mass' && unit.factor_to_base).map((unit) => <option key={unit.id} value={unit.id}>{unit.name} ({unit.code})</option>)}
+          </select>
+        </div>}
+        {receiptType === 'classified' && <>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <label style={FIELD_LABEL}>Product</label>
           <select
@@ -1602,7 +1708,7 @@ function LineDialog({
                 {p.name}
               </option>
             ))}
-            {mode === 'edit' && line && !products.some((p) => p.id === line.product_id) && (
+            {mode === 'edit' && line?.product_id !== null && line?.product_id !== undefined && !products.some((p) => p.id === line.product_id) && (
               <option value={String(line.product_id)}>{productName.get(line.product_id) ?? `Product #${line.product_id}`}</option>
             )}
           </select>
@@ -1610,6 +1716,7 @@ function LineDialog({
             <span style={{ fontSize: 11, color: '#94a3b8' }}>Product cannot be changed — delete and re-add instead.</span>
           )}
         </div>
+        </>}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <label style={FIELD_LABEL}>Quantity</label>
@@ -1636,7 +1743,7 @@ function LineDialog({
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#475569' }}>
           <span>Unit</span>
-          <span>{selectedProduct?.unit_id ? `unit #${selectedProduct.unit_id}` : '—'}</span>
+          <span>{receiptType === 'unsorted' ? units.find((unit) => String(unit.id) === unitId)?.code ?? '—' : selectedProduct?.unit_id ? `unit #${selectedProduct.unit_id}` : '—'}</span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #f0f4f9', paddingTop: 10, fontSize: 13, fontWeight: 700 }}>
           <span>Subtotal (preview)</span>
@@ -1731,6 +1838,45 @@ function ShippingDialog({
             <AlertTriangle size={15} /> {localError}
           </div>
         )}
+      </div>
+    </DialogShell>
+  )
+}
+
+function PurchaseCostDialog({
+  categories, lines, defaultAllocation, busy, onCancel, onSave,
+}: {
+  categories: PurchaseCostCategory[]
+  lines: PurchaseLine[]
+  defaultAllocation: string
+  busy: boolean
+  onCancel: () => void
+  onSave: (categoryId: number, amount: number, method: string, allocations: { purchase_line_id: number; amount: number }[]) => void
+}) {
+  const [categoryId, setCategoryId] = useState(String(categories[0]?.id ?? ''))
+  const [amount, setAmount] = useState('')
+  const [method, setMethod] = useState('default')
+  const [manual, setManual] = useState<Record<number, string>>({})
+  const [error, setError] = useState('')
+  const effectiveMethod = method === 'default' ? defaultAllocation : method
+  const submit = () => {
+    const value = Number(amount)
+    if (!categoryId || !Number.isFinite(value) || value < 0) { setError('Choose a category and enter a non-negative amount.'); return }
+    const allocations = lines.map((line) => ({ purchase_line_id: line.id, amount: Number(manual[line.id] ?? 0) }))
+    if (effectiveMethod === 'manual' && (allocations.some((row) => !Number.isFinite(row.amount) || row.amount < 0) || Math.round(allocations.reduce((sum, row) => sum + row.amount, 0) * 100) !== Math.round(value * 100))) {
+      setError('Manual line allocations must add up to the purchase cost amount.'); return
+    }
+    onSave(Number(categoryId), value, method, allocations)
+  }
+  const selected = categories.find((category) => category.id === Number(categoryId))
+  return (
+    <DialogShell title="Add purchase cost" description={selected?.capitalizable ? 'This cost is capitalized into inventory.' : 'This cost is recognized as an operating expense when the purchase is posted.'} onCancel={onCancel} busy={busy} onSave={submit} saveLabel="Add cost" width={560}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}><span style={FIELD_LABEL}>Cost category</span><select value={categoryId} onChange={(event) => setCategoryId(event.target.value)} style={FIELD_INPUT}>{categories.map((category) => <option key={category.id} value={category.id}>{category.name} · {category.capitalizable ? 'Inventory' : 'Operating expense'}</option>)}</select></label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}><span style={FIELD_LABEL}>Amount</span><input type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} style={FIELD_INPUT} /></label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}><span style={FIELD_LABEL}>Allocation</span><select value={method} onChange={(event) => setMethod(event.target.value)} style={FIELD_INPUT}><option value="default">Use configured default</option><option value="line_value">Line value</option><option value="weight">Weight (kg equivalent)</option><option value="manual">Manual per line</option></select></label>
+        {effectiveMethod === 'manual' && <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>{lines.map((line) => <label key={line.id} style={{ display: 'grid', gridTemplateColumns: '1fr 150px', alignItems: 'center', gap: 10, fontSize: 12 }}><span>Line #{line.line_number} · Product #{line.product_id}</span><input type="number" min="0" step="0.01" value={manual[line.id] ?? ''} onChange={(event) => setManual((current) => ({ ...current, [line.id]: event.target.value }))} style={FIELD_INPUT} /></label>)}</div>}
+        {error && <div style={{ padding: '10px 12px', borderRadius: 8, background: '#fef2f2', color: '#dc2626', fontSize: 13 }}>{error}</div>}
       </div>
     </DialogShell>
   )
@@ -1907,7 +2053,7 @@ function ReturnDialog({
   onSave,
 }: {
   lines: PurchaseLine[]
-  productName: (productId: number) => string
+  productName: (productId: number | null) => string
   remainingFor: (line: PurchaseLine) => number
   reason: string
   quantities: Record<number, number>
@@ -1965,7 +2111,7 @@ function ReturnDialog({
               {lines.map((line) => {
                 const remaining = remainingFor(line)
                 const qty = Number(quantities[line.id] ?? 0) || 0
-                const name = productName(line.product_id)
+                const name = line.product_id === null ? 'Unsorted receipt' : productName(line.product_id)
                 return (
                   <div
                     key={line.id}

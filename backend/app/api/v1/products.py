@@ -118,8 +118,17 @@ def _to_response(
         code=row.get("code"),
         category_id=row.get("category_id"),
         unit_id=row.get("unit_id"),
+        jenis_id=row.get("jenis_id"),
+        size_id=row.get("size_id"),
+        kualitas_id=row.get("kualitas_id"),
         purchase_price=float(row["purchase_price"]),
         selling_price=float(row["selling_price"]),
+        purchase_price_per_kg=(float(row["purchase_price_per_kg"]) if row.get("purchase_price_per_kg") is not None else None),
+        selling_price_per_kg=(float(row["selling_price_per_kg"]) if row.get("selling_price_per_kg") is not None else None),
+        purchase_price_override=(float(row["purchase_price_override"]) if row.get("purchase_price_override") is not None else None),
+        selling_price_override=(float(row["selling_price_override"]) if row.get("selling_price_override") is not None else None),
+        purchase_price_default=float(row.get("purchase_price_default", row["purchase_price"])),
+        selling_price_default=float(row.get("selling_price_default", row["selling_price"])),
         low_stock_threshold=row.get("low_stock_threshold"),
         allow_negative_stock=bool(row["allow_negative_stock"]),
         notes=row.get("notes"),
@@ -150,23 +159,24 @@ async def _compose_response(
     row: dict[str, Any],
     etag: str,
     version: int,
+    enrichment: dict[str, Any] | None = None,
+    resolved_prices: dict[str, float] | None = None,
 ) -> ProductResponse:
-    """Enrich a raw product row with valuation fields from the service."""
-    valuation = await svc.get_valuation(row["id"])
-    on_hand = int(valuation["on_hand_quantity"]) if valuation else 0
-    inv_value = float(valuation["inventory_value"]) if valuation else 0.0
-    # moving_average_unit_cost: use get_moving_average_unit_cost (computed from
-    # the product_valuation view columns per app.inventory.valuation).
-    avg_cost = await svc.get_moving_average_unit_cost(row["id"])
+    """Enrich a raw product row with valuation fields from the service.
 
-    # low_stock: computed boolean — on_hand <= threshold when threshold is set.
-    threshold = row.get("low_stock_threshold")
-    low_stock = threshold is not None and on_hand <= float(threshold)
-
-    # negative_stock_fallback_supported: product flag OR system setting default.
-    fallback_supported = bool(row["allow_negative_stock"]) or bool(
-        await svc.get_system_setting_bool("default_negative_stock_allowed")
-    )
+    ``enrichment`` may be supplied by a mutation that had to compute these
+    reads before its commit (see ``ProductService.build_enrichment``). When
+    omitted, the reads happen here — correct for read-only routes, which have
+    no mutation to roll back.
+    """
+    row = {**row, **(resolved_prices or await svc.default_prices(row))}
+    if enrichment is None:
+        enrichment = await svc.build_enrichment(row)
+    on_hand = int(enrichment["on_hand_quantity"])
+    inv_value = float(enrichment["inventory_value"])
+    avg_cost = enrichment["moving_average_unit_cost"]
+    low_stock = bool(enrichment["low_stock"])
+    fallback_supported = bool(enrichment["negative_stock_fallback_supported"])
 
     return _to_response(
         row,
@@ -215,9 +225,10 @@ async def list_products(
         unit_id=filter_unit_id,
     )
     data = []
-    for r in rows:
+    prices = await svc.default_prices_for_rows(rows)
+    for r, resolved_prices in zip(rows, prices, strict=True):
         etag, ver = _etag_from_row(r)
-        resp = await _compose_response(svc, r, etag, ver)
+        resp = await _compose_response(svc, r, etag, ver, resolved_prices=resolved_prices)
         data.append(resp)
     return MetaEnvelope[ProductResponse](
         data=data,
@@ -256,8 +267,15 @@ async def create_product(
         code=payload.code,
         category_id=payload.category_id,
         unit_id=payload.unit_id,
+        jenis_id=payload.jenis_id,
+        size_id=payload.size_id,
+        kualitas_id=payload.kualitas_id,
         purchase_price=payload.purchase_price,
         selling_price=payload.selling_price,
+        purchase_price_per_kg=payload.purchase_price_per_kg,
+        selling_price_per_kg=payload.selling_price_per_kg,
+        purchase_price_override=payload.purchase_price_override,
+        selling_price_override=payload.selling_price_override,
         low_stock_threshold=payload.low_stock_threshold,
         allow_negative_stock=payload.allow_negative_stock,
         notes=payload.notes,
@@ -329,13 +347,24 @@ async def update_product(
     payload = ProductPatch(**body)
 
     svc = ProductService(uow)
-    row = await svc.update(
+    row, enrichment = await svc.update(
         id,
         name=payload.name,
         category_id=payload.category_id,
         unit_id=payload.unit_id,
+        jenis_id=payload.jenis_id,
+        size_id=payload.size_id,
+        kualitas_id=payload.kualitas_id,
         purchase_price=payload.purchase_price,
         selling_price=payload.selling_price,
+        purchase_price_per_kg=payload.purchase_price_per_kg,
+        selling_price_per_kg=payload.selling_price_per_kg,
+        purchase_price_override=payload.purchase_price_override,
+        selling_price_override=payload.selling_price_override,
+        clear_purchase_price_override=("purchase_price_override" in payload.model_fields_set and payload.purchase_price_override is None),
+        clear_selling_price_override=("selling_price_override" in payload.model_fields_set and payload.selling_price_override is None),
+        clear_purchase_price_per_kg=("purchase_price_per_kg" in payload.model_fields_set and payload.purchase_price_per_kg is None),
+        clear_selling_price_per_kg=("selling_price_per_kg" in payload.model_fields_set and payload.selling_price_per_kg is None),
         low_stock_threshold=payload.low_stock_threshold,
         allow_negative_stock=payload.allow_negative_stock,
         notes=payload.notes,
@@ -347,7 +376,9 @@ async def update_product(
         ctx=_audit_ctx(request, principal),
     )
     resp_etag, version = _etag_from_row(row)
-    return await _compose_response(svc, row, resp_etag, version)
+    return await _compose_response(
+        svc, row, resp_etag, version, enrichment=enrichment
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +489,8 @@ async def get_product_price_history(
             product_id=int(r["product_id"]),
             purchase_price=float(r["purchase_price"]),
             selling_price=float(r["selling_price"]),
+            purchase_price_per_kg=(float(r["purchase_price_per_kg"]) if r.get("purchase_price_per_kg") is not None else None),
+            selling_price_per_kg=(float(r["selling_price_per_kg"]) if r.get("selling_price_per_kg") is not None else None),
             effective_at=r["effective_at"].isoformat()
             if hasattr(r["effective_at"], "isoformat")
             else str(r["effective_at"]),
