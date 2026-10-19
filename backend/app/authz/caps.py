@@ -64,6 +64,14 @@ _CANONICAL: Final[OrderedDict[str, tuple[CapabilityCategory, str]]] = OrderedDic
         "category.manage": (CapabilityCategory.MASTER, "Manage product categories."),
         "unit.view": (CapabilityCategory.MASTER, "View units of measure."),
         "unit.manage": (CapabilityCategory.MASTER, "Manage units of measure."),
+        "product_attribute.view": (
+            CapabilityCategory.MASTER,
+            "View product attributes (Jenis/Size/Kualitas).",
+        ),
+        "product_attribute.manage": (
+            CapabilityCategory.MASTER,
+            "Manage product attributes (Jenis/Size/Kualitas).",
+        ),
         "product.view": (CapabilityCategory.MASTER, "View products."),
         "product.create": (CapabilityCategory.MASTER, "Create products."),
         "product.edit": (CapabilityCategory.MASTER, "Edit products."),
@@ -117,6 +125,7 @@ _CANONICAL: Final[OrderedDict[str, tuple[CapabilityCategory, str]]] = OrderedDic
             CapabilityCategory.INVENTORY,
             "Manually adjust stock (positive or negative).",
         ),
+        "inventory.sort": (CapabilityCategory.INVENTORY, "Create, post, and reverse sorting events."),
         "inventory.transfer": (
             CapabilityCategory.INVENTORY,
             "Transfer stock between locations (V2).",
@@ -174,6 +183,7 @@ _STAFF_DEFAULT_CODES: Final[tuple[str, ...]] = (
     "auth.login",
     "category.view",
     "unit.view",
+    "product_attribute.view",
     "product.view",
     "contact.view",
     "payment_method.view",
