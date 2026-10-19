@@ -65,6 +65,7 @@ KNOWN_SETTING_KEYS: frozenset[str] = frozenset(
         "company_address",
         "adjustment_creates_pnl_entry",
         "language",
+        "default_purchase_cost_allocation",
     }
 )
 

@@ -34,7 +34,7 @@ Authoritative inputs honored:
 | 4 | **Purchasing** | Purchase header, lines, shipping, lifecycle | `purchases`, `purchase_lines`, `purchase_payments`, `purchase_shipping` |
 | 5 | **Sales / POS** | Sale header, lines, multi-payment, over-tender | `sales`, `sale_lines`, `sale_payments` |
 | 6 | **Returns** | Sales returns and purchase returns | `sales_returns`, `sales_return_lines`, `purchase_returns`, `purchase_return_lines` |
-| 7 | **Inventory Ledger** | Stock movements and current balance | `stock_movements` (the single authoritative inventory ledger) |
+| 7 | **Inventory Ledger** | Classified SKU stock and pending mixed receipts | `stock_movements`, `pending_receipt_batches`, `pending_inventory_movements`, `sorting_events` |
 | 8 | **Production** | Single-step raw→finished with overhead cost lines | `production_runs`, `production_inputs`, `production_outputs`, `production_cost_lines`, `cost_types` |
 | 9 | **Finance (Manual)** | Manual income and expense with categories | `financial_categories`, `manual_finance_entries` |
 | 10 | **Payments (Cash Flow)** | All cash movements (sale receipts, supplier payments, refunds, supplier repayments, manual I&E) | `cash_movements` (immutable cash journal) |
@@ -61,7 +61,7 @@ Authoritative inputs honored:
 | Customer Refund Liability (per sale) | — | **Derived**: `SUM(refunds for sale cancelled) – SUM(paid at cancellation)` — net of refunds already paid | Per Accounting Model Event 6 |
 | Supplier Receivable (per purchase) | — | **Derived**: `SUM(purchase_payments.amount) – SUM(supplier repayments)` for cancelled paid purchases | Per Accounting Model Event 12/13 |
 | Stock valuation (per product) | `stock_movements` | `on_hand_quantity × current_moving_avg_unit_cost` | |
-| Total Inventory GL value | — | **Derived**: SUM over products | Surfaces on dashboard |
+| Total Inventory value | — | **Derived**: classified product valuation + pending receipt carrying value | Pending stock is excluded from sellable product stock |
 | Cash balance | `cash_movements` | `SUM(amount)` | Surfaces as "Cash on hand" |
 | Revenue | — | **Derived**: SUM of sale line revenues for posted, non-cancelled sales (returns deducted) | |
 | COGS | — | **Derived**: SUM of sale line `unit_cost × qty` for posted, non-cancelled sales (returns deducted) | |
@@ -527,7 +527,13 @@ GROUP BY product_id;
 
 **Indexes:** `(product_id, movement_date)`, `trigger`, `(reference_type, reference_id)`, `reversal_of_movement_id`, `reversed_by_movement_id`.
 
-**This table is the single source of truth for inventory.** See §3.4 for derived views and moving-average calculations.
+`stock_movements` is authoritative for classified product inventory. Phase 4 pending mixed receipts use the append-only `pending_inventory_movements` ledger described below. `inventory_valuation` adds both ledgers for total inventory carrying value; pending balances never enter product pickers or product on-hand quantities.
+
+#### 2.6.2 Phase 4 pending receipts and sorting
+
+`pending_receipt_batches` links one unsorted purchase line to immutable unit/conversion and acquisition-value snapshots. `pending_inventory_movements` records pending receipt, sorting consumption/remainder, eligible purchase return, cancellation, and linked reversal movements. Quantity and value balances may never become negative, and posted movement history is append-only.
+
+`sorting_events` is a one-source receipt event with input, loss, remainder, reason, actor, timestamp, version, and posted value snapshots. `sorting_event_outputs` records multiple classified SKU outputs with the conversion snapshot and linked stock movement. `sorting_event_reversals` records eligible event reversals once. Posting is permitted only when output base quantities + loss + remainder equal input exactly at four decimal places. Carrying value is allocated by base weight with stable largest-remainder cent rounding; loss value reduces inventory and appears once as a non-cash operating expense.
 
 ---
 
@@ -797,7 +803,7 @@ SELECT SUM(amount) FROM cash_movements;
 
 ### 3.2 Stock Movements: The Authoritative Inventory Ledger
 
-`stock_movements` is the **single source of truth** for inventory. On-hand quantity is derived:
+`stock_movements` is the source of truth for **classified product** on-hand quantities. Unclassified received goods are held in the separate pending receipt ledger and cannot be selected for sale. Product on-hand quantity remains derived:
 
 ```sql
 SELECT product_id, SUM(quantity) AS on_hand_quantity
@@ -805,7 +811,7 @@ FROM stock_movements
 GROUP BY product_id;
 ```
 
-Movement `trigger` values (15 total, **authoritative**):
+Movement `trigger` values include the established V1 set and Phase 4 `sorting_output` / `sorting_reversal`:
 
 | Trigger | Direction | Source | Reversible? |
 |---|---|---|---|

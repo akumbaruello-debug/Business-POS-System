@@ -66,6 +66,7 @@ async def fetch_inventory_report(uow: UnitOfWork) -> dict[str, Any]:
     audit decision).
     """
     row = await uow.first_row(_INVENTORY_AGG_SQL)
+    inventory_total = await uow.first_scalar("SELECT total_inventory_value FROM inventory_valuation")
     if row is None:
         return {
             "total_inventory_value": 0.0,
@@ -74,7 +75,7 @@ async def fetch_inventory_report(uow: UnitOfWork) -> dict[str, Any]:
             "out_of_stock_count": 0,
         }
     return {
-        "total_inventory_value": float(row.get("total_inventory_value") or 0),
+        "total_inventory_value": float(inventory_total or 0),
         "products_count": int(row.get("products_count") or 0),
         "low_stock_count": int(row.get("low_stock_count") or 0),
         "out_of_stock_count": int(row.get("out_of_stock_count") or 0),

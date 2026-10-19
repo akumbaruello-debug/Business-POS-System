@@ -1607,10 +1607,10 @@ async def fetch_crl_aggregates(
 # Revenue/COGS/Gross: reuses the D-8 derivation from F.1 sales
 # (Σ sales.total_amount - Σ posted sales_returns.selling; symmetric
 # for COGS using sale_lines.cogs_total_snapshot). Other income and
-# operating expenses are Σ manual_finance_entries.amount (lifecycle
-# = 'posted' to avoid double-counting the cancelling reversing
-# cash_movement per F.3 decision) joined to financial_categories
-# by entry_type.
+# manual operating expenses use posted manual_finance_entries. Posted
+# non-capitalizable purchase costs are added once by their immutable
+# purchase-posted timestamp and snapshotted expense-category mapping;
+# later payments only settle AP.
 # ---------------------------------------------------------------------------
 
 _PNL_AGG_SQL = """
@@ -1666,6 +1666,53 @@ manual_expense AS (
       AND mfe.lifecycle_status = 'posted'
       AND mfe.entry_date >= :from_iso
       AND mfe.entry_date <= :to_iso
+),
+purchase_cost_expense AS (
+    SELECT
+      (
+        SELECT COALESCE(SUM(pc.amount), 0)
+        FROM purchase_costs pc
+        JOIN financial_categories fc ON fc.id = pc.financial_category_id_snapshot
+        WHERE pc.capitalizable_snapshot = FALSE
+          AND pc.posted_at IS NOT NULL
+          AND pc.posted_at >= :from_iso
+          AND pc.posted_at <= :to_iso
+          AND fc.entry_type = 'expense'
+      ) - (
+        SELECT COALESCE(SUM(pc.amount), 0)
+        FROM purchase_costs pc
+        JOIN purchases p ON p.id = pc.purchase_id
+        JOIN financial_categories fc ON fc.id = pc.financial_category_id_snapshot
+        WHERE pc.capitalizable_snapshot = FALSE
+          AND pc.posted_at IS NOT NULL
+          AND p.lifecycle_status = 'cancelled'
+          AND p.cancellation_date >= :from_iso
+          AND p.cancellation_date <= :to_iso
+          AND fc.entry_type = 'expense'
+      ) - (
+        SELECT COALESCE(SUM(a.amount * prl.quantity / pl.quantity), 0)
+        FROM purchase_cost_allocations a
+        JOIN purchase_costs pc ON pc.id = a.purchase_cost_id
+        JOIN financial_categories fc ON fc.id = pc.financial_category_id_snapshot
+        JOIN purchase_lines pl ON pl.id = a.purchase_line_id
+        JOIN purchase_return_lines prl ON prl.purchase_line_id = pl.id
+        JOIN purchase_returns pr ON pr.id = prl.purchase_return_id
+        JOIN purchases p ON p.id = pc.purchase_id
+        WHERE pc.capitalizable_snapshot = FALSE
+          AND pc.posted_at IS NOT NULL
+          AND pr.lifecycle_status = 'posted'
+          AND pr.return_date >= :from_iso
+          AND pr.return_date <= :to_iso
+          AND p.lifecycle_status <> 'cancelled'
+          AND fc.entry_type = 'expense'
+      ) AS total
+),
+sorting_loss_expense AS (
+    SELECT COALESCE(SUM(e.loss_value_snapshot), 0) AS total
+    FROM sorting_events e
+    WHERE e.posted_at IS NOT NULL
+      AND e.posted_at >= :from_iso
+      AND e.posted_at <= :to_iso
 )
 SELECT
     GREATEST(sn.gross_revenue - COALESCE(r.selling_returned, 0), 0) AS revenue,
@@ -1676,11 +1723,13 @@ SELECT
         0
     )                                                             AS gross_profit,
     mi.total                                                      AS other_income,
-    me.total                                                      AS operating_expenses
+    me.total + pce.total + sle.total                               AS operating_expenses
 FROM sales_net sn,
      returns r,
      manual_income mi,
-     manual_expense me
+     manual_expense me,
+     purchase_cost_expense pce,
+     sorting_loss_expense sle
 """
 
 
