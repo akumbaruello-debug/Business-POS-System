@@ -41,8 +41,8 @@ from app.db import UnitOfWork
 # Derived fields (on_hand_quantity, low_stock, etc.) live on the
 # ``product_valuation`` view and are composed by the service layer.
 _COLS = (
-    "id, name, code, category_id, unit_id, purchase_price, "
-    "selling_price, low_stock_threshold, allow_negative_stock, "
+    "id, name, code, category_id, unit_id, jenis_id, size_id, kualitas_id, "
+    "purchase_price, selling_price, purchase_price_per_kg, selling_price_per_kg, purchase_price_override, selling_price_override, low_stock_threshold, allow_negative_stock, "
     "notes, is_sellable, is_purchasable, is_producible, is_active, "
     "created_at, updated_at"
 )
@@ -143,8 +143,15 @@ class ProductRepository:
         code: str | None,
         category_id: int | None,
         unit_id: int | None,
+        jenis_id: int | None,
+        size_id: int | None,
+        kualitas_id: int | None,
         purchase_price: float,
         selling_price: float,
+        purchase_price_per_kg: float | None = None,
+        selling_price_per_kg: float | None = None,
+        purchase_price_override: float | None = None,
+        selling_price_override: float | None = None,
         low_stock_threshold: float | None,
         allow_negative_stock: bool | None,
         notes: str | None,
@@ -163,13 +170,13 @@ class ProductRepository:
         row = await self._uow.first_row(
             f"""
             INSERT INTO products (
-                code, name, category_id, unit_id, purchase_price,
-                selling_price, low_stock_threshold, allow_negative_stock,
+                code, name, category_id, unit_id, jenis_id, size_id, kualitas_id,
+                purchase_price, selling_price, purchase_price_per_kg, selling_price_per_kg, purchase_price_override, selling_price_override, low_stock_threshold, allow_negative_stock,
                 notes, is_sellable, is_purchasable, is_producible, is_active,
                 created_by, updated_by
             ) VALUES (
-                :code, :name, :category_id, :unit_id, :purchase_price,
-                :selling_price, :low_stock_threshold, :allow_negative_stock,
+                :code, :name, :category_id, :unit_id, :jenis_id, :size_id, :kualitas_id,
+                :purchase_price, :selling_price, :purchase_price_per_kg, :selling_price_per_kg, :purchase_price_override, :selling_price_override, :low_stock_threshold, :allow_negative_stock,
                 :notes, :is_sellable, :is_purchasable, :is_producible,
                 :is_active, :created_by, :updated_by
             )
@@ -180,8 +187,15 @@ class ProductRepository:
                 "name": name,
                 "category_id": category_id,
                 "unit_id": unit_id,
+                "jenis_id": jenis_id,
+                "size_id": size_id,
+                "kualitas_id": kualitas_id,
                 "purchase_price": purchase_price,
                 "selling_price": selling_price,
+                "purchase_price_per_kg": purchase_price_per_kg,
+                "selling_price_per_kg": selling_price_per_kg,
+                "purchase_price_override": purchase_price_override,
+                "selling_price_override": selling_price_override,
                 "low_stock_threshold": low_stock_threshold,
                 "allow_negative_stock": allow_negative_stock,
                 "notes": notes,
@@ -204,8 +218,19 @@ class ProductRepository:
         name: str | None = None,
         category_id: int | None = None,
         unit_id: int | None = None,
+        jenis_id: int | None = None,
+        size_id: int | None = None,
+        kualitas_id: int | None = None,
         purchase_price: float | None = None,
         selling_price: float | None = None,
+        purchase_price_per_kg: float | None = None,
+        selling_price_per_kg: float | None = None,
+        clear_purchase_price_per_kg: bool = False,
+        clear_selling_price_per_kg: bool = False,
+        purchase_price_override: float | None = None,
+        selling_price_override: float | None = None,
+        clear_purchase_price_override: bool = False,
+        clear_selling_price_override: bool = False,
         low_stock_threshold: float | None = None,
         allow_negative_stock: bool | None = None,
         notes: str | None = None,
@@ -232,12 +257,41 @@ class ProductRepository:
         if unit_id is not None:
             fields.append("unit_id = :unit_id")
             params["unit_id"] = unit_id
+        if jenis_id is not None:
+            fields.append("jenis_id = :jenis_id")
+            params["jenis_id"] = jenis_id
+        if size_id is not None:
+            fields.append("size_id = :size_id")
+            params["size_id"] = size_id
+        if kualitas_id is not None:
+            fields.append("kualitas_id = :kualitas_id")
+            params["kualitas_id"] = kualitas_id
         if purchase_price is not None:
             fields.append("purchase_price = :purchase_price")
             params["purchase_price"] = purchase_price
         if selling_price is not None:
             fields.append("selling_price = :selling_price")
             params["selling_price"] = selling_price
+        if purchase_price_per_kg is not None:
+            fields.append("purchase_price_per_kg = :purchase_price_per_kg")
+            params["purchase_price_per_kg"] = purchase_price_per_kg
+        if selling_price_per_kg is not None:
+            fields.append("selling_price_per_kg = :selling_price_per_kg")
+            params["selling_price_per_kg"] = selling_price_per_kg
+        if purchase_price_override is not None:
+            fields.append("purchase_price_override = :purchase_price_override")
+            params["purchase_price_override"] = purchase_price_override
+        if selling_price_override is not None:
+            fields.append("selling_price_override = :selling_price_override")
+            params["selling_price_override"] = selling_price_override
+        if clear_purchase_price_override:
+            fields.append("purchase_price_override = NULL")
+        if clear_selling_price_override:
+            fields.append("selling_price_override = NULL")
+        if clear_purchase_price_per_kg:
+            fields.append("purchase_price_per_kg = NULL")
+        if clear_selling_price_per_kg:
+            fields.append("selling_price_per_kg = NULL")
         if low_stock_threshold is not None:
             fields.append("low_stock_threshold = :low_stock_threshold")
             params["low_stock_threshold"] = low_stock_threshold

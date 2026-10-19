@@ -40,11 +40,15 @@ export interface PurchaseShipping {
 export interface PurchaseLine {
   id: number
   purchase_id: number
-  product_id: number
+  product_id: number | null
+  receipt_type: 'classified' | 'unsorted'
+  unit_id: number | null
   quantity: number
   unit_price: number
   line_subtotal: number
   allocated_shipping: number
+  allocated_capitalizable_cost: number
+  allocated_operating_cost: number
   line_total: number
   line_number: number
 }
@@ -76,7 +80,7 @@ export interface PurchaseReturnLine {
   id: number
   purchase_return_id: number
   purchase_line_id: number
-  product_id: number
+  product_id: number | null
   quantity: number
   unit_cost_snapshot: number
   line_value: number

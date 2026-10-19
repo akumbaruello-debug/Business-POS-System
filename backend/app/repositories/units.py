@@ -56,7 +56,8 @@ class UnitRepository:
 
         rows = await self._uow.fetch_all(
             f"""
-            SELECT id, code, name, is_active
+            SELECT id, code, name, is_active,
+                   dimension, base_unit_id, factor_to_base
             FROM units
             {where}
             ORDER BY id
@@ -69,14 +70,16 @@ class UnitRepository:
     async def get(self, id: int) -> dict[str, Any] | None:
         """Get by id (any state)."""
         return await self._uow.first_row(
-            "SELECT id, code, name, is_active FROM units WHERE id = :id",
+            "SELECT id, code, name, is_active, dimension, base_unit_id, factor_to_base "
+            "FROM units WHERE id = :id",
             {"id": id},
         )
 
     async def get_by_code(self, code: str) -> dict[str, Any] | None:
         """Get by code (any state)."""
         return await self._uow.first_row(
-            "SELECT id, code, name, is_active FROM units WHERE code = :code",
+            "SELECT id, code, name, is_active, dimension, base_unit_id, factor_to_base "
+            "FROM units WHERE code = :code",
             {"code": code},
         )
 
@@ -90,13 +93,23 @@ class UnitRepository:
         code: str,
         name: str,
         is_active: bool,
+        dimension: str | None = None,
+        base_unit_id: int | None = None,
+        factor_to_base: float | None = None,
     ) -> dict[str, Any]:
         """Insert and return the new row."""
         row = await self._uow.first_row(
-            "INSERT INTO units (code, name, is_active) "
-            "VALUES (:code, :name, :is_active) "
-            "RETURNING id, code, name, is_active",
-            {"code": code, "name": name, "is_active": is_active},
+            "INSERT INTO units (code, name, is_active, dimension, base_unit_id, factor_to_base) "
+            "VALUES (:code, :name, :is_active, :dimension, :base_unit_id, :factor_to_base) "
+            "RETURNING id, code, name, is_active, dimension, base_unit_id, factor_to_base",
+            {
+                "code": code,
+                "name": name,
+                "is_active": is_active,
+                "dimension": dimension,
+                "base_unit_id": base_unit_id,
+                "factor_to_base": factor_to_base,
+            },
         )
         if row is None:
             raise RuntimeError("Unit insert returned no row")
@@ -108,8 +121,11 @@ class UnitRepository:
         *,
         name: str | None = None,
         is_active: bool | None = None,
+        dimension: str | None = None,
+        base_unit_id: int | None = None,
+        factor_to_base: float | None = None,
     ) -> dict[str, Any] | None:
-        """Update name and/or is_active. Returns the updated row or None.
+        """Update name/is_active/dimension/conversion. Returns the updated row or None.
 
         ``code`` is mutable in SQL but NOT exposed via the public API
         (UnitPatch has no code field) — see service layer.
@@ -122,6 +138,15 @@ class UnitRepository:
         if is_active is not None:
             fields.append("is_active = :is_active")
             params["is_active"] = is_active
+        if dimension is not None:
+            fields.append("dimension = :dimension")
+            params["dimension"] = dimension
+        if base_unit_id is not None:
+            fields.append("base_unit_id = :base_unit_id")
+            params["base_unit_id"] = base_unit_id
+        if factor_to_base is not None:
+            fields.append("factor_to_base = :factor_to_base")
+            params["factor_to_base"] = factor_to_base
 
         if not fields:
             return await self.get(id)
@@ -131,7 +156,7 @@ class UnitRepository:
             UPDATE units
             SET {", ".join(fields)}
             WHERE id = :id
-            RETURNING id, code, name, is_active
+            RETURNING id, code, name, is_active, dimension, base_unit_id, factor_to_base
             """,  # noqa: S608 — SET fields are hardcoded whitelist literals, user data is parameterized
             params,
         )
@@ -141,7 +166,8 @@ class UnitRepository:
         """Update ``code`` (used by the service for rename-to-existing-code
         conflict handling — the full unique constraint blocks duplicates)."""
         row = await self._uow.first_row(
-            "UPDATE units SET code = :code WHERE id = :id RETURNING id, code, name, is_active",
+            "UPDATE units SET code = :code WHERE id = :id "
+            "RETURNING id, code, name, is_active, dimension, base_unit_id, factor_to_base",
             {"id": id, "code": code},
         )
         return row
@@ -149,7 +175,8 @@ class UnitRepository:
     async def deactivate(self, id: int) -> dict[str, Any] | None:
         """Set is_active = FALSE (always allowed — reversible)."""
         row = await self._uow.first_row(
-            "UPDATE units SET is_active = FALSE WHERE id = :id RETURNING id, code, name, is_active",
+            "UPDATE units SET is_active = FALSE WHERE id = :id "
+            "RETURNING id, code, name, is_active, dimension, base_unit_id, factor_to_base",
             {"id": id},
         )
         return row

@@ -46,8 +46,8 @@ _PURCHASE_COLS = (
 )
 
 _PURCHASE_LINE_COLS = (
-    "id, purchase_id, product_id, quantity, unit_price, line_subtotal, "
-    "allocated_shipping, line_total, line_number"
+    "id, purchase_id, product_id, receipt_type, unit_id, quantity, unit_price, line_subtotal, "
+    "allocated_shipping, allocated_capitalizable_cost, allocated_operating_cost, line_total, line_number"
 )
 
 _PURCHASE_SHIPPING_COLS = (
@@ -390,7 +390,9 @@ class PurchaseRepository:
         self,
         *,
         purchase_id: int,
-        product_id: int,
+        product_id: int | None,
+        receipt_type: str = "classified",
+        unit_id: int | None = None,
         quantity: Decimal,
         unit_price: Decimal,
         line_subtotal: Decimal,
@@ -401,10 +403,10 @@ class PurchaseRepository:
         row = await self._uow.first_row(
             f"""
             INSERT INTO purchase_lines (
-                purchase_id, product_id, quantity, unit_price,
+                purchase_id, product_id, receipt_type, unit_id, quantity, unit_price,
                 line_subtotal, allocated_shipping, line_total, line_number
             ) VALUES (
-                :purchase_id, :product_id, :quantity, :unit_price,
+                :purchase_id, :product_id, :receipt_type, :unit_id, :quantity, :unit_price,
                 :line_subtotal, :allocated_shipping, :line_total, :line_number
             )
             RETURNING {_PURCHASE_LINE_COLS}
@@ -412,6 +414,8 @@ class PurchaseRepository:
             {
                 "purchase_id": purchase_id,
                 "product_id": product_id,
+                "receipt_type": receipt_type,
+                "unit_id": unit_id,
                 "quantity": quantity,
                 "unit_price": unit_price,
                 "line_subtotal": line_subtotal,
@@ -917,7 +921,7 @@ class PurchaseRepository:
         *,
         purchase_return_id: int,
         purchase_line_id: int,
-        product_id: int,
+        product_id: int | None,
         quantity: Decimal,
         unit_cost_snapshot: Decimal,
         line_value: Decimal,

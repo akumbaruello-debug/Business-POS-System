@@ -32,6 +32,20 @@ export interface Unit {
   code: string
   name: string
   is_active: boolean
+  dimension?: 'mass' | 'count' | null
+  base_unit_id?: number | null
+  factor_to_base?: number | null
+  version: number
+  created_at: string
+  updated_at: string
+}
+
+export type ProductAttributeKind = 'jenis' | 'size' | 'kualitas'
+export interface ProductAttribute {
+  id: number
+  kind: ProductAttributeKind
+  name: string
+  is_active: boolean
   version: number
   created_at: string
   updated_at: string
@@ -43,8 +57,17 @@ export interface Product {
   code: string | null
   category_id: number | null
   unit_id: number | null
+  jenis_id: number | null
+  size_id: number | null
+  kualitas_id: number | null
   purchase_price: number
   selling_price: number
+  purchase_price_per_kg: number | null
+  selling_price_per_kg: number | null
+  purchase_price_override: number | null
+  selling_price_override: number | null
+  purchase_price_default: number
+  selling_price_default: number
   low_stock_threshold: number | null
   allow_negative_stock: boolean | null
   notes: string | null
@@ -69,8 +92,15 @@ export interface ProductCreateRequest {
   code?: string | null
   category_id?: number | null
   unit_id?: number | null
+  jenis_id?: number | null
+  size_id?: number | null
+  kualitas_id?: number | null
   purchase_price?: number
   selling_price?: number
+  purchase_price_per_kg?: number | null
+  selling_price_per_kg?: number | null
+  purchase_price_override?: number | null
+  selling_price_override?: number | null
   low_stock_threshold?: number | null
   allow_negative_stock?: boolean | null
   notes?: string | null
