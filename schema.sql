@@ -289,16 +289,74 @@ COMMENT ON TABLE categories IS 'Product categories. Hierarchical via parent_id. 
 -- -----------------------------------------------------------------------------
 -- 5.2 units
 -- Units of measure (pcs, kg, etc.). No master data effects.
+-- V3-Phase 2: dimension + conversion factor (V3-PLAN §5.2).
+--   dimension       mass | count (NULL = legacy/unspecified)
+--   base_unit_id    NULL for a dimension's canonical base unit; else FK to
+--                   the canonical unit of the same dimension.
+--   factor_to_base  positive; for a base unit factor_to_base = 1
+--                   (kg=1, kuintal=100, ton=1000 in mass; buah/pcs=1 in count).
+-- Cross-dimension conversion (e.g. buah->kg) is NOT permitted implicitly;
+-- enforced at the API/service layer, not by a DB check.
 -- -----------------------------------------------------------------------------
 CREATE TABLE units (
-    id          SERIAL        PRIMARY KEY,
-    code        VARCHAR(20)   NOT NULL,
-    name        VARCHAR(50)   NOT NULL,
-    is_active   BOOLEAN       NOT NULL DEFAULT TRUE
+    id              SERIAL        PRIMARY KEY,
+    code            VARCHAR(20)   NOT NULL,
+    name            VARCHAR(50)   NOT NULL,
+    is_active       BOOLEAN       NOT NULL DEFAULT TRUE,
+    dimension       VARCHAR(20),
+    base_unit_id    BIGINT,
+    factor_to_base  NUMERIC(18, 6)
 );
 
 CREATE UNIQUE INDEX ux_units_code ON units (code);
 CREATE INDEX ix_units_active ON units (is_active);
+CREATE INDEX ix_units_dimension ON units (dimension);
+
+ALTER TABLE units
+    ADD CONSTRAINT fk_units_base_unit
+        FOREIGN KEY (base_unit_id) REFERENCES units (id) ON DELETE RESTRICT;
+ALTER TABLE units
+    ADD CONSTRAINT ck_units_factor_positive
+        CHECK (factor_to_base IS NULL OR factor_to_base > 0);
+ALTER TABLE units
+    ADD CONSTRAINT ck_units_dimension
+        CHECK (dimension IS NULL OR dimension IN ('mass', 'count'));
+ALTER TABLE units
+    ADD CONSTRAINT ck_units_base_not_self
+        CHECK (base_unit_id IS NULL OR base_unit_id <> id);
+
+
+-- -----------------------------------------------------------------------------
+-- 5.2a product_attributes (V3 Phase 2 — Jenis / Size / Kualitas)
+-- Managed master values for the three product dimensions, discriminated by
+-- ``kind`` (CHECK IN ('jenis','size','kualitas')). The three dimensions stay
+-- semantically distinct; ``kind`` is closed to these three values.
+-- No starter/default values are seeded: V3-PLAN templates are reference
+-- material the Owner reviews/edits before use. Existing rows are never
+-- invented for them. Referenced values cannot be hard-deleted (products FK
+-- ON DELETE RESTRICT → 409 referenced_by_history); deactivation is always
+-- allowed and reversible.
+-- -----------------------------------------------------------------------------
+CREATE TABLE product_attributes (
+    id          SERIAL        PRIMARY KEY,
+    kind        VARCHAR(20)   NOT NULL,
+    name        VARCHAR(100)  NOT NULL,
+    is_active   BOOLEAN       NOT NULL DEFAULT TRUE,
+    created_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_product_attributes_kind
+        CHECK (kind IN ('jenis', 'size', 'kualitas')),
+    CONSTRAINT ux_product_attributes_kind_name
+        UNIQUE (kind, name)
+);
+
+CREATE INDEX ix_product_attributes_kind ON product_attributes (kind);
+CREATE INDEX ix_product_attributes_active ON product_attributes (is_active);
+
+COMMENT ON TABLE product_attributes IS
+ 'Managed master values for the three product dimensions (Jenis/Size/Kualitas), discriminated by kind. No starter values are seeded — the Owner reviews/edits before use (V3-PLAN §5.1, §6).';
+COMMENT ON COLUMN product_attributes.kind IS
+ 'One of: jenis (fish species/type), size (grading), kualitas (quality grade). Closed CHECK set — distinct semantics, never merged.';
 
 
 -- -----------------------------------------------------------------------------
@@ -315,8 +373,15 @@ CREATE TABLE products (
     name                  VARCHAR(200)    NOT NULL,
     category_id           INT             NULL,
     unit_id               INT             NULL,
+    jenis_id              INT             NULL,  -- V3: product dimension Jenis (product_attributes.kind='jenis')
+    size_id               INT             NULL,  -- V3: product dimension Size  (product_attributes.kind='size')
+    kualitas_id           INT             NULL,  -- V3: product dimension Kualitas (product_attributes.kind='kualitas')
     purchase_price        NUMERIC(15,2)   NOT NULL DEFAULT 0,
     selling_price         NUMERIC(15,2)   NOT NULL DEFAULT 0,
+    purchase_price_per_kg NUMERIC(15,2)   NULL CHECK (purchase_price_per_kg IS NULL OR purchase_price_per_kg >= 0),
+    selling_price_per_kg  NUMERIC(15,2)   NULL CHECK (selling_price_per_kg IS NULL OR selling_price_per_kg >= 0),
+    purchase_price_override NUMERIC(15,2) NULL CHECK (purchase_price_override IS NULL OR purchase_price_override >= 0),
+    selling_price_override NUMERIC(15,2) NULL CHECK (selling_price_override IS NULL OR selling_price_override >= 0),
     low_stock_threshold   NUMERIC(15,4)   NULL,
     allow_negative_stock  BOOLEAN         NULL,    -- NULL = use global default
     is_sellable           BOOLEAN         NOT NULL DEFAULT TRUE,
@@ -332,6 +397,12 @@ CREATE TABLE products (
         FOREIGN KEY (category_id) REFERENCES categories (id) ON DELETE RESTRICT,
     CONSTRAINT fk_products_unit
         FOREIGN KEY (unit_id) REFERENCES units (id) ON DELETE RESTRICT,
+    CONSTRAINT fk_products_jenis
+        FOREIGN KEY (jenis_id) REFERENCES product_attributes (id) ON DELETE RESTRICT,
+    CONSTRAINT fk_products_size
+        FOREIGN KEY (size_id) REFERENCES product_attributes (id) ON DELETE RESTRICT,
+    CONSTRAINT fk_products_kualitas
+        FOREIGN KEY (kualitas_id) REFERENCES product_attributes (id) ON DELETE RESTRICT,
     CONSTRAINT fk_products_created_by
         FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE RESTRICT,
     CONSTRAINT fk_products_updated_by
@@ -348,12 +419,24 @@ CREATE TABLE products (
 CREATE UNIQUE INDEX ux_products_code ON products (code) WHERE code IS NOT NULL;
 CREATE INDEX ix_products_active ON products (is_active);
 CREATE INDEX ix_products_category ON products (category_id);
+CREATE INDEX ix_products_jenis ON products (jenis_id);
+CREATE INDEX ix_products_size ON products (size_id);
+CREATE INDEX ix_products_kualitas ON products (kualitas_id);
+-- Duplicate full (jenis,size,kualitas) combination rejected; partial combos unaffected.
+CREATE UNIQUE INDEX ux_products_dim_combination
+    ON products (jenis_id, size_id, kualitas_id)
+    WHERE jenis_id IS NOT NULL AND size_id IS NOT NULL AND kualitas_id IS NOT NULL;
 -- Partial index for low-stock dashboard (per DB spec §2.2.3)
 CREATE INDEX ix_products_low_stock
     ON products (low_stock_threshold)
     WHERE is_active = TRUE AND low_stock_threshold IS NOT NULL;
 
 COMMENT ON TABLE  products IS 'Product master. price columns are display/reference; authoritative cost comes from stock_movements at posting time.';
+COMMENT ON COLUMN products.jenis_id IS 'V3 product dimension: Jenis (type). FK product_attributes (kind=jenis); NULL = not classified on this axis.';
+COMMENT ON COLUMN products.size_id IS 'V3 product dimension: Size (grading). FK product_attributes (kind=size); NULL = not classified on this axis.';
+COMMENT ON COLUMN products.kualitas_id IS 'V3 product dimension: Kualitas (quality). FK product_attributes (kind=kualitas); NULL = not classified on this axis.';
+COMMENT ON COLUMN products.purchase_price_per_kg IS 'Optional owner-managed purchase reference price per kg; used for future defaults only when unit dimension and factor are configured as mass.';
+COMMENT ON COLUMN products.selling_price_per_kg IS 'Optional owner-managed selling reference price per kg; used for future defaults only when unit dimension and factor are configured as mass.';
 COMMENT ON COLUMN products.allow_negative_stock IS 'NULL = use system_settings.default_negative_stock_allowed. Per BR-STOCK-011.';
 COMMENT ON COLUMN products.purchase_price IS 'Display/reference value; last purchase price is the negative-stock COGS fallback (BR-COST-006).';
 
@@ -368,6 +451,10 @@ CREATE TABLE product_price_history (
     product_id      INT           NOT NULL,
     purchase_price  NUMERIC(15,2) NOT NULL,
     selling_price   NUMERIC(15,2) NOT NULL,
+    purchase_price_per_kg NUMERIC(15,2) NULL CHECK (purchase_price_per_kg IS NULL OR purchase_price_per_kg >= 0),
+    selling_price_per_kg  NUMERIC(15,2) NULL CHECK (selling_price_per_kg IS NULL OR selling_price_per_kg >= 0),
+    purchase_price_override NUMERIC(15,2) NULL CHECK (purchase_price_override IS NULL OR purchase_price_override >= 0),
+    selling_price_override NUMERIC(15,2) NULL CHECK (selling_price_override IS NULL OR selling_price_override >= 0),
     effective_at    TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
     changed_by      INT           NOT NULL,
     CONSTRAINT fk_pph_product
@@ -737,7 +824,9 @@ COMMENT ON COLUMN purchases.version IS 'Server-incremented; exposed as ETag for 
 CREATE TABLE purchase_lines (
     id                    BIGSERIAL       PRIMARY KEY,
     purchase_id           BIGINT          NOT NULL,
-    product_id            INT             NOT NULL,
+    product_id            INT             NULL,
+    receipt_type          VARCHAR(20)     NOT NULL DEFAULT 'classified',
+    unit_id               INT             NULL,
     quantity              NUMERIC(15,4)   NOT NULL,
     unit_price            NUMERIC(15,2)   NOT NULL,
     line_subtotal         NUMERIC(15,2)   NOT NULL,
@@ -748,10 +837,15 @@ CREATE TABLE purchase_lines (
         FOREIGN KEY (purchase_id) REFERENCES purchases (id) ON DELETE CASCADE,
     CONSTRAINT fk_purchase_lines_product
         FOREIGN KEY (product_id) REFERENCES products (id) ON DELETE RESTRICT,
+    CONSTRAINT fk_purchase_lines_unit
+        FOREIGN KEY (unit_id) REFERENCES units (id) ON DELETE RESTRICT,
     CONSTRAINT uq_purchase_lines_purchase_num
         UNIQUE (purchase_id, line_number),
     CONSTRAINT ck_purchase_lines_qty_pos
         CHECK (quantity > 0),
+    CONSTRAINT ck_purchase_lines_receipt_type
+        CHECK ((receipt_type = 'classified' AND product_id IS NOT NULL)
+            OR (receipt_type = 'unsorted' AND product_id IS NULL AND unit_id IS NOT NULL)),
     CONSTRAINT ck_purchase_lines_unit_price_nonneg
         CHECK (unit_price >= 0),
     CONSTRAINT ck_purchase_lines_subtotal_nonneg
@@ -765,6 +859,80 @@ CREATE TABLE purchase_lines (
 );
 
 CREATE INDEX ix_purchase_lines_product ON purchase_lines (product_id);
+
+-- Unsorted receipt quantities have no product SKU. These source batches and
+-- their append-only movement ledger keep pending inventory valued and traceable.
+CREATE TABLE pending_receipt_batches (
+    id BIGSERIAL PRIMARY KEY,
+    purchase_line_id BIGINT NOT NULL UNIQUE REFERENCES purchase_lines(id) ON DELETE RESTRICT,
+    unit_id INT NOT NULL REFERENCES units(id) ON DELETE RESTRICT,
+    unit_code_snapshot VARCHAR(20) NOT NULL,
+    unit_name_snapshot VARCHAR(50) NOT NULL,
+    factor_to_base_snapshot NUMERIC(18,6) NOT NULL CHECK (factor_to_base_snapshot > 0),
+    base_unit_code_snapshot VARCHAR(20) NOT NULL,
+    original_quantity NUMERIC(15,4) NOT NULL CHECK (original_quantity > 0),
+    original_value NUMERIC(15,2) NOT NULL CHECK (original_value >= 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by INT NOT NULL REFERENCES users(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE pending_inventory_movements (
+    id BIGSERIAL PRIMARY KEY,
+    pending_receipt_batch_id BIGINT NOT NULL REFERENCES pending_receipt_batches(id) ON DELETE RESTRICT,
+    trigger VARCHAR(30) NOT NULL CHECK (trigger IN ('purchase_receipt','sorting_input','sorting_remainder','purchase_return','purchase_return_reversal','purchase_reversal','sorting_reversal')),
+    quantity NUMERIC(15,4) NOT NULL CHECK (quantity <> 0),
+    unit_cost_at_movement NUMERIC(15,4) NOT NULL CHECK (unit_cost_at_movement >= 0),
+    total_cost NUMERIC(15,2) NOT NULL CHECK ((quantity > 0 AND total_cost >= 0) OR (quantity < 0 AND total_cost <= 0)),
+    reference_type VARCHAR(40) NOT NULL,
+    reference_id BIGINT NOT NULL,
+    reference_line_id BIGINT NULL,
+    reversal_of_movement_id BIGINT NULL REFERENCES pending_inventory_movements(id) ON DELETE RESTRICT,
+    reason TEXT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by INT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    CHECK (reversal_of_movement_id IS NULL OR trigger IN ('purchase_return_reversal','purchase_reversal','sorting_reversal'))
+);
+CREATE OR REPLACE FUNCTION fn_pending_receipt_batch_immutable() RETURNS TRIGGER AS $$
+BEGIN RAISE EXCEPTION 'Pending receipt conversion and cost snapshots are immutable'; END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_pending_receipt_batch_immutable
+BEFORE UPDATE OR DELETE ON pending_receipt_batches
+FOR EACH ROW EXECUTE FUNCTION fn_pending_receipt_batch_immutable();
+CREATE INDEX ix_pending_movements_batch ON pending_inventory_movements(pending_receipt_batch_id, id);
+CREATE INDEX ix_pending_movements_reference ON pending_inventory_movements(reference_type, reference_id);
+CREATE UNIQUE INDEX ux_pending_movement_reversal ON pending_inventory_movements(reversal_of_movement_id) WHERE reversal_of_movement_id IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION fn_pending_inventory_movements_immutable() RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'pending_inventory_movements is append-only; use a linked compensating movement';
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_pending_inventory_movements_no_update
+BEFORE UPDATE OR DELETE ON pending_inventory_movements
+FOR EACH ROW EXECUTE FUNCTION fn_pending_inventory_movements_immutable();
+
+CREATE OR REPLACE FUNCTION fn_pending_inventory_balance_guard() RETURNS TRIGGER AS $$
+DECLARE v_qty NUMERIC(15,4); v_value NUMERIC(15,2);
+BEGIN
+    PERFORM 1 FROM pending_receipt_batches WHERE id=NEW.pending_receipt_batch_id FOR UPDATE;
+    SELECT COALESCE(SUM(quantity),0),COALESCE(SUM(total_cost),0) INTO v_qty,v_value FROM pending_inventory_movements
+      WHERE pending_receipt_batch_id=NEW.pending_receipt_batch_id;
+    IF v_qty + NEW.quantity < 0 OR v_value + NEW.total_cost < 0 THEN
+        RAISE EXCEPTION 'Pending receipt batch % has insufficient available quantity', NEW.pending_receipt_batch_id
+          USING ERRCODE='check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_pending_inventory_balance_guard
+BEFORE INSERT ON pending_inventory_movements
+FOR EACH ROW EXECUTE FUNCTION fn_pending_inventory_balance_guard();
+
+ALTER TABLE purchase_lines
+    ADD COLUMN allocated_capitalizable_cost NUMERIC(15,2) NOT NULL DEFAULT 0
+        CHECK (allocated_capitalizable_cost >= 0),
+    ADD COLUMN allocated_operating_cost NUMERIC(15,2) NOT NULL DEFAULT 0
+        CHECK (allocated_operating_cost >= 0);
 
 
 -- -----------------------------------------------------------------------------
@@ -790,6 +958,87 @@ CREATE TABLE purchase_shipping (
 );
 
 COMMENT ON TABLE purchase_shipping IS 'Landed-cost shipping. Capitalized into inventory (BR-PURCHASE-005). paid_in_cash=TRUE generates freight_cash cash_movement at post; FALSE keeps it in AP.';
+
+-- Additional purchase-specific costs stay separate from production Cost Types.
+CREATE TABLE purchase_cost_categories (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    capitalizable BOOLEAN NOT NULL,
+    financial_category_id INT NULL REFERENCES financial_categories(id) ON DELETE RESTRICT,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by INT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    updated_by INT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    CONSTRAINT ck_purchase_cost_category_expense_mapping CHECK
+      ((capitalizable AND financial_category_id IS NULL) OR
+       (NOT capitalizable AND financial_category_id IS NOT NULL))
+);
+
+CREATE TABLE purchase_costs (
+    id BIGSERIAL PRIMARY KEY,
+    purchase_id BIGINT NOT NULL REFERENCES purchases(id) ON DELETE CASCADE,
+    category_id INT NOT NULL REFERENCES purchase_cost_categories(id) ON DELETE RESTRICT,
+    amount NUMERIC(15,2) NOT NULL CHECK (amount >= 0),
+    capitalizable_snapshot BOOLEAN NOT NULL,
+    financial_category_id_snapshot INT NULL REFERENCES financial_categories(id) ON DELETE RESTRICT,
+    allocation_method VARCHAR(20) NOT NULL DEFAULT 'line_value'
+      CHECK (allocation_method IN ('line_value','weight','manual')),
+    description TEXT NULL,
+    posted_at TIMESTAMPTZ NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by INT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    CONSTRAINT ck_purchase_cost_mapping_snapshot CHECK
+      ((capitalizable_snapshot AND financial_category_id_snapshot IS NULL) OR
+       (NOT capitalizable_snapshot AND financial_category_id_snapshot IS NOT NULL))
+);
+CREATE INDEX ix_purchase_costs_purchase ON purchase_costs(purchase_id);
+CREATE INDEX ix_purchase_costs_posted ON purchase_costs(posted_at) WHERE posted_at IS NOT NULL;
+
+CREATE TABLE purchase_cost_allocations (
+    id BIGSERIAL PRIMARY KEY,
+    purchase_cost_id BIGINT NOT NULL REFERENCES purchase_costs(id) ON DELETE CASCADE,
+    purchase_line_id BIGINT NOT NULL REFERENCES purchase_lines(id) ON DELETE RESTRICT,
+    amount NUMERIC(15,2) NOT NULL CHECK (amount >= 0),
+    UNIQUE (purchase_cost_id, purchase_line_id)
+);
+
+CREATE OR REPLACE FUNCTION fn_purchase_cost_snapshot_immutable() RETURNS TRIGGER AS $$
+BEGIN
+    IF OLD.posted_at IS NOT NULL THEN
+        RAISE EXCEPTION 'Posted purchase costs are immutable.' USING ERRCODE = '23514';
+    END IF;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_purchase_cost_snapshot_immutable
+BEFORE UPDATE OR DELETE ON purchase_costs
+FOR EACH ROW EXECUTE FUNCTION fn_purchase_cost_snapshot_immutable();
+
+CREATE OR REPLACE FUNCTION fn_purchase_cost_allocation_immutable() RETURNS TRIGGER AS $$
+DECLARE
+    v_cost_id BIGINT;
+    v_posted_at TIMESTAMPTZ;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        v_cost_id := OLD.purchase_cost_id;
+    ELSE
+        v_cost_id := NEW.purchase_cost_id;
+    END IF;
+    SELECT posted_at INTO v_posted_at FROM purchase_costs WHERE id = v_cost_id;
+    IF v_posted_at IS NOT NULL THEN
+        RAISE EXCEPTION 'Posted purchase cost allocations are immutable.' USING ERRCODE = '23514';
+    END IF;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_purchase_cost_allocation_immutable
+BEFORE INSERT OR UPDATE OR DELETE ON purchase_cost_allocations
+FOR EACH ROW EXECUTE FUNCTION fn_purchase_cost_allocation_immutable();
 
 
 -- -----------------------------------------------------------------------------
@@ -862,7 +1111,7 @@ CREATE TABLE purchase_return_lines (
     id                    BIGSERIAL       PRIMARY KEY,
     purchase_return_id    BIGINT          NOT NULL,
     purchase_line_id      BIGINT          NOT NULL,
-    product_id            INT             NOT NULL,
+    product_id            INT             NULL,
     quantity              NUMERIC(15,4)   NOT NULL,
     unit_cost_snapshot    NUMERIC(15,4)   NOT NULL,
     line_value            NUMERIC(15,2)   NOT NULL,
@@ -942,7 +1191,7 @@ CREATE TABLE stock_movements (
             'production_input','production_output','stock_adjustment','opening_balance',
             'sale_reversal','purchase_reversal','sales_return_reversal',
             'purchase_return_reversal','production_reversal','adjustment_reversal',
-            'value_adjustment'
+            'value_adjustment','sorting_output','sorting_reversal'
         )),
     -- Per C-06: zero quantity is allowed only for value_adjustment.
     CONSTRAINT ck_sm_quantity
@@ -957,11 +1206,11 @@ CREATE TABLE stock_movements (
         -- COGS correction. For all other triggers, total_cost must be
         -- non-zero with the sign of quantity.
         CHECK (
-            (trigger = 'value_adjustment')
+            (trigger IN ('value_adjustment','sorting_output','sorting_reversal'))
             OR (total_cost IS NULL AND quantity IS NULL)
             OR (total_cost IS NOT NULL AND quantity IS NOT NULL
                 AND SIGN(total_cost) = SIGN(quantity)
-                AND total_cost <> 0)
+                AND (total_cost <> 0 OR trigger IN ('sorting_output','sorting_reversal')))
         ),
     -- Either reversal_of OR reversed_by, never both; reversal rows are *-reversal
     -- triggers and original rows are not.
@@ -969,11 +1218,11 @@ CREATE TABLE stock_movements (
         CHECK ((reversal_of_movement_id IS NULL) OR (reversed_by_movement_id IS NULL)),
     CONSTRAINT ck_sm_reversal_trigger
         CHECK ((reversal_of_movement_id IS NULL)
-            OR (trigger IN ('sale_reversal','purchase_reversal','sales_return_reversal',
+            OR (trigger IN ('sale_reversal','purchase_reversal','sales_return_reversal','sorting_reversal',
                             'purchase_return_reversal','production_reversal','adjustment_reversal'))),
     CONSTRAINT ck_sm_nonreversal_trigger
         CHECK ((reversed_by_movement_id IS NULL)
-            OR (trigger NOT IN ('sale_reversal','purchase_reversal','sales_return_reversal',
+            OR (trigger NOT IN ('sale_reversal','purchase_reversal','sales_return_reversal','sorting_reversal',
                                 'purchase_return_reversal','production_reversal','adjustment_reversal')))
 );
 
@@ -988,6 +1237,88 @@ COMMENT ON COLUMN stock_movements.trigger IS '15 distinct triggers per C-05; val
 COMMENT ON COLUMN stock_movements.unit_cost_at_movement IS 'Snapshot at insert; never updated. Per BR-COST-003.';
 COMMENT ON COLUMN stock_movements.total_cost IS 'quantity × unit_cost_at_movement (with sign); the running total drives the GL inventory value (INV-08).';
 
+-- Mixed-receipt sorting uses ordinary product movements for classified outputs
+-- and a separate pending ledger for the source receipt balance.
+CREATE TABLE sorting_events (
+    id BIGSERIAL PRIMARY KEY,
+    pending_receipt_batch_id BIGINT NOT NULL REFERENCES pending_receipt_batches(id) ON DELETE RESTRICT,
+    input_quantity NUMERIC(15,4) NOT NULL CHECK (input_quantity > 0),
+    loss_quantity NUMERIC(15,4) NOT NULL DEFAULT 0 CHECK (loss_quantity >= 0),
+    remaining_quantity NUMERIC(15,4) NOT NULL DEFAULT 0 CHECK (remaining_quantity >= 0),
+    source_value_snapshot NUMERIC(15,2) NULL CHECK (source_value_snapshot >= 0),
+    loss_value_snapshot NUMERIC(15,2) NULL CHECK (loss_value_snapshot >= 0),
+    financial_category_id INT NULL REFERENCES financial_categories(id) ON DELETE RESTRICT,
+    reason TEXT NOT NULL CHECK (length(btrim(reason)) > 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by INT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    posted_at TIMESTAMPTZ NULL,
+    posted_by INT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    version INT NOT NULL DEFAULT 1,
+    CHECK ((loss_quantity = 0 AND financial_category_id IS NULL)
+        OR (loss_quantity > 0 AND financial_category_id IS NOT NULL))
+);
+CREATE INDEX ix_sorting_events_batch ON sorting_events(pending_receipt_batch_id, created_at);
+CREATE INDEX ix_sorting_events_posted ON sorting_events(posted_at) WHERE posted_at IS NOT NULL;
+
+CREATE TABLE sorting_event_outputs (
+    id BIGSERIAL PRIMARY KEY,
+    sorting_event_id BIGINT NOT NULL REFERENCES sorting_events(id) ON DELETE RESTRICT,
+    product_id INT NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    quantity NUMERIC(15,4) NOT NULL CHECK (quantity > 0),
+    unit_id INT NOT NULL REFERENCES units(id) ON DELETE RESTRICT,
+    unit_code_snapshot VARCHAR(20) NOT NULL,
+    factor_to_base_snapshot NUMERIC(18,6) NOT NULL CHECK (factor_to_base_snapshot > 0),
+    base_quantity NUMERIC(15,4) NOT NULL CHECK (base_quantity > 0),
+    value_snapshot NUMERIC(15,2) NOT NULL CHECK (value_snapshot >= 0),
+    stock_movement_id BIGINT NULL UNIQUE REFERENCES stock_movements(id) ON DELETE RESTRICT,
+    line_number SMALLINT NOT NULL CHECK (line_number > 0),
+    UNIQUE (sorting_event_id, line_number)
+);
+CREATE INDEX ix_sorting_outputs_product ON sorting_event_outputs(product_id, id);
+
+CREATE TABLE sorting_event_reversals (
+    id BIGSERIAL PRIMARY KEY,
+    sorting_event_id BIGINT NOT NULL UNIQUE REFERENCES sorting_events(id) ON DELETE RESTRICT,
+    reason TEXT NOT NULL CHECK (length(btrim(reason)) > 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by INT NOT NULL REFERENCES users(id) ON DELETE RESTRICT
+);
+
+CREATE OR REPLACE FUNCTION fn_sorting_posted_immutable() RETURNS TRIGGER AS $$
+DECLARE v_posted_at TIMESTAMPTZ; v_output_qty NUMERIC(15,4);
+BEGIN
+    IF TG_TABLE_NAME = 'sorting_events' THEN
+        IF OLD.posted_at IS NOT NULL THEN
+            RAISE EXCEPTION 'Posted sorting events are immutable; use a linked reversal.';
+        END IF;
+        IF OLD.posted_at IS NULL AND NEW.posted_at IS NOT NULL THEN
+            SELECT COALESCE(SUM(base_quantity),0) INTO v_output_qty
+              FROM sorting_event_outputs WHERE sorting_event_id=OLD.id;
+            IF v_output_qty + NEW.loss_quantity + NEW.remaining_quantity <> NEW.input_quantity THEN
+                RAISE EXCEPTION 'Sorting quantity reconciliation must be exact at persisted precision.' USING ERRCODE='check_violation';
+            END IF;
+        END IF;
+        RETURN NEW;
+    END IF;
+    SELECT posted_at INTO v_posted_at FROM sorting_events WHERE id = OLD.sorting_event_id;
+    IF v_posted_at IS NOT NULL THEN
+        RAISE EXCEPTION 'Posted sorting outputs are immutable; use a linked reversal.';
+    END IF;
+    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_sorting_events_immutable
+BEFORE UPDATE OR DELETE ON sorting_events
+FOR EACH ROW EXECUTE FUNCTION fn_sorting_posted_immutable();
+CREATE TRIGGER trg_sorting_outputs_immutable
+BEFORE INSERT OR UPDATE OR DELETE ON sorting_event_outputs
+FOR EACH ROW EXECUTE FUNCTION fn_sorting_posted_immutable();
+CREATE OR REPLACE FUNCTION fn_sorting_reversals_immutable() RETURNS TRIGGER AS $$
+BEGIN RAISE EXCEPTION 'sorting_event_reversals is append-only'; END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_sorting_reversals_immutable
+BEFORE UPDATE OR DELETE ON sorting_event_reversals
+FOR EACH ROW EXECUTE FUNCTION fn_sorting_reversals_immutable();
 
 -- Defer-add the FK from sale_lines.stock_movement_id to stock_movements.id
 -- (sale_lines was defined earlier because it belongs to the sales domain, but
@@ -1360,6 +1691,10 @@ CREATE TABLE system_settings (
 
 COMMENT ON TABLE system_settings IS 'Configurable system settings. The is_initialized key gates one-time system initialization (per MS-7).';
 
+INSERT INTO system_settings (key, value, value_type, description) VALUES
+ ('default_purchase_cost_allocation', 'line_value', 'string',
+  'Default allocation for additional purchase costs: line_value, weight, or manual.');
+
 
 -- =============================================================================
 -- 14. NOTIFICATIONS
@@ -1543,6 +1878,12 @@ LEFT JOIN stock_movements sm ON sm.product_id = p.id
 GROUP BY p.id, p.code, p.name;
 
 COMMENT ON VIEW product_valuation IS 'Per-product inventory valuation. total_cost carries the sign of quantity (positive for receipts, negative for issues). INV-08 reconciliation source.';
+
+CREATE OR REPLACE VIEW inventory_valuation AS
+SELECT COALESCE((SELECT SUM(inventory_value) FROM product_valuation), 0) AS product_inventory_value,
+       COALESCE((SELECT SUM(total_cost) FROM pending_inventory_movements), 0) AS pending_inventory_value,
+       COALESCE((SELECT SUM(inventory_value) FROM product_valuation), 0)
+         + COALESCE((SELECT SUM(total_cost) FROM pending_inventory_movements), 0) AS total_inventory_value;
 
 
 -- =============================================================================
@@ -2278,6 +2619,8 @@ INSERT INTO capabilities (code, description) VALUES
   ('category.manage', 'Manage product categories.'),
   ('unit.view', 'View units of measure.'),
   ('unit.manage', 'Manage units of measure.'),
+  ('product_attribute.view', 'View product attributes (Jenis/Size/Kualitas).'),
+  ('product_attribute.manage', 'Manage product attributes (Jenis/Size/Kualitas).'),
   ('product.view', 'View products.'),
   ('product.create', 'Create products.'),
   ('product.edit', 'Edit products.'),
@@ -2316,6 +2659,7 @@ INSERT INTO capabilities (code, description) VALUES
   -- Inventory
   ('inventory.view', 'View inventory and stock movements.'),
   ('inventory.adjust', 'Manually adjust stock (positive or negative).'),
+  ('inventory.sort', 'Create, post, and reverse sorting events.'),
   ('inventory.transfer', 'Transfer stock between locations (V2).'),
   -- Production
   ('production.view', 'View production runs.'),
@@ -2356,7 +2700,7 @@ SELECT r.id, c.id
 FROM roles r
 JOIN capabilities c ON c.code IN (
     'auth.login',
-    'category.view','unit.view','product.view','contact.view',
+    'category.view','unit.view','product_attribute.view','product.view','contact.view',
     'payment_method.view','cost_type.view',
     'sale.view','sale.create','sale.edit_own_draft',
     'purchase.view','purchase.create','purchase.edit_own_draft',

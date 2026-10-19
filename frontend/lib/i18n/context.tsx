@@ -10,11 +10,11 @@ import {
 } from 'react'
 import { en } from './en'
 import { id } from './id'
+import { API_URL } from '../constants'
 
 export type Language = 'en' | 'id'
 
 const STORAGE_KEY = 'pos-language'
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
 
 const dictionaries: Record<Language, Record<string, string>> = { en, id }
 
@@ -52,7 +52,12 @@ async function fetchSettings(token: string | null): Promise<{
       },
       credentials: 'include',
     })
-    if (!res.ok) return null
+    if (!res.ok) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn(`[i18n] fetchSettings failed: ${res.status}`)
+      }
+      return null
+    }
     const data = await res.json()
     const etag = res.headers.get('etag')
     return { settings: data.settings ?? {}, etag }

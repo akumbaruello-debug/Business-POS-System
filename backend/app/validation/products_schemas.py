@@ -1,4 +1,4 @@
-"""Request/response schemas for Products (M2 / B.6).
+"""Request/response schemas for Products (M2 / B.6) + V3 dimensions.
 
 Mirrors ``openapi.yaml`` §15.7 (Products tag) + Database-Design §3.1
 (schema.sql §5.3).
@@ -31,6 +31,10 @@ Known schema/DB contradictions (documented, NOT silently resolved):
   ``product.allow_negative_stock OR system_settings.default_negative_stock_allowed``.
 * Price changes on PATCH insert a ``product_price_history`` row (BR-PRODUCT-002;
   no DB trigger → service layer owns this).
+
+V3 Phase 2 — product dimensions: ``jenis_id`` / ``size_id`` / ``kualitas_id``
+are nullable FKs to ``product_attributes`` (kind-scoped). NULL = the product
+is not classified on that dimension. No defaults are invented.
 """
 
 from __future__ import annotations
@@ -54,12 +58,25 @@ class ProductBase(BaseModel):
     )
     category_id: int | None = Field(default=None, ge=1)
     unit_id: int | None = Field(default=None, ge=1)
+    jenis_id: int | None = Field(
+        default=None, ge=1, description="Product dimension: Jenis (type) attribute value (V3)."
+    )
+    size_id: int | None = Field(
+        default=None, ge=1, description="Product dimension: Size (grading) attribute value (V3)."
+    )
+    kualitas_id: int | None = Field(
+        default=None, ge=1, description="Product dimension: Kualitas (quality) attribute value (V3)."
+    )
     purchase_price: float | None = Field(
         default=None, ge=0, description="Purchase price in minor units (cents)."
     )
     selling_price: float | None = Field(
         default=None, ge=0, description="Selling price in minor units (cents)."
     )
+    purchase_price_per_kg: float | None = Field(default=None, ge=0)
+    selling_price_per_kg: float | None = Field(default=None, ge=0)
+    purchase_price_override: float | None = Field(default=None, ge=0)
+    selling_price_override: float | None = Field(default=None, ge=0)
     low_stock_threshold: float | None = Field(default=None, ge=0)
     allow_negative_stock: bool | None = None
     notes: str | None = Field(default=None, max_length=2000)
@@ -86,6 +103,10 @@ class ProductCreateRequest(ProductBase):
     name: str = Field(..., min_length=1, max_length=200)
     purchase_price: float = Field(default=0, ge=0)
     selling_price: float = Field(default=0, ge=0)
+    purchase_price_per_kg: float | None = Field(default=None, ge=0)
+    selling_price_per_kg: float | None = Field(default=None, ge=0)
+    purchase_price_override: float | None = Field(default=None, ge=0)
+    selling_price_override: float | None = Field(default=None, ge=0)
     is_sellable: bool = True
     is_purchasable: bool = True
     is_producible: bool = False
@@ -106,8 +127,15 @@ class ProductPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     category_id: int | None = Field(default=None, ge=1)
     unit_id: int | None = Field(default=None, ge=1)
+    jenis_id: int | None = Field(default=None, ge=1)
+    size_id: int | None = Field(default=None, ge=1)
+    kualitas_id: int | None = Field(default=None, ge=1)
     purchase_price: float | None = Field(default=None, ge=0)
     selling_price: float | None = Field(default=None, ge=0)
+    purchase_price_per_kg: float | None = Field(default=None, ge=0)
+    selling_price_per_kg: float | None = Field(default=None, ge=0)
+    purchase_price_override: float | None = Field(default=None, ge=0)
+    selling_price_override: float | None = Field(default=None, ge=0)
     low_stock_threshold: float | None = Field(default=None, ge=0)
     allow_negative_stock: bool | None = None
     notes: str | None = Field(default=None, max_length=2000)
@@ -126,6 +154,12 @@ class ProductPriceHistory(BaseModel):
     product_id: int
     purchase_price: float
     selling_price: float
+    purchase_price_per_kg: float | None = None
+    selling_price_per_kg: float | None = None
+    purchase_price_override: float | None = None
+    selling_price_override: float | None = None
+    purchase_price_override: float | None = None
+    selling_price_override: float | None = None
     effective_at: str  # ISO 8601 datetime string
     changed_by: int
 
@@ -191,6 +225,9 @@ class ProductResponse(BaseModel):
     ``on_hand_quantity``, ``moving_average_unit_cost``, ``inventory_value``,
     ``low_stock``, and ``negative_stock_fallback_supported`` are computed
     from the ``product_valuation`` view + product row + system settings.
+
+    V3: ``jenis_id`` / ``size_id`` / ``kualitas_id`` echo the linked
+    attribute values (nullable).
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -200,8 +237,17 @@ class ProductResponse(BaseModel):
     code: str | None
     category_id: int | None
     unit_id: int | None
+    jenis_id: int | None = None
+    size_id: int | None = None
+    kualitas_id: int | None = None
     purchase_price: float
     selling_price: float
+    purchase_price_per_kg: float | None = None
+    selling_price_per_kg: float | None = None
+    purchase_price_override: float | None = None
+    selling_price_override: float | None = None
+    purchase_price_default: float
+    selling_price_default: float
     low_stock_threshold: float | None
     allow_negative_stock: bool | None
     notes: str | None

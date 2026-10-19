@@ -1282,6 +1282,205 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+  /product-attributes:
+    get:
+      operationId: listProductAttributes
+      summary: List product attributes (Jenis/Size/Kualitas).
+      description: List product attributes with optional kind filter (jenis | size | kualitas).
+      tags:
+      - Product Attributes
+      security:
+      - bearerAuth: []
+      x-required-capability: product_attribute.view
+      parameters:
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - $ref: '#/components/parameters/Sort'
+      - $ref: '#/components/parameters/Q'
+      - name: filter[kind]
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [jenis, size, kualitas]
+      - name: filter[is_active]
+        in: query
+        required: false
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - data
+                - pagination
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ProductAttribute'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+                  links:
+                    $ref: '#/components/schemas/Links'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: createProductAttributes
+      summary: Create product attribute.
+      description: Create a product attribute value for one dimension (Jenis/Size/Kualitas).
+      tags:
+      - Product Attributes
+      security:
+      - bearerAuth: []
+      x-required-capability: product_attribute.manage
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKeyRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductAttributeRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductAttribute'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /product-attributes/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Product attribute id
+      schema:
+        type: integer
+        format: int64
+    get:
+      operationId: getProductAttributes
+      summary: Get product attribute.
+      description: Get product attribute.
+      tags:
+      - Product Attributes
+      security:
+      - bearerAuth: []
+      x-required-capability: product_attribute.view
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductAttribute'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    patch:
+      operationId: updateProductAttributes
+      summary: Update product attribute.
+      description: Update product attribute. If-Match required. kind is immutable.
+      tags:
+      - Product Attributes
+      security:
+      - bearerAuth: []
+      x-required-capability: product_attribute.manage
+      parameters:
+      - $ref: '#/components/parameters/IfMatchRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductAttributePatch'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      operationId: deleteProductAttributes
+      summary: Hard delete product attribute (only if unreferenced).
+      description: Hard delete product attribute (only if unreferenced).
+      tags:
+      - Product Attributes
+      security:
+      - bearerAuth: []
+      x-required-capability: product_attribute.manage
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKeyRequired'
+      responses:
+        '204':
+          description: No Content
+        '409':
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+          x-error-codes: referenced_by_history
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /product-attributes/{id}/deactivate:
+    post:
+      operationId: deactivateProductAttributes
+      summary: Deactivate product attribute. Preserves history.
+      description: Deactivate product attribute. Preserves history.
+      tags:
+      - Product Attributes
+      security:
+      - bearerAuth: []
+      x-required-capability: product_attribute.manage
+      parameters:
+      - name: id
+        in: path
+        required: true
+        description: Resource id
+        schema:
+          type: integer
+          format: int64
+      - $ref: '#/components/parameters/IdempotencyKeyRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeactivateRequest'
+      responses:
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /payment-methods:
     get:
       operationId: listPaymentMethods
@@ -3556,6 +3755,157 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /purchase-cost-categories:
+    get:
+      operationId: listPurchaseCostCategories
+      summary: List purchase cost categories.
+      tags: [Purchase Costs]
+      security: [{bearerAuth: []}]
+      x-required-capability: purchase.view
+      responses:
+        '200':
+          description: Purchase cost categories.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: {$ref: '#/components/schemas/PurchaseCostCategory'}
+                  default_allocation:
+                    type: string
+                    enum: [line_value, weight, manual]
+                    default: line_value
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    post:
+      operationId: createPurchaseCostCategory
+      summary: Create an owner-managed purchase cost category and capitalization policy.
+      tags: [Purchase Costs]
+      security: [{bearerAuth: []}]
+      x-required-capability: settings.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PurchaseCostCategoryRequest'}
+      responses:
+        '201':
+          description: Created purchase cost category.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PurchaseCostCategory'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /purchase-cost-categories/{category_id}:
+    patch:
+      operationId: updatePurchaseCostCategory
+      summary: Update a purchase cost category for future purchase costs.
+      tags: [Purchase Costs]
+      security: [{bearerAuth: []}]
+      x-required-capability: settings.manage
+      parameters:
+      - name: category_id
+        in: path
+        required: true
+        schema: {type: integer}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PurchaseCostCategoryRequest'}
+      responses:
+        '200':
+          description: Updated category.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PurchaseCostCategory'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /purchases/{id}/costs:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Purchase id
+      schema: {type: integer, format: int64}
+    get:
+      operationId: listPurchaseCosts
+      summary: List additional costs for a purchase.
+      tags: [Purchase Costs]
+      security: [{bearerAuth: []}]
+      x-required-capability: purchase.view
+      responses:
+        '200':
+          description: Purchase costs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: {$ref: '#/components/schemas/PurchaseCost'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    post:
+      operationId: addPurchaseCost
+      summary: Add a cost to a draft purchase using the configured default or an allowed allocation override.
+      tags: [Purchase Costs]
+      security: [{bearerAuth: []}]
+      x-required-capability: purchase.edit_own_draft
+      parameters:
+      - {$ref: '#/components/parameters/IdempotencyKeyRequired'}
+      - {$ref: '#/components/parameters/IfMatchRequired'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PurchaseCostRequest'}
+      responses:
+        '201':
+          description: Added purchase cost.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PurchaseCost'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '412': {$ref: '#/components/responses/PreconditionFailed'}
+  /purchases/{id}/costs/{cost_id}:
+    delete:
+      operationId: deletePurchaseCost
+      summary: Delete a cost from a draft purchase.
+      tags: [Purchase Costs]
+      security: [{bearerAuth: []}]
+      x-required-capability: purchase.edit_own_draft
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: integer, format: int64}
+      - name: cost_id
+        in: path
+        required: true
+        schema: {type: integer, format: int64}
+      - {$ref: '#/components/parameters/IdempotencyKeyRequired'}
+      - {$ref: '#/components/parameters/IfMatchRequired'}
+      responses:
+        '204': {description: No Content}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '412': {$ref: '#/components/responses/PreconditionFailed'}
   /purchases/{id}/shipping:
     parameters:
     - name: id
@@ -5965,6 +6315,155 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /pending-receipts:
+    get:
+      operationId: listPendingReceipts
+      summary: List available unsorted receipt batches
+      tags: [Inventory sorting]
+      security: [{bearerAuth: []}]
+      x-required-capability: inventory.view
+      responses:
+        '200':
+          description: Available pending receipt balances
+  /sorting-products:
+    get:
+      operationId: listSortingProducts
+      summary: List eligible classified mass products
+      tags: [Inventory sorting]
+      security: [{bearerAuth: []}]
+      x-required-capability: inventory.view
+      responses:
+        '200': {description: Eligible sorting output products}
+  /sorting-expense-categories:
+    get:
+      operationId: listSortingExpenseCategories
+      summary: List eligible expense categories for sorting loss
+      tags: [Inventory sorting]
+      security: [{bearerAuth: []}]
+      x-required-capability: inventory.view
+      responses:
+        '200': {description: Active expense categories}
+  /sorting-events:
+    get:
+      operationId: listSortingEvents
+      summary: List sorting events
+      tags: [Inventory sorting]
+      security: [{bearerAuth: []}]
+      x-required-capability: inventory.view
+      responses:
+        '200': {description: Sorting events and output snapshots}
+    post:
+      operationId: createSortingEvent
+      summary: Create a sorting draft
+      tags: [Inventory sorting]
+      security: [{bearerAuth: []}]
+      x-required-capability: inventory.sort
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SortingEventInput'}
+      responses:
+        '201':
+          description: Sorting draft
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SortingEvent'}
+  /sorting-events/{event_id}:
+    parameters:
+    - name: event_id
+      in: path
+      required: true
+      schema: {type: integer, minimum: 1}
+    get:
+      operationId: getSortingEvent
+      summary: Get sorting event
+      tags: [Inventory sorting]
+      security: [{bearerAuth: []}]
+      x-required-capability: inventory.view
+      responses:
+        '200':
+          description: Sorting event
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SortingEvent'}
+    patch:
+      operationId: updateSortingDraft
+      summary: Update an unposted sorting draft
+      tags: [Inventory sorting]
+      security: [{bearerAuth: []}]
+      x-required-capability: inventory.sort
+      parameters:
+      - $ref: '#/components/parameters/IfMatchRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SortingEventInput'}
+      responses:
+        '200':
+          description: Updated sorting draft
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SortingEvent'}
+  /sorting-events/{event_id}/preview:
+    post:
+      operationId: previewSortingEvent
+      summary: Preview quantity and carrying-value reconciliation
+      tags: [Inventory sorting]
+      security: [{bearerAuth: []}]
+      x-required-capability: inventory.view
+      parameters:
+      - name: event_id
+        in: path
+        required: true
+        schema: {type: integer, minimum: 1}
+      responses:
+        '200': {description: Exact quantity and value allocation preview}
+  /sorting-events/{event_id}/post:
+    post:
+      operationId: postSortingEvent
+      summary: Atomically post a sorting event
+      tags: [Inventory sorting]
+      security: [{bearerAuth: []}]
+      x-required-capability: inventory.sort
+      parameters:
+      - name: event_id
+        in: path
+        required: true
+        schema: {type: integer, minimum: 1}
+      - $ref: '#/components/parameters/IfMatchRequired'
+      - $ref: '#/components/parameters/IdempotencyKeyRequired'
+      responses:
+        '200':
+          description: Posted sorting event
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SortingEvent'}
+  /sorting-events/{event_id}/reverse:
+    post:
+      operationId: reverseSortingEvent
+      summary: Append a permitted sorting reversal
+      tags: [Inventory sorting]
+      security: [{bearerAuth: []}]
+      x-required-capability: inventory.sort
+      parameters:
+      - name: event_id
+        in: path
+        required: true
+        schema: {type: integer, minimum: 1}
+      - $ref: '#/components/parameters/IfMatchRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SortingEventReverseRequest'}
+      responses:
+        '200':
+          description: Sorting event with linked reversal
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SortingEvent'}
 components:
   securitySchemes:
     bearerAuth:
@@ -6148,6 +6647,68 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
   schemas:
+    SortingEventInput:
+      type: object
+      additionalProperties: false
+      required: [pending_receipt_batch_id, input_quantity, reason, outputs]
+      properties:
+        pending_receipt_batch_id: {type: integer, minimum: 1, description: One source receipt batch only.}
+        input_quantity: {type: number, exclusiveMinimum: 0, description: Base mass units.}
+        loss_quantity: {type: number, minimum: 0, default: 0, description: Base mass units.}
+        remaining_quantity: {type: number, minimum: 0, default: 0, description: Base mass units.}
+        financial_category_id: {type: [integer, 'null'], minimum: 1}
+        reason: {type: string, minLength: 1, maxLength: 1000}
+        outputs:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [product_id, quantity]
+            properties:
+              product_id: {type: integer, minimum: 1}
+              quantity: {type: number, exclusiveMinimum: 0, description: Product unit quantity; converted to base mass.}
+    SortingEventReverseRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: {type: string, minLength: 1, maxLength: 1000}
+    SortingEvent:
+      type: object
+      required: [id, pending_receipt_batch_id, input_quantity, loss_quantity, remaining_quantity, reason, created_at, created_by, version, outputs]
+      properties:
+        id: {type: integer}
+        pending_receipt_batch_id: {type: integer}
+        input_quantity: {type: number}
+        loss_quantity: {type: number}
+        remaining_quantity: {type: number}
+        source_value_snapshot: {type: [number, 'null']}
+        loss_value_snapshot: {type: [number, 'null']}
+        financial_category_id: {type: [integer, 'null']}
+        reason: {type: string}
+        created_at: {type: string, format: date-time}
+        created_by: {type: integer}
+        posted_at: {type: [string, 'null'], format: date-time}
+        posted_by: {type: [integer, 'null']}
+        version: {type: integer}
+        reversed: {type: boolean}
+        outputs:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {type: integer}
+              product_id: {type: integer}
+              product_name: {type: [string, 'null']}
+              quantity: {type: number}
+              unit_id: {type: integer}
+              unit_code_snapshot: {type: string}
+              factor_to_base_snapshot: {type: number}
+              base_quantity: {type: number}
+              value_snapshot: {type: number}
+              line_number: {type: integer}
+              stock_movement_id: {type: [integer, 'null']}
     ErrorEnvelope:
       type: object
       required:
@@ -6805,6 +7366,17 @@ components:
           minLength: 1
           maxLength: 20
           pattern: ^[A-Za-z0-9_-]+$
+        dimension:
+          type: string
+          nullable: true
+          enum: [mass, count]
+        base_unit_id:
+          type: integer
+          nullable: true
+        factor_to_base:
+          type: number
+          nullable: true
+          exclusiveMinimum: 0
     UnitRequest:
       type: object
       required:
@@ -6823,6 +7395,17 @@ components:
           minLength: 1
           maxLength: 20
           pattern: ^[A-Za-z0-9_-]+$
+        dimension:
+          type: string
+          nullable: true
+          enum: [mass, count]
+        base_unit_id:
+          type: integer
+          nullable: true
+        factor_to_base:
+          type: number
+          nullable: true
+          exclusiveMinimum: 0
     UnitPatch:
       type: object
       properties:
@@ -6830,6 +7413,73 @@ components:
           type: string
           minLength: 1
           maxLength: 50
+        is_active:
+          type: boolean
+        dimension:
+          type: string
+          nullable: true
+          enum: [mass, count]
+        base_unit_id:
+          type: integer
+          nullable: true
+        factor_to_base:
+          type: number
+          nullable: true
+          exclusiveMinimum: 0
+    ProductAttribute:
+      type: object
+      required:
+      - id
+      - kind
+      - name
+      - is_active
+      - created_at
+      - updated_at
+      - version
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        kind:
+          type: string
+          enum: [jenis, size, kualitas]
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        is_active:
+          type: boolean
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ProductAttributeRequest:
+      type: object
+      required:
+      - kind
+      - name
+      properties:
+        kind:
+          type: string
+          enum: [jenis, size, kualitas]
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        is_active:
+          type: boolean
+          default: true
+    ProductAttributePatch:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
         is_active:
           type: boolean
     PaymentMethod:
@@ -7015,6 +7665,8 @@ components:
       - name
       - purchase_price
       - selling_price
+      - purchase_price_default
+      - selling_price_default
       - is_sellable
       - is_purchasable
       - is_producible
@@ -7050,6 +7702,24 @@ components:
           - integer
           - 'null'
           minimum: 1
+        jenis_id:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+          description: Product dimension Jenis (type) attribute value (V3).
+        size_id:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+          description: Product dimension Size (grading) attribute value (V3).
+        kualitas_id:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+          description: Product dimension Kualitas (quality) attribute value (V3).
         purchase_price:
           type: number
           minimum: 0
@@ -7058,6 +7728,20 @@ components:
           type: number
           minimum: 0
           multipleOf: 0.01
+        purchase_price_per_kg:
+          type: [number, 'null']
+          minimum: 0
+          multipleOf: 0.01
+        selling_price_per_kg:
+          type: [number, 'null']
+          minimum: 0
+          multipleOf: 0.01
+        purchase_price_default:
+          type: number
+          description: Effective default for the product unit; falls back to legacy purchase_price.
+        selling_price_default:
+          type: number
+          description: Effective default for the product unit; falls back to legacy selling_price.
         low_stock_threshold:
           type:
           - number
@@ -7129,6 +7813,24 @@ components:
           - integer
           - 'null'
           minimum: 1
+        jenis_id:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+          description: Product dimension Jenis (type) attribute value (V3).
+        size_id:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+          description: Product dimension Size (grading) attribute value (V3).
+        kualitas_id:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+          description: Product dimension Kualitas (quality) attribute value (V3).
         purchase_price:
           type: number
           minimum: 0
@@ -7137,6 +7839,14 @@ components:
           type: number
           minimum: 0
           default: 0
+        purchase_price_per_kg:
+          type: [number, 'null']
+          minimum: 0
+          multipleOf: 0.01
+        selling_price_per_kg:
+          type: [number, 'null']
+          minimum: 0
+          multipleOf: 0.01
         low_stock_threshold:
           type:
           - number
@@ -7180,12 +7890,38 @@ components:
           - integer
           - 'null'
           minimum: 1
+        jenis_id:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+          description: Product dimension Jenis (type) attribute value (V3).
+        size_id:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+          description: Product dimension Size (grading) attribute value (V3).
+        kualitas_id:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+          description: Product dimension Kualitas (quality) attribute value (V3).
         purchase_price:
           type: number
           minimum: 0
         selling_price:
           type: number
           minimum: 0
+        purchase_price_per_kg:
+          type: [number, 'null']
+          minimum: 0
+          multipleOf: 0.01
+        selling_price_per_kg:
+          type: [number, 'null']
+          minimum: 0
+          multipleOf: 0.01
         low_stock_threshold:
           type:
           - number
@@ -7225,6 +7961,14 @@ components:
           type: number
         selling_price:
           type: number
+        purchase_price_per_kg:
+          type: [number, 'null']
+          minimum: 0
+          multipleOf: 0.01
+        selling_price_per_kg:
+          type: [number, 'null']
+          minimum: 0
+          multipleOf: 0.01
         effective_at:
           type: string
           format: date-time
@@ -8066,12 +8810,18 @@ components:
     PurchaseLineInput:
       type: object
       required:
-      - product_id
       - quantity
       - unit_price
       properties:
         product_id:
-          type: integer
+          type: [integer, 'null']
+          minimum: 1
+        receipt_type:
+          type: string
+          enum: [classified, unsorted]
+          default: classified
+        unit_id:
+          type: [integer, 'null']
           minimum: 1
         quantity:
           type: number
@@ -8085,11 +8835,12 @@ components:
       required:
       - id
       - purchase_id
-      - product_id
       - quantity
       - unit_price
       - line_subtotal
       - allocated_shipping
+      - allocated_capitalizable_cost
+      - allocated_operating_cost
       - line_total
       - line_number
       properties:
@@ -8100,7 +8851,12 @@ components:
           type: integer
           format: int64
         product_id:
-          type: integer
+          type: [integer, 'null']
+        receipt_type:
+          type: string
+          enum: [classified, unsorted]
+        unit_id:
+          type: [integer, 'null']
         quantity:
           type: number
           exclusiveMinimum: 0
@@ -8113,6 +8869,14 @@ components:
         allocated_shipping:
           type: number
           minimum: 0
+        allocated_capitalizable_cost:
+          type: number
+          minimum: 0
+          description: Allocated capitalizable additional purchase costs included in inventory value.
+        allocated_operating_cost:
+          type: number
+          minimum: 0
+          description: Allocated operating costs included in purchase AP total but excluded from inventory value.
         line_total:
           type: number
           minimum: 0
@@ -8129,6 +8893,55 @@ components:
         unit_price:
           type: number
           minimum: 0
+    PurchaseCostCategory:
+      type: object
+      required: [id, name, capitalizable, financial_category_id, is_active]
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        capitalizable: {type: boolean}
+        financial_category_id: {type: [integer, 'null']}
+        is_active: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    PurchaseCostCategoryRequest:
+      type: object
+      required: [name, capitalizable]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 100}
+        capitalizable: {type: boolean}
+        financial_category_id: {type: [integer, 'null'], minimum: 1}
+        is_active: {type: boolean, default: true}
+    PurchaseCost:
+      type: object
+      required: [id, purchase_id, category_id, category_name, capitalizable, amount, allocation_method]
+      properties:
+        id: {type: integer, format: int64}
+        purchase_id: {type: integer, format: int64}
+        category_id: {type: integer}
+        category_name: {type: string}
+        capitalizable: {type: boolean}
+        financial_category_id: {type: [integer, 'null']}
+        amount: {type: number, minimum: 0}
+        allocation_method: {type: string, enum: [line_value, weight, manual]}
+        description: {type: [string, 'null']}
+        posted_at: {type: [string, 'null'], format: date-time}
+    PurchaseCostRequest:
+      type: object
+      required: [category_id, amount]
+      properties:
+        category_id: {type: integer, minimum: 1}
+        amount: {type: number, minimum: 0}
+        allocation_method: {type: [string, 'null'], enum: [line_value, weight, manual, null]}
+        description: {type: [string, 'null'], maxLength: 500}
+        allocations:
+          type: array
+          items:
+            type: object
+            required: [purchase_line_id, amount]
+            properties:
+              purchase_line_id: {type: integer, minimum: 1}
+              amount: {type: number, minimum: 0}
     PurchaseShipping:
       type: object
       required:
@@ -8354,7 +9167,6 @@ components:
       - id
       - purchase_return_id
       - purchase_line_id
-      - product_id
       - quantity
       - unit_cost_snapshot
       - line_value
@@ -8370,7 +9182,7 @@ components:
           type: integer
           format: int64
         product_id:
-          type: integer
+          type: [integer, 'null']
         quantity:
           type: number
           exclusiveMinimum: 0
@@ -9071,7 +9883,7 @@ components:
           format: date-time
     SettingsMap:
       type: object
-      description: Map of system setting key → value. `costing_method` is read-only in V1 (returns 400 on PATCH).
+      description: Map of system setting key → value. `costing_method` is read-only in V1. `default_purchase_cost_allocation` accepts line_value, weight, or manual and defaults to line_value.
       additionalProperties:
         oneOf:
         - type: string
@@ -9082,6 +9894,7 @@ components:
       example:
         costing_method: moving_average
         default_negative_stock_allowed: false
+        default_purchase_cost_allocation: line_value
     SettingsPatch:
       type: object
       description: Partial update. Each key is validated against the known set.
@@ -9092,6 +9905,10 @@ components:
         - type: boolean
         - type: object
           additionalProperties: true
+      properties:
+        default_purchase_cost_allocation:
+          type: string
+          enum: [line_value, weight, manual]
     HealthResponse:
       type: object
       required:
