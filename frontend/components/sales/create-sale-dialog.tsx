@@ -67,7 +67,7 @@ export function CreateSaleDialog({
 
   const selectedProduct = products.find((p) => String(p.id) === productId)
   const effectiveUnitPrice =
-    unitPrice.trim() === '' ? selectedProduct?.selling_price ?? 0 : Number(unitPrice)
+    unitPrice.trim() === '' ? selectedProduct?.selling_price_default ?? selectedProduct?.selling_price ?? 0 : Number(unitPrice)
 
   const handleSubmit = async () => {
     if (!productId || Number(quantity) <= 0 || effectiveUnitPrice < 0) {
@@ -133,7 +133,7 @@ export function CreateSaleDialog({
               onChange={(e) => {
                 setProductId(e.target.value)
                 const p = products.find((x) => String(x.id) === e.target.value)
-                if (p && unitPrice === '') setUnitPrice(String(p.selling_price))
+                if (p && unitPrice === '') setUnitPrice(String(p.selling_price_default ?? p.selling_price))
               }}
               disabled={busy}
             >
@@ -196,7 +196,7 @@ export function CreateSaleDialog({
         )}
         {selectedProduct && (
           <p className="sales-muted" style={{ fontSize: 13 }}>
-            Default price: {formatIDR(selectedProduct.selling_price)} · Stock:{' '}
+            Default price: {formatIDR(selectedProduct.selling_price_default ?? selectedProduct.selling_price)} · Stock:{' '}
             {selectedProduct.on_hand_quantity}
           </p>
         )}
