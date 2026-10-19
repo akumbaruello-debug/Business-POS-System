@@ -43,6 +43,21 @@ class UnitBase(BaseModel):
     )
     name: str = Field(..., min_length=1, max_length=50)
     is_active: bool = True
+    dimension: str | None = Field(
+        default=None,
+        max_length=20,
+        pattern=r"^(mass|count)$",
+        description="Unit dimension (mass | count). NULL = unspecified.",
+    )
+    base_unit_id: int | None = Field(
+        default=None,
+        description="FK to the canonical unit of the same dimension; NULL = this unit IS the base for its dimension.",
+    )
+    factor_to_base: float | None = Field(
+        default=None,
+        gt=0,
+        description="Positive conversion factor relative to the dimension base (base = 1).",
+    )
 
 
 class UnitRequest(UnitBase):
@@ -61,6 +76,13 @@ class UnitPatch(BaseModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=50)
     is_active: bool | None = None
+    dimension: str | None = Field(
+        default=None,
+        max_length=20,
+        pattern=r"^(mass|count)$",
+    )
+    base_unit_id: int | None = None
+    factor_to_base: float | None = Field(default=None, gt=0)
 
 
 class UnitResponse(BaseModel):
@@ -79,6 +101,9 @@ class UnitResponse(BaseModel):
     name: str
     is_active: bool
     version: int = 1
+    dimension: str | None = None
+    base_unit_id: int | None = None
+    factor_to_base: float | None = None
 
 
 class DeactivateRequest(BaseModel):

@@ -44,6 +44,9 @@ def _to_response(row: dict[str, Any]) -> UnitResponse:
         code=str(row["code"]),
         name=str(row["name"]),
         is_active=bool(row["is_active"]),
+        dimension=row.get("dimension"),
+        base_unit_id=row.get("base_unit_id"),
+        factor_to_base=row.get("factor_to_base"),
     )
 
 
@@ -125,6 +128,9 @@ async def create_unit(
         code=body.code,
         name=body.name,
         is_active=body.is_active,
+        dimension=body.dimension,
+        base_unit_id=body.base_unit_id,
+        factor_to_base=body.factor_to_base,
         ctx=_audit_ctx(request, principal),
     )
     await uow.commit()
@@ -177,6 +183,9 @@ async def update_unit(
         id,
         name=body.name,
         is_active=body.is_active,
+        dimension=body.dimension,
+        base_unit_id=body.base_unit_id,
+        factor_to_base=body.factor_to_base,
         ctx=_audit_ctx(request, principal),
     )
     await uow.commit()

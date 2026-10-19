@@ -51,6 +51,40 @@ from app.services.idempotency import IdempotencyStore, compute_request_fingerpri
 from app.validation.enums import AuditAction
 
 # PostgreSQL unique_violation error code.
+async def _validate_dimension_attrs(
+    uow: UnitOfWork,
+    *,
+    jenis_id: int | None,
+    size_id: int | None,
+    kualitas_id: int | None,
+) -> None:
+    """V3: validate product-dimension attribute FKs (jenis/size/kualitas).
+
+    Each id must exist in ``product_attributes`` AND match its kind
+    (jenis_id -> kind='jenis', etc.). Missing or kind-mismatched -> 404.
+    Deactivated attributes remain valid references (deactivation is
+    reversible and keeps history; selection is allowed per V1 behavior).
+    """
+    dims = {
+        "jenis_id": ("jenis", jenis_id),
+        "size_id": ("size", size_id),
+        "kualitas_id": ("kualitas", kualitas_id),
+    }
+    for field, (dim_kind, fid) in dims.items():
+        if fid is None:
+            continue
+        attr = await uow.first_row(
+            "SELECT id, kind FROM product_attributes WHERE id = :id",
+            {"id": fid},
+        )
+        if attr is None:
+            raise NotFound(f"Product attribute {fid} ({dim_kind}) not found.")
+        if attr["kind"] != dim_kind:
+            raise NotFound(
+                f"Attribute {fid} is kind '{attr['kind']}', not '{dim_kind}'."
+            )
+
+
 _PG_UNIQUE_VIOLATION = "23505"
 # PostgreSQL foreign_key_violation (raised when sales/movements/etc reference the product).
 _PG_FK_VIOLATION = "23503"
@@ -141,6 +175,46 @@ class ProductService:
             raise NotFound(f"Product {id} not found.")
         return row
 
+    async def default_prices(self, row: dict[str, Any]) -> dict[str, float]:
+        """Resolve optional per-kg defaults to the product's configured unit.
+
+        Legacy prices remain the fallback when the product unit is not a
+        configured mass unit with a known conversion factor.
+        """
+        prices = await self.default_prices_for_rows([row])
+        return prices[0]
+
+    async def default_prices_for_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, float]]:
+        """Resolve defaults for a product page with one unit metadata query."""
+        unit_ids = list({
+            int(row["unit_id"])
+            for row in rows
+            if row.get("unit_id") is not None
+            and (row.get("purchase_price_per_kg") is not None or row.get("selling_price_per_kg") is not None)
+        })
+        units: dict[int, dict[str, Any]] = {}
+        if unit_ids:
+            unit_rows = await self._uow.fetch_all(
+                "SELECT id, dimension, factor_to_base FROM units WHERE id = ANY(:ids)",
+                {"ids": unit_ids},
+            )
+            units = {int(unit["id"]): unit for unit in unit_rows}
+        result = []
+        for row in rows:
+            purchase = float(row["purchase_price"])
+            selling = float(row["selling_price"])
+            unit = units.get(int(row["unit_id"])) if row.get("unit_id") is not None else None
+            if unit and unit.get("dimension") == "mass" and unit.get("factor_to_base") is not None:
+                factor = float(unit["factor_to_base"])
+                if row.get("purchase_price_per_kg") is not None:
+                    purchase = round(float(row["purchase_price_per_kg"]) * factor, 2)
+                if row.get("selling_price_per_kg") is not None:
+                    selling = round(float(row["selling_price_per_kg"]) * factor, 2)
+            purchase = float(row["purchase_price_override"]) if row.get("purchase_price_override") is not None else purchase
+            selling = float(row["selling_price_override"]) if row.get("selling_price_override") is not None else selling
+            result.append({"purchase_price_default": purchase, "selling_price_default": selling})
+        return result
+
     # ------------------------------------------------------------------
     # Create
     # ------------------------------------------------------------------
@@ -152,8 +226,15 @@ class ProductService:
         code: str | None,
         category_id: int | None = None,
         unit_id: int | None = None,
+        jenis_id: int | None = None,
+        size_id: int | None = None,
+        kualitas_id: int | None = None,
         purchase_price: float = 0,
         selling_price: float = 0,
+        purchase_price_per_kg: float | None = None,
+        selling_price_per_kg: float | None = None,
+        purchase_price_override: float | None = None,
+        selling_price_override: float | None = None,
         low_stock_threshold: float | None = None,
         allow_negative_stock: bool | None = None,
         notes: str | None = None,
@@ -216,6 +297,14 @@ class ProductService:
             if parent_u is None:
                 raise NotFound(f"Unit {unit_id} not found.")
 
+        # V3: product-dimension attribute FKs — kind-scoped validation.
+        await _validate_dimension_attrs(
+            self._uow,
+            jenis_id=jenis_id,
+            size_id=size_id,
+            kualitas_id=kualitas_id,
+        )
+
         # All product routes require an authenticated principal (capability-gated),
         # so ctx.user_id is always set. Defensive: fall back to 0 if missing
         # (the DB FK will catch a 0-id lookup; tests that hit this branch
@@ -228,8 +317,13 @@ class ProductService:
                 code=code,
                 category_id=category_id,
                 unit_id=unit_id,
+                jenis_id=jenis_id,
+                size_id=size_id,
+                kualitas_id=kualitas_id,
                 purchase_price=purchase_price,
                 selling_price=selling_price,
+                purchase_price_per_kg=purchase_price_per_kg,
+                selling_price_per_kg=selling_price_per_kg,
                 low_stock_threshold=low_stock_threshold,
                 allow_negative_stock=allow_negative_stock,
                 notes=notes,
@@ -263,6 +357,43 @@ class ProductService:
         return row
 
     # ------------------------------------------------------------------
+    # Response enrichment (shared by the read routes + the PATCH mutation)
+    # ------------------------------------------------------------------
+
+    async def build_enrichment(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Read the derived fields required to compose a product response.
+
+        Three extra reads: the ``product_valuation`` view, the moving-average
+        unit cost, and the ``default_negative_stock_allowed`` system setting.
+        They are part of the successful response contract, so a mutation must
+        perform them *before* committing: a failure then aborts the whole
+        transaction instead of leaving the update committed but reported to
+        the client as failed.
+
+        Returns keyword names matching the route's ``_to_response``.
+        """
+        product_id = int(row["id"])
+        valuation = await self.get_valuation(product_id)
+        on_hand = int(valuation["on_hand_quantity"]) if valuation else 0
+        inv_value = float(valuation["inventory_value"]) if valuation else 0.0
+        avg_cost = await self.get_moving_average_unit_cost(product_id)
+
+        threshold = row.get("low_stock_threshold")
+        low_stock = threshold is not None and on_hand <= float(threshold)
+
+        fallback_supported = bool(row["allow_negative_stock"]) or bool(
+            await self.get_system_setting_bool("default_negative_stock_allowed")
+        )
+
+        return {
+            "on_hand_quantity": on_hand,
+            "inventory_value": inv_value,
+            "moving_average_unit_cost": avg_cost,
+            "low_stock": low_stock,
+            "negative_stock_fallback_supported": fallback_supported,
+        }
+
+    # ------------------------------------------------------------------
     # Update (PATCH)
     # ------------------------------------------------------------------
 
@@ -273,8 +404,19 @@ class ProductService:
         name: str | None = None,
         category_id: int | None = None,
         unit_id: int | None = None,
+        jenis_id: int | None = None,
+        size_id: int | None = None,
+        kualitas_id: int | None = None,
         purchase_price: float | None = None,
         selling_price: float | None = None,
+        purchase_price_per_kg: float | None = None,
+        selling_price_per_kg: float | None = None,
+        clear_purchase_price_per_kg: bool = False,
+        clear_selling_price_per_kg: bool = False,
+        purchase_price_override: float | None = None,
+        selling_price_override: float | None = None,
+        clear_purchase_price_override: bool = False,
+        clear_selling_price_override: bool = False,
         low_stock_threshold: float | None = None,
         allow_negative_stock: bool | None = None,
         notes: str | None = None,
@@ -284,8 +426,12 @@ class ProductService:
         is_active: bool | None = None,
         if_match: str | None = None,
         ctx: AuditContext | None = None,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Update a product. If-Match is REQUIRED (OpenAPI IfMatchRequired).
+
+        Returns ``(row, enrichment)``. ``enrichment`` is computed by
+        :meth:`build_enrichment` *before* the commit, because it is part of
+        the successful response contract.
 
         * If-Match omitted -> 428/400 MissingHeader.
         * If-Match mismatch -> 412 VersionMismatch.
@@ -293,6 +439,8 @@ class ProductService:
           product_price_history row.
         * ``updated_by`` is set to the authenticated principal's user_id
           (NOT NULL on the products table).
+        * A failure in the enrichment reads rolls back the update, the
+          price-history row, and the audit row.
         """
 
         existing = await self._repo.get(id)
@@ -303,13 +451,37 @@ class ProductService:
         etag, _ = _version_from_row(existing)
         check_if_match(provided=if_match, current_etag=etag)
 
+        # V3: product-dimension attribute FKs — kind-scoped validation.
+        await _validate_dimension_attrs(
+            self._uow,
+            jenis_id=jenis_id,
+            size_id=size_id,
+            kualitas_id=kualitas_id,
+        )
+
         # Detect price changes for price-history.
         price_changed = (
             purchase_price is not None
             and float(purchase_price) != float(existing["purchase_price"])
         ) or (
             selling_price is not None and float(selling_price) != float(existing["selling_price"])
-        )
+        ) or (
+            purchase_price_per_kg is not None
+            and (
+                existing.get("purchase_price_per_kg") is None
+                or float(purchase_price_per_kg) != float(existing["purchase_price_per_kg"])
+            )
+        ) or clear_purchase_price_per_kg and existing.get("purchase_price_per_kg") is not None or (
+            selling_price_per_kg is not None
+            and (
+                existing.get("selling_price_per_kg") is None
+                or float(selling_price_per_kg) != float(existing["selling_price_per_kg"])
+            )
+        ) or clear_selling_price_per_kg and existing.get("selling_price_per_kg") is not None or (
+            purchase_price_override is not None and (existing.get("purchase_price_override") is None or float(purchase_price_override) != float(existing["purchase_price_override"]))
+        ) or clear_purchase_price_override and existing.get("purchase_price_override") is not None or (
+            selling_price_override is not None and (existing.get("selling_price_override") is None or float(selling_price_override) != float(existing["selling_price_override"]))
+        ) or clear_selling_price_override and existing.get("selling_price_override") is not None
 
         actor = ctx.user_id if ctx and ctx.user_id is not None else 0
 
@@ -318,8 +490,19 @@ class ProductService:
             name=name,
             category_id=category_id,
             unit_id=unit_id,
+            jenis_id=jenis_id,
+            size_id=size_id,
+            kualitas_id=kualitas_id,
             purchase_price=purchase_price,
             selling_price=selling_price,
+            purchase_price_per_kg=purchase_price_per_kg,
+            selling_price_per_kg=selling_price_per_kg,
+            clear_purchase_price_per_kg=clear_purchase_price_per_kg,
+            clear_selling_price_per_kg=clear_selling_price_per_kg,
+            purchase_price_override=purchase_price_override,
+            selling_price_override=selling_price_override,
+            clear_purchase_price_override=clear_purchase_price_override,
+            clear_selling_price_override=clear_selling_price_override,
             low_stock_threshold=low_stock_threshold,
             allow_negative_stock=allow_negative_stock,
             notes=notes,
@@ -339,6 +522,10 @@ class ProductService:
                 id,
                 purchase_price=float(row["purchase_price"]),
                 selling_price=float(row["selling_price"]),
+                purchase_price_per_kg=row.get("purchase_price_per_kg"),
+                selling_price_per_kg=row.get("selling_price_per_kg"),
+                purchase_price_override=row.get("purchase_price_override"),
+                selling_price_override=row.get("selling_price_override"),
                 changed_by=actor,
             )
 
@@ -354,8 +541,15 @@ class ProductService:
                 ctx=ctx,
             )
 
+        # Enrichment is part of the mandatory successful response. Compute it
+        # BEFORE the commit so a failure here rolls back the product update,
+        # its price-history row, and its audit row — never a mutation that is
+        # committed server-side but reported to the client as failed. The
+        # reads run inside this transaction, so they see the new values.
+        enrichment = await self.build_enrichment(row)
+
         await self._uow.commit()
-        return row
+        return row, enrichment
 
     async def _write_price_history(
         self,
@@ -363,7 +557,11 @@ class ProductService:
         *,
         purchase_price: float,
         selling_price: float,
-        changed_by: int | None,
+        purchase_price_per_kg: float | None = None,
+        selling_price_per_kg: float | None = None,
+        purchase_price_override: float | None = None,
+        selling_price_override: float | None = None,
+        changed_by: int | None = None,
     ) -> None:
         """Insert a product_price_history row for a price change.
 
@@ -374,9 +572,11 @@ class ProductService:
             """
             INSERT INTO product_price_history (
                 product_id, purchase_price, selling_price,
+                purchase_price_per_kg, selling_price_per_kg, purchase_price_override, selling_price_override,
                 effective_at, changed_by
             ) VALUES (
                 :product_id, :purchase_price, :selling_price,
+                :purchase_price_per_kg, :selling_price_per_kg, :purchase_price_override, :selling_price_override,
                 NOW(), :changed_by
             )
             """,
@@ -384,6 +584,10 @@ class ProductService:
                 "product_id": product_id,
                 "purchase_price": purchase_price,
                 "selling_price": selling_price,
+                "purchase_price_per_kg": purchase_price_per_kg,
+                "selling_price_per_kg": selling_price_per_kg,
+                "purchase_price_override": purchase_price_override,
+                "selling_price_override": selling_price_override,
                 "changed_by": changed_by,
             },
         )
@@ -577,6 +781,7 @@ class ProductService:
         rows = await self._uow.fetch_all(
             f"""
             SELECT id, product_id, purchase_price, selling_price,
+                   purchase_price_per_kg, selling_price_per_kg, purchase_price_override, selling_price_override,
                    effective_at, changed_by
             FROM product_price_history {where}
             ORDER BY effective_at DESC, id DESC

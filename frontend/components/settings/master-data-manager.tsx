@@ -2,20 +2,23 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Check, CreditCard, Pencil, Plus, RefreshCw, Ruler, Search, Tags, X } from 'lucide-react'
+import { ArrowLeft, Check, CreditCard, Pencil, Plus, RefreshCw, Ruler, Search, Shapes, Tags, X } from 'lucide-react'
 import { api } from '@/lib/api-client'
 import { useSession } from '@/lib/session'
 import { useLanguage } from '@/lib/i18n'
 import type { FinancialCategoryResponse, PaymentMethodResponse } from '@/lib/finance-types'
+import type { ProductAttribute, ProductAttributeKind } from '@/lib/product-types'
 
-type MasterDataKind = 'units' | 'payment-methods' | 'financial-categories'
-type UnitItem = { id: number; code: string; name: string; is_active: boolean; version?: number }
-type MasterItem = UnitItem | PaymentMethodResponse | FinancialCategoryResponse
+type MasterDataKind = 'units' | 'payment-methods' | 'financial-categories' | 'product-attributes'
+type UnitItem = { id: number; code: string; name: string; is_active: boolean; version?: number; dimension?: string | null; base_unit_id?: number | null; factor_to_base?: number | null }
+type UnitOption = { id: number; code: string; name: string; dimension?: string | null }
+type MasterItem = UnitItem | PaymentMethodResponse | FinancialCategoryResponse | ProductAttribute
 type DialogState = { mode: 'add' | 'edit'; item?: MasterItem } | null
 const actionTitleKeys: Record<MasterDataKind, { add: string; edit: string; deactivate: string }> = {
   units: { add: 'settings.addUnit', edit: 'settings.editUnit', deactivate: 'settings.deactivateUnit' },
   'payment-methods': { add: 'settings.addPaymentMethod', edit: 'settings.editPaymentMethod', deactivate: 'settings.deactivatePaymentMethod' },
   'financial-categories': { add: 'settings.addFinancialCategory', edit: 'settings.editFinancialCategory', deactivate: 'settings.deactivateFinancialCategory' },
+  'product-attributes': { add: 'settings.addProductAttribute', edit: 'settings.editProductAttribute', deactivate: 'settings.deactivateProductAttribute' },
 }
 
 const definitions: Record<MasterDataKind, {
@@ -46,6 +49,10 @@ const definitions: Record<MasterDataKind, {
     endpoint: '/financial-categories/',
     icon: Tags,
   },
+  'product-attributes': {
+    titleKey: 'settings.productAttributes', descriptionKey: 'settings.productAttributesPageDescription',
+    capability: 'product_attribute.view', endpoint: '/product-attributes', icon: Shapes,
+  },
 }
 
 function hasCashFlag(item: MasterItem): item is PaymentMethodResponse {
@@ -54,6 +61,10 @@ function hasCashFlag(item: MasterItem): item is PaymentMethodResponse {
 
 function hasEntryType(item: MasterItem): item is FinancialCategoryResponse {
   return 'entry_type' in item
+}
+
+function isUnitItem(item: MasterItem): item is UnitItem {
+  return !hasCashFlag(item) && !hasEntryType(item)
 }
 
 export function MasterDataManager({ kind }: { kind: MasterDataKind }) {
@@ -108,7 +119,7 @@ export function MasterDataManager({ kind }: { kind: MasterDataKind }) {
     [items, statusFilter],
   )
 
-  const saveItem = async (values: { code: string; name: string; isCash: boolean; entryType: 'income' | 'expense' }) => {
+  const saveItem = async (values: { code: string; name: string; isCash: boolean; entryType: 'income' | 'expense'; dimension?: string | null; baseUnitId?: number | null; factorToBase?: number | null; attributeKind?: ProductAttributeKind }) => {
     if (!canManage) return
     setBusy(true)
     setError('')
@@ -116,11 +127,20 @@ export function MasterDataManager({ kind }: { kind: MasterDataKind }) {
     try {
       const item = dialog?.item
       if (kind === 'units') {
-        if (item) await api.patch(`${definition.endpoint}${item.id}`, { name: values.name.trim() })
-        else await api.post(definition.endpoint, { code: values.code.trim(), name: values.name.trim() }, { idempotencyKey: true })
+        if (item) await api.patch(`${definition.endpoint}${item.id}`, { name: values.name.trim(), dimension: values.dimension ?? null, base_unit_id: values.baseUnitId ?? null, factor_to_base: values.factorToBase ?? null })
+        else await api.post(definition.endpoint, { code: values.code.trim(), name: values.name.trim(), dimension: values.dimension ?? null, base_unit_id: values.baseUnitId ?? null, factor_to_base: values.factorToBase ?? null }, { idempotencyKey: true })
       } else if (kind === 'payment-methods') {
         if (item) await api.patch(`${definition.endpoint}${item.id}`, { name: values.name.trim(), is_cash: values.isCash })
         else await api.post(definition.endpoint, { code: values.code.trim(), name: values.name.trim(), is_cash: values.isCash }, { idempotencyKey: true })
+      } else if (kind === 'product-attributes') {
+        const attributeKind = values.attributeKind ?? (item as ProductAttribute | undefined)?.kind
+        if (!attributeKind) throw new Error(t('settings.productAttributeKindRequired'))
+        if (item) {
+          const attribute = item as ProductAttribute
+          await api.patch(`${definition.endpoint}${item.id}`, { name: values.name.trim() }, { ifMatch: `"${attribute.updated_at}"`, idempotencyKey: true })
+        } else {
+          await api.post(definition.endpoint, { kind: attributeKind, name: values.name.trim() }, { idempotencyKey: true })
+        }
       } else if (item) {
         const detail = await api.headers.get<FinancialCategoryResponse>(`${definition.endpoint}${item.id}`)
         const etag = detail.headers.get('etag') ?? (detail.data.updated_at ? `"${detail.data.updated_at}"` : '')
@@ -149,7 +169,7 @@ export function MasterDataManager({ kind }: { kind: MasterDataKind }) {
     setBusy(true)
     setError('')
     try {
-      if (kind === 'financial-categories') {
+      if (kind === 'financial-categories' || kind === 'product-attributes') {
         const detail = await api.headers.get<FinancialCategoryResponse>(`${definition.endpoint}${item.id}`)
         const etag = detail.headers.get('etag') ?? (detail.data.updated_at ? `"${detail.data.updated_at}"` : '')
         if (!etag) throw new Error(t('errors.preconditionFailed'))
@@ -167,7 +187,7 @@ export function MasterDataManager({ kind }: { kind: MasterDataKind }) {
   }
 
   const filteredItems = visibleItems
-  const columnCount = 3 + (kind === 'units' ? 0 : 1) + (canManage ? 1 : 0)
+  const columnCount = (kind === 'units' ? 4 : kind === 'product-attributes' ? 3 : 3) + (canManage ? 1 : 0)
 
   if (!canView) {
     return (
@@ -219,9 +239,12 @@ export function MasterDataManager({ kind }: { kind: MasterDataKind }) {
             <thead>
               <tr>
                 <th>{t('common.name')}</th>
-                <th>{t('common.code')}</th>
+                {kind !== 'product-attributes' && <th>{t('common.code')}</th>}
+                {kind === 'product-attributes' && <th>{t('settings.productAttributeKind')}</th>}
                 {kind === 'payment-methods' && <th>{t('settings.paymentType')}</th>}
                 {kind === 'financial-categories' && <th>{t('settings.entryType')}</th>}
+                {kind === 'units' && <th>{t('settings.unitDimension')}</th>}
+                {kind === 'units' && <th>{t('settings.unitFactorToBase')}</th>}
                 <th>{t('common.status')}</th>
                 {canManage && <th className="settings-master-actions-heading">{t('common.actions')}</th>}
               </tr>
@@ -231,9 +254,12 @@ export function MasterDataManager({ kind }: { kind: MasterDataKind }) {
               {!loading && filteredItems.map((item) => (
                 <tr key={item.id}>
                   <td><strong>{item.name}</strong></td>
-                  <td><code>{item.code}</code></td>
+                  {kind !== 'product-attributes' && <td><code>{'code' in item ? item.code : ''}</code></td>}
+                  {kind === 'product-attributes' && <td>{t(`settings.productAttribute.${(item as ProductAttribute).kind}`)}</td>}
                   {kind === 'payment-methods' && <td>{hasCashFlag(item) && item.is_cash ? t('settings.cashMethod') : t('settings.nonCashMethod')}</td>}
                   {kind === 'financial-categories' && <td>{hasEntryType(item) ? t(item.entry_type === 'income' ? 'manualEntries.income' : 'manualEntries.expense') : ''}</td>}
+                  {kind === 'units' && isUnitItem(item) && <td>{item.dimension ? t(item.dimension === 'mass' ? 'settings.unitDimensionMass' : 'settings.unitDimensionCount') : t('settings.unitDimensionNone')}</td>}
+                  {kind === 'units' && isUnitItem(item) && <td>{item.factor_to_base != null ? item.factor_to_base : '—'}</td>}
                   <td><span className={`badge ${item.is_active ? 'active' : 'inactive'}`}>{item.is_active ? t('common.active') : t('common.inactive')}</span></td>
                   {canManage && (
                     <td className="settings-master-actions">
@@ -268,6 +294,7 @@ export function MasterDataManager({ kind }: { kind: MasterDataKind }) {
           onSave={saveItem}
           t={t}
           titleKey={titleKeys[dialog.mode]}
+          unitOptions={kind === 'units' ? items.filter(isUnitItem) : undefined}
         />
       )}
     </main>
@@ -283,26 +310,32 @@ function MasterDataDialog({
   onSave,
   t,
   titleKey,
+  unitOptions,
 }: {
   kind: MasterDataKind
   state: Exclude<DialogState, null>
   busy: boolean
   error: string
   onCancel: () => void
-  onSave: (values: { code: string; name: string; isCash: boolean; entryType: 'income' | 'expense' }) => void
+  onSave: (values: { code: string; name: string; isCash: boolean; entryType: 'income' | 'expense'; dimension?: string | null; baseUnitId?: number | null; factorToBase?: number | null; attributeKind?: ProductAttributeKind }) => void
   t: (key: string, params?: Record<string, string | number>) => string
   titleKey: string
+  unitOptions?: UnitOption[]
 }) {
-  const [code, setCode] = useState(state.item?.code ?? '')
+  const [code, setCode] = useState(state.item && 'code' in state.item ? state.item.code : '')
   const [name, setName] = useState(state.item?.name ?? '')
   const [isCash, setIsCash] = useState(state.item && hasCashFlag(state.item) ? state.item.is_cash : true)
   const [entryType, setEntryType] = useState<'income' | 'expense'>(state.item && hasEntryType(state.item) ? state.item.entry_type : 'expense')
+  const [dimension, setDimension] = useState<string | null>(state.item && isUnitItem(state.item) ? state.item.dimension ?? null : null)
+  const [baseUnitId, setBaseUnitId] = useState<number | null>(state.item && isUnitItem(state.item) ? state.item.base_unit_id ?? null : null)
+  const [factorToBase, setFactorToBase] = useState<number | null>(state.item && isUnitItem(state.item) ? state.item.factor_to_base ?? null : null)
+  const [attributeKind, setAttributeKind] = useState<ProductAttributeKind | ''>('')
   const editing = state.mode === 'edit'
   const requiresCode = !editing
 
   const submit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    onSave({ code, name, isCash, entryType })
+    onSave({ code, name, isCash, entryType, dimension, baseUnitId, factorToBase, attributeKind: attributeKind || undefined })
   }
 
   return (
@@ -320,7 +353,7 @@ function MasterDataDialog({
           {requiresCode && (
             <label>{t('common.code')}<input autoFocus value={code} onChange={(event) => setCode(event.target.value)} required maxLength={kind === 'units' ? 20 : 50} pattern={kind === 'units' ? '[A-Za-z0-9_-]+' : undefined} /></label>
           )}
-          {editing && <div className="master-data-fixed-code"><span>{t('common.code')}</span><code>{state.item?.code}</code><small>{t('settings.masterDataCodeImmutable')}</small></div>}
+          {editing && state.item && 'code' in state.item && <div className="master-data-fixed-code"><span>{t('common.code')}</span><code>{state.item.code}</code><small>{t('settings.masterDataCodeImmutable')}</small></div>}
           <label>{t('common.name')}<input autoFocus={!requiresCode} value={name} onChange={(event) => setName(event.target.value)} required maxLength={kind === 'units' ? 50 : 100} /></label>
           {kind === 'payment-methods' && (
             <label className="master-data-checkbox"><input type="checkbox" checked={isCash} onChange={(event) => setIsCash(event.target.checked)} />{t('settings.cashMethod')}</label>
@@ -332,6 +365,43 @@ function MasterDataDialog({
                 <option value="expense">{t('manualEntries.expense')}</option>
               </select>
             </label>
+          )}
+          {kind === 'product-attributes' && (
+            <label>{t('settings.productAttributeKind')}
+              <select value={state.item && 'kind' in state.item ? state.item.kind : attributeKind} onChange={(event) => setAttributeKind(event.target.value as ProductAttributeKind)} disabled={editing}>
+                <option value="">{t('settings.productAttributeChooseKind')}</option>
+                <option value="jenis">{t('settings.productAttribute.jenis')}</option>
+                <option value="size">{t('settings.productAttribute.size')}</option>
+                <option value="kualitas">{t('settings.productAttribute.kualitas')}</option>
+              </select>
+            </label>
+          )}
+          {kind === 'units' && (
+            <div className="settings-master-dialog-unit">
+              <label>{t('settings.unitDimension')}
+                <select value={dimension ?? ''} onChange={(event) => {
+                  setDimension(event.target.value || null)
+                  // Changing dimension invalidates a cross-dimension base
+                  setBaseUnitId(null)
+                }}>
+                  <option value="">{t('settings.unitDimensionNone')}</option>
+                  <option value="mass">{t('settings.unitDimensionMass')}</option>
+                  <option value="count">{t('settings.unitDimensionCount')}</option>
+                </select>
+              </label>
+              <label>{t('settings.unitBaseUnit')}
+                <select value={baseUnitId ?? ''} onChange={(event) => setBaseUnitId(event.target.value ? Number(event.target.value) : null)} disabled={!dimension}>
+                  <option value="">{t('settings.unitIsBase')}</option>
+                  {unitOptions
+                    ?.filter((u) => u.id !== state.item?.id && u.dimension === dimension)
+                    .map((u) => <option key={u.id} value={u.id}>{u.name} ({u.code})</option>)}
+                </select>
+              </label>
+              <label>{t('settings.unitFactorToBase')}
+                <input type="number" min="0" step="any" value={factorToBase ?? ''} onChange={(event) => setFactorToBase(event.target.value === '' ? null : Number(event.target.value))} disabled={!dimension} placeholder="1" />
+              </label>
+              <small>{t('settings.unitFactorHint')}</small>
+            </div>
           )}
         </div>
         <footer>
