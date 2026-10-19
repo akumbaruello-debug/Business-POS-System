@@ -25,8 +25,9 @@ field) instead of opaque constraint violations. The DB trigger is the
 final backstop for concurrency races.
 
 Differences vs Sales (B.8):
-* ``purchases.total_amount`` is **derived** (``Σ line_total + shipping``)
-  — not stored on the header. We build it server-side on every read.
+* ``purchases.total_amount`` is **derived** (``Σ line_total``)
+  — not stored on the header. Line totals include allocated shipping and
+  additional costs; we build the purchase total server-side on every read.
 * Shipping is **capitalized into landed cost** (BR-PURCHASE-005) — the
   post-time stock movement uses ``(line_subtotal + allocated_shipping)``
   as the unit cost basis.
@@ -68,8 +69,11 @@ from app.errors import (
     NotFound,
     ReturnCannotBeCancelled,
     TenderedNotAllowedForNonCash,
+    ValidationFailed,
 )
+from app.inventory.sorting import allocate_cents, to_base_quantity
 from app.logging import get_logger
+from app.purchases.cost_allocation import allocate_purchase_cost
 from app.repositories.purchases import PurchaseRepository
 from app.services.idempotency import (
     IdempotencyStore,
@@ -110,6 +114,7 @@ def _is_unique_violation(exc: Exception) -> bool:
 
 # Two-decimal quant for all monetary results.
 _2DP = Decimal("0.01")
+_4DP = Decimal("0.0001")
 
 
 def _quant(x: Any) -> Decimal:
@@ -122,6 +127,14 @@ def _quant(x: Any) -> Decimal:
 
 def _q2(x: Any) -> Decimal:
     return _quant(x).quantize(_2DP)
+
+
+def _q4_exact(x: Any, label: str = "Quantity") -> Decimal:
+    raw = _quant(x)
+    persisted = raw.quantize(_4DP)
+    if raw != persisted:
+        raise ValidationFailed(f"{label} must be representable at 4 decimal places.")
+    return persisted
 
 
 def _is_owner_or_cap(
@@ -171,9 +184,8 @@ class PurchaseService:
         """Authoritative purchase total.
 
         ``purchase_lines.line_total`` ALREADY includes the line's
-        ``allocated_shipping`` (``_recompute_shipping_allocation`` sets
-        ``line_total = line_subtotal + allocated_shipping``), and the
-        allocation always totals ``purchase_shipping.amount``. So the
+        ``allocated_shipping`` plus allocated additional purchase costs
+        (capitalizable and operating), and shipping is not added again. So the
         total is simply ``Σ line_total`` — adding ``shipping.amount``
         again would double-count the shipping. When there is shipping
         but no lines yet, fall back to the shipping amount so a
@@ -189,8 +201,7 @@ class PurchaseService:
     async def _recompute_shipping_allocation(
         self, purchase_id: int
     ) -> None:
-        """Pro-rata allocate shipping amount to purchase_lines.allocated_shipping
-        and update each line's line_total = line_subtotal + allocated_shipping.
+        """Allocate shipping, rebalance additional costs, and recompute line totals.
 
         Called after line insert/update/delete and after shipping upsert.
         """
@@ -203,9 +214,10 @@ class PurchaseService:
             for ln in lines:
                 await self._uow.execute(
                     "UPDATE purchase_lines SET allocated_shipping = 0, "
-                    "line_total = line_subtotal WHERE id = :id",
+                    "line_total = line_subtotal + allocated_capitalizable_cost + allocated_operating_cost WHERE id = :id",
                     {"id": int(ln["id"])},
                 )
+            await self._recompute_purchase_cost_allocations(purchase_id)
             return
         lines, _ = await self._repo.list_lines(purchase_id, per_page=10_000)
         # Pro-rata by subtotal share; cents floor/round on the last line.
@@ -219,12 +231,66 @@ class PurchaseService:
                 share = _q2(allocated_remaining)
             else:
                 allocated_remaining = _q2(allocated_remaining - share)
-            new_line_total = _q2(sub + share)
+            new_line_total = _q2(
+                sub + share + _quant(ln.get("allocated_capitalizable_cost"))
+                + _quant(ln.get("allocated_operating_cost"))
+            )
             await self._uow.execute(
                 "UPDATE purchase_lines SET allocated_shipping = :a, "
                 "line_total = :t WHERE id = :id",
                 {"a": share, "t": new_line_total, "id": int(ln["id"])},
             )
+        await self._recompute_purchase_cost_allocations(purchase_id)
+
+    async def _recompute_purchase_cost_allocations(self, purchase_id: int) -> None:
+        """Rebalance draft purchase costs after line or shipping changes."""
+        lines = await self._uow.fetch_all(
+            """SELECT pl.id,pl.line_number,pl.line_subtotal,pl.quantity,
+                      COALESCE(pl.unit_id,p.unit_id) AS unit_id,
+                      u.dimension,u.factor_to_base
+               FROM purchase_lines pl LEFT JOIN products p ON p.id=pl.product_id
+               LEFT JOIN units u ON u.id=COALESCE(pl.unit_id,p.unit_id)
+               WHERE pl.purchase_id=:pid ORDER BY pl.line_number,pl.id""",
+            {"pid": purchase_id},
+        )
+        costs = await self._uow.fetch_all(
+            "SELECT id,amount,allocation_method FROM purchase_costs WHERE purchase_id=:pid ORDER BY id",
+            {"pid": purchase_id},
+        )
+        for cost in costs:
+            method = str(cost["allocation_method"])
+            manual = None
+            if method == "manual":
+                rows = await self._uow.fetch_all(
+                    "SELECT purchase_line_id,amount FROM purchase_cost_allocations WHERE purchase_cost_id=:id",
+                    {"id": cost["id"]},
+                )
+                manual = {int(row["purchase_line_id"]): _quant(row["amount"]) for row in rows}
+            try:
+                allocation = allocate_purchase_cost(_quant(cost["amount"]), lines, method, manual)
+            except ValueError as exc:
+                raise ValidationFailed(str(exc)) from exc
+            await self._uow.execute("DELETE FROM purchase_cost_allocations WHERE purchase_cost_id=:id", {"id": cost["id"]})
+            for line_id, amount in allocation.items():
+                await self._uow.execute(
+                    "INSERT INTO purchase_cost_allocations (purchase_cost_id,purchase_line_id,amount) VALUES (:cid,:lid,:amount)",
+                    {"cid": cost["id"], "lid": line_id, "amount": amount},
+                )
+        await self._uow.execute(
+            """UPDATE purchase_lines pl SET
+                 allocated_capitalizable_cost=COALESCE((SELECT SUM(a.amount) FROM purchase_cost_allocations a
+                   JOIN purchase_costs pc ON pc.id=a.purchase_cost_id
+                   WHERE a.purchase_line_id=pl.id AND pc.capitalizable_snapshot),0),
+                 allocated_operating_cost=COALESCE((SELECT SUM(a.amount) FROM purchase_cost_allocations a
+                   JOIN purchase_costs pc ON pc.id=a.purchase_cost_id
+                   WHERE a.purchase_line_id=pl.id AND NOT pc.capitalizable_snapshot),0)
+               WHERE pl.purchase_id=:pid""", {"pid": purchase_id}
+        )
+        await self._uow.execute(
+            """UPDATE purchase_lines SET line_total=line_subtotal+allocated_shipping+
+                 allocated_capitalizable_cost+allocated_operating_cost WHERE purchase_id=:pid""",
+            {"pid": purchase_id},
+        )
 
     # ------------------------------------------------------------------
     # Enrichment / response shaping
@@ -284,11 +350,15 @@ class PurchaseService:
         return {
             "id": int(r["id"]),
             "purchase_id": int(r["purchase_id"]),
-            "product_id": int(r["product_id"]),
+            "product_id": int(r["product_id"]) if r.get("product_id") is not None else None,
+            "receipt_type": str(r.get("receipt_type") or "classified"),
+            "unit_id": int(r["unit_id"]) if r.get("unit_id") is not None else None,
             "quantity": float(r["quantity"]),
             "unit_price": float(r["unit_price"]),
             "line_subtotal": float(r["line_subtotal"]),
             "allocated_shipping": float(r["allocated_shipping"]),
+            "allocated_capitalizable_cost": float(r.get("allocated_capitalizable_cost") or 0),
+            "allocated_operating_cost": float(r.get("allocated_operating_cost") or 0),
             "line_total": float(r["line_total"]),
             "line_number": int(r["line_number"]),
         }
@@ -348,7 +418,7 @@ class PurchaseService:
             "id": int(r["id"]),
             "purchase_return_id": int(r["purchase_return_id"]),
             "purchase_line_id": int(r["purchase_line_id"]),
-            "product_id": int(r["product_id"]),
+            "product_id": int(r["product_id"]) if r.get("product_id") is not None else None,
             "quantity": float(r["quantity"]),
             "unit_cost_snapshot": float(r["unit_cost_snapshot"]),
             "line_value": float(r["line_value"]),
@@ -467,13 +537,27 @@ class PurchaseService:
         # Pre-validate lines + compute line_subtotal
         validated: list[dict[str, Any]] = []
         for ln in lines:
-            pid = int(ln["product_id"])
-            row = await self._uow.first_row(
-                "SELECT id FROM products WHERE id = :id", {"id": pid}
-            )
-            if row is None:
-                raise NotFound(f"Product {pid} not found.")
-            qty = _quant(ln["quantity"])
+            receipt_type = str(ln.get("receipt_type") or "classified")
+            pid = int(ln["product_id"]) if ln.get("product_id") is not None else None
+            if receipt_type == "classified":
+                if pid is None:
+                    raise ValidationFailed("product_id is required for a classified purchase line.")
+                row = await self._uow.first_row(
+                    "SELECT id,unit_id FROM products WHERE id=:id AND is_purchasable=TRUE AND is_active=TRUE", {"id": pid}
+                )
+                if row is None:
+                    raise NotFound(f"Purchasable product {pid} not found.")
+                unit_id = int(row["unit_id"]) if row.get("unit_id") is not None else None
+            elif receipt_type == "unsorted":
+                unit_id = int(ln["unit_id"])
+                unit = await self._uow.first_row(
+                    "SELECT dimension,factor_to_base FROM units WHERE id=:id AND is_active=TRUE", {"id": unit_id}
+                )
+                if pid is not None or unit is None or unit.get("dimension") != "mass" or unit.get("factor_to_base") is None:
+                    raise ValidationFailed("Unsorted receipt lines require an active mass unit with a conversion factor and no product.")
+            else:
+                raise ValidationFailed("receipt_type must be classified or unsorted.")
+            qty = _q4_exact(ln["quantity"])
             if qty <= 0:
                 raise Conflict(
                     "Purchase line quantity must be positive.",
@@ -489,6 +573,8 @@ class PurchaseService:
             validated.append(
                 {
                     "product_id": pid,
+                    "receipt_type": receipt_type,
+                    "unit_id": unit_id,
                     "quantity": qty,
                     "unit_price": unit_price,
                     "line_subtotal": line_subtotal,
@@ -525,6 +611,8 @@ class PurchaseService:
             row = await self._repo.insert_line(
                 purchase_id=purchase_id,
                 product_id=v["product_id"],
+                receipt_type=v["receipt_type"],
+                unit_id=v["unit_id"],
                 quantity=v["quantity"],
                 unit_price=v["unit_price"],
                 line_subtotal=v["line_subtotal"],
@@ -565,6 +653,8 @@ class PurchaseService:
                     "lines": [
                         {
                             "product_id": v["product_id"],
+                            "receipt_type": v["receipt_type"],
+                            "unit_id": v["unit_id"],
                             "quantity": str(v["quantity"]),
                             "unit_price": str(v["unit_price"]),
                             "line_subtotal": str(v["line_subtotal"]),
@@ -746,13 +836,32 @@ class PurchaseService:
         current_etag, _v = self._etag_from_row(purchase)
         check_if_match(provided=if_match, current_etag=current_etag)
 
-        pid = int(line["product_id"])
-        row = await self._uow.first_row(
-            "SELECT id FROM products WHERE id = :id", {"id": pid}
-        )
-        if row is None:
-            raise NotFound(f"Product {pid} not found.")
-        qty = _quant(line["quantity"])
+        receipt_type = str(line.get("receipt_type") or "classified")
+        pid_value = line.get("product_id")
+        pid = int(pid_value) if pid_value is not None else None
+        if receipt_type == "classified":
+            if pid is None:
+                raise ValidationFailed("product_id is required for a classified purchase line.")
+            row = await self._uow.first_row(
+                "SELECT id,unit_id FROM products WHERE id = :id AND is_purchasable=TRUE AND is_active=TRUE", {"id": pid}
+            )
+            if row is None:
+                raise NotFound(f"Purchasable product {pid} not found.")
+            unit_id = int(row["unit_id"]) if row.get("unit_id") is not None else None
+        elif receipt_type == "unsorted":
+            if pid is not None or line.get("unit_id") is None:
+                raise ValidationFailed("Unsorted lines require a mass unit and no product selection.")
+            unit_id = int(line["unit_id"])
+            unit = await self._uow.first_row(
+                "SELECT id,dimension,factor_to_base FROM units WHERE id=:id AND is_active=TRUE", {"id": unit_id}
+            )
+            if unit is None:
+                raise NotFound(f"Active unit {unit_id} not found.")
+            if unit.get("dimension") != "mass" or unit.get("factor_to_base") is None:
+                raise ValidationFailed("Unsorted receipt lines require a configured mass unit and conversion factor.")
+        else:
+            raise ValidationFailed("receipt_type must be classified or unsorted.")
+        qty = _q4_exact(line["quantity"])
         if qty <= 0:
             raise Conflict(
                 "Purchase line quantity must be positive.",
@@ -770,6 +879,8 @@ class PurchaseService:
         inserted = await self._repo.insert_line(
             purchase_id=purchase_id,
             product_id=pid,
+            receipt_type=receipt_type,
+            unit_id=unit_id,
             quantity=qty,
             unit_price=unit_price,
             line_subtotal=line_subtotal,
@@ -795,6 +906,8 @@ class PurchaseService:
                 entity_id=int(inserted["id"]),
                 new_values={
                     "product_id": pid,
+                    "receipt_type": receipt_type,
+                    "unit_id": unit_id,
                     "quantity": str(qty),
                     "unit_price": str(unit_price),
                     "line_subtotal": str(line_subtotal),
@@ -932,6 +1045,22 @@ class PurchaseService:
             else:
                 raise NotFound(f"Purchase line {line_id} not found.")
             return None, False
+
+        manual_allocation = await self._uow.first_row(
+            """SELECT pc.id FROM purchase_cost_allocations a
+               JOIN purchase_costs pc ON pc.id=a.purchase_cost_id
+               WHERE a.purchase_line_id=:line_id AND pc.purchase_id=:pid
+                 AND pc.allocation_method='manual' AND a.amount > 0 LIMIT 1""",
+            {"line_id": line_id, "pid": purchase_id},
+        )
+        if manual_allocation is not None:
+            raise Conflict("Remove or revise manual purchase costs before deleting a line with a manual allocation.")
+        await self._uow.execute(
+            """DELETE FROM purchase_cost_allocations a USING purchase_costs pc
+               WHERE a.purchase_cost_id=pc.id AND a.purchase_line_id=:line_id
+                 AND pc.purchase_id=:pid""",
+            {"line_id": line_id, "pid": purchase_id},
+        )
 
         await self._repo.delete_line(purchase_id, line_id)
         # Renumber remaining lines to keep them contiguous starting at 1.
@@ -1173,18 +1302,61 @@ class PurchaseService:
         ship_amount = _quant(shipping["amount"]) if shipping else Decimal("0")
 
         posted_at = datetime.now(UTC)
-        # Insert purchase_receipt stock_movements with LANDED unit cost
-        # (line_subtotal + allocated_shipping) per BR-PURCHASE-005.
+        # Insert purchase_receipt stock_movements with goods, shipping, and
+        # capitalizable acquisition costs. Operating costs remain outside HPP.
         # moving-average cost is recomputed by the DB trigger for
         # value_adjustment / sale fallback paths; here we use the
         # original landed unit cost.
         for ln in lines_list:
-            landed_unit_cost = (
-                _quant(ln["line_subtotal"]) / _quant(ln["quantity"])
-                + _quant(ln["allocated_shipping"]) / _quant(ln["quantity"])
-            )
             qty = _quant(ln["quantity"])
-            total_cost = _q2(landed_unit_cost * qty)
+            inventory_value = _q2(
+                _quant(ln["line_subtotal"])
+                + _quant(ln["allocated_shipping"])
+                + _quant(ln.get("allocated_capitalizable_cost"))
+            )
+            if str(ln.get("receipt_type") or "classified") == "unsorted":
+                unit = await self._uow.first_row(
+                    """SELECT u.id,u.code,u.name,u.dimension,u.factor_to_base,
+                              bu.code AS base_code
+                       FROM units u LEFT JOIN units bu ON bu.id=u.base_unit_id
+                       WHERE u.id=:id AND u.is_active=TRUE""",
+                    {"id": int(ln["unit_id"])},
+                )
+                if unit is None or unit.get("dimension") != "mass" or unit.get("factor_to_base") is None:
+                    raise ValidationFailed("Unsorted receipts require an active mass unit with a conversion factor.")
+                factor = Decimal(str(unit["factor_to_base"]))
+                try:
+                    base_qty = to_base_quantity(qty, factor)
+                except ValueError as exc:
+                    raise ValidationFailed(str(exc)) from exc
+                if unit.get("base_code") is None and factor != Decimal("1"):
+                    raise ValidationFailed("The selected mass unit has no configured base unit.")
+                batch = await self._uow.first_row(
+                    """INSERT INTO pending_receipt_batches (
+                         purchase_line_id,unit_id,unit_code_snapshot,unit_name_snapshot,
+                         factor_to_base_snapshot,base_unit_code_snapshot,original_quantity,
+                         original_value,created_by)
+                       VALUES (:line_id,:unit_id,:unit_code,:unit_name,:factor,:base_code,:qty,:value,:actor)
+                       RETURNING id""",
+                    {"line_id": int(ln["id"]), "unit_id": int(unit["id"]),
+                     "unit_code": unit["code"], "unit_name": unit["name"], "factor": factor,
+                     "base_code": unit.get("base_code") or unit["code"], "qty": base_qty,
+                     "value": inventory_value, "actor": principal_user_id},
+                )
+                batch_id = int(batch["id"])
+                unit_cost = (inventory_value / base_qty).quantize(Decimal("0.0001")) if base_qty else Decimal("0")
+                await self._uow.execute(
+                    """INSERT INTO pending_inventory_movements (
+                         pending_receipt_batch_id,trigger,quantity,unit_cost_at_movement,total_cost,
+                         reference_type,reference_id,reference_line_id,created_by)
+                       VALUES (:batch,'purchase_receipt',:qty,:unit_cost,:value,'purchase',:purchase,:line,:actor)""",
+                    {"batch": batch_id, "qty": base_qty, "unit_cost": unit_cost, "value": inventory_value,
+                     "purchase": purchase_id, "line": int(ln["id"]), "actor": principal_user_id},
+                )
+                continue
+
+            landed_unit_cost = inventory_value / qty
+            total_cost = inventory_value
             await self._uow.execute(
                 """
                 INSERT INTO stock_movements (
@@ -1215,6 +1387,14 @@ class PurchaseService:
             posted_by=principal_user_id,
             posted_at=posted_at,
             received_date=posted_at,
+        )
+
+        # Freeze cost classification/allocation recognition at purchase post.
+        # The P&L report reads these immutable posted rows once; supplier
+        # payments only settle AP and never create a second expense.
+        await self._uow.execute(
+            "UPDATE purchase_costs SET posted_at=:posted_at WHERE purchase_id=:pid AND posted_at IS NULL",
+            {"posted_at": posted_at, "pid": purchase_id},
         )
 
         # AP creation is implicit: outstanding = total - payments.
@@ -1540,6 +1720,47 @@ class PurchaseService:
         #   * Consumed portion → value_adjustment (qty = 0, total_cost = -consumed * landed_cost)
         lines_list, _ = await self._repo.list_lines(purchase_id, per_page=10_000)
         for ln in lines_list:
+            if str(ln.get("receipt_type") or "classified") == "unsorted":
+                batch = await self._uow.first_row(
+                    "SELECT id,original_quantity FROM pending_receipt_batches WHERE purchase_line_id=:line FOR UPDATE",
+                    {"line": int(ln["id"])},
+                )
+                if batch is None:
+                    if purchase["lifecycle_status"] == LifecycleStatus.DRAFT.value:
+                        continue
+                    raise Conflict("Unsorted purchase receipt has no traceable pending batch.")
+                activity = await self._uow.first_row(
+                    "SELECT 1 FROM sorting_events WHERE pending_receipt_batch_id=:batch LIMIT 1",
+                    {"batch": batch["id"]},
+                )
+                balance = await self._uow.first_row(
+                    "SELECT COALESCE(SUM(quantity),0) q,COALESCE(SUM(total_cost),0) v "
+                    "FROM pending_inventory_movements WHERE pending_receipt_batch_id=:batch",
+                    {"batch": batch["id"]},
+                )
+                if activity or _quant(balance["q"]) != _quant(batch["original_quantity"]):
+                    raise Conflict(
+                        "This unsorted receipt has sorting or return history. Reverse eligible sorting first, cancel any return, and retry.",
+                        details={"purchase_line_id": int(ln["id"]), "pending_receipt_batch_id": int(batch["id"])},
+                    )
+                source = await self._uow.first_row(
+                    "SELECT id FROM pending_inventory_movements WHERE pending_receipt_batch_id=:batch "
+                    "AND trigger='purchase_receipt' ORDER BY id LIMIT 1", {"batch": batch["id"]}
+                )
+                if source is None:
+                    raise Conflict("Original unsorted receipt movement is missing; cancellation is blocked for safety.")
+                await self._uow.execute(
+                    """INSERT INTO pending_inventory_movements(pending_receipt_batch_id,trigger,quantity,
+                           unit_cost_at_movement,total_cost,reference_type,reference_id,reference_line_id,
+                           reversal_of_movement_id,reason,created_by)
+                       VALUES(:batch,'purchase_reversal',:qty,:unit,:value,'purchase',:purchase,:line,
+                              :source,:reason,:actor)""",
+                    {"batch": batch["id"], "qty": -_quant(balance["q"]),
+                     "unit": (_quant(balance["v"]) / _quant(balance["q"])).quantize(_4DP),
+                     "value": -_quant(balance["v"]), "purchase": purchase_id, "line": int(ln["id"]),
+                     "source": source["id"] if source else None, "reason": reason, "actor": principal_user_id},
+                )
+                continue
             pid = int(ln["product_id"])
             # Find the original purchase_receipt movement(s) for this line.
             receipts = await self._uow.fetch_all(
@@ -1731,13 +1952,13 @@ class PurchaseService:
                 raise NotFound(f"Purchase line {pl_id} not found.")
             returned_so_far = await self._repo.sum_returned_qty_for_line(pl_id)
             original_qty = _quant(line_row["quantity"])
-            requested = _quant(rl["quantity"])
+            requested = _q4_exact(rl["quantity"], "Return quantity")
             if requested <= 0:
                 raise Conflict(
                     "Return quantity must be positive.",
                     details={"purchase_line_id": pl_id},
                 )
-            remaining = _q2(original_qty - returned_so_far)
+            remaining = original_qty - returned_so_far
             if requested > remaining:
                 raise Conflict(
                     f"Return quantity exceeds remaining for purchase_line "
@@ -1750,21 +1971,62 @@ class PurchaseService:
                     },
                 )
 
-            # Server-computed unit cost snapshot: pro-rata line_total / qty.
-            unit_cost = (
+            # AP return value includes the full line total (including
+            # operating costs), but the stock reversal must exclude those
+            # non-capitalizable costs.
+            payable_unit_value = (
                 _quant(line_row["line_total"]) / original_qty
                 if original_qty > 0
                 else Decimal("0")
             )
-            line_value = _q2(unit_cost * requested)
+            inventory_value = (
+                _quant(line_row["line_subtotal"])
+                + _quant(line_row["allocated_shipping"])
+                + _quant(line_row.get("allocated_capitalizable_cost"))
+            )
+            unit_cost = inventory_value / original_qty if original_qty > 0 else Decimal("0")
+            receipt_type = str(line_row.get("receipt_type") or "classified")
+            pending_batch_id: int | None = None
+            pending_base_qty = Decimal("0")
+            pending_return_value = Decimal("0")
+            if receipt_type == "unsorted":
+                batch = await self._uow.first_row(
+                    "SELECT id,factor_to_base_snapshot FROM pending_receipt_batches "
+                    "WHERE purchase_line_id=:line FOR UPDATE", {"line": pl_id}
+                )
+                if batch is None:
+                    raise Conflict("Unsorted purchase line has no traceable receipt batch.")
+                pending_batch_id = int(batch["id"])
+                try:
+                    pending_base_qty = to_base_quantity(requested, _quant(batch["factor_to_base_snapshot"]))
+                except ValueError as exc:
+                    raise ValidationFailed(str(exc)) from exc
+                pending_balance = await self._uow.first_row(
+                    "SELECT COALESCE(SUM(quantity),0) q,COALESCE(SUM(total_cost),0) v "
+                    "FROM pending_inventory_movements WHERE pending_receipt_batch_id=:batch",
+                    {"batch": pending_batch_id},
+                )
+                available_q, available_v = _quant(pending_balance["q"]), _quant(pending_balance["v"])
+                if pending_base_qty > available_q:
+                    raise Conflict(
+                        "Return exceeds the unsorted quantity still physically available. Sort or reconcile the batch before returning transformed goods.",
+                        details={"pending_receipt_batch_id": pending_batch_id, "available_quantity": str(available_q)},
+                    )
+                pending_return_value = allocate_cents(available_v, {
+                    1: pending_base_qty, 2: available_q - pending_base_qty
+                })[1]
+            line_value = _q2(payable_unit_value * requested)
             total_value = _q2(total_value + line_value)
             created_lines.append(
                 {
                     "purchase_line_id": pl_id,
-                    "product_id": int(line_row["product_id"]),
+                    "product_id": int(line_row["product_id"]) if line_row.get("product_id") is not None else None,
                     "quantity": requested,
-                    "unit_cost_snapshot": _q2(unit_cost),
+                    "unit_cost_snapshot": unit_cost.quantize(_4DP),
                     "line_value": line_value,
+                    "pending_batch_id": pending_batch_id,
+                    "pending_quantity": pending_base_qty,
+                    "pending_value": pending_return_value,
                 }
             )
 
@@ -1793,6 +2055,20 @@ class PurchaseService:
                 line_value=cl["line_value"],
                 line_number=ln_no,
             )
+            if cl.get("pending_batch_id") is not None:
+                pending_qty = cl["pending_quantity"]
+                pending_value = cl["pending_value"]
+                await self._uow.execute(
+                    """INSERT INTO pending_inventory_movements(pending_receipt_batch_id,trigger,quantity,
+                           unit_cost_at_movement,total_cost,reference_type,reference_id,reference_line_id,
+                           reason,created_by)
+                       VALUES(:batch,'purchase_return',:qty,:unit,:value,'purchase_return',:return,:line,:reason,:actor)""",
+                    {"batch": cl["pending_batch_id"], "qty": -pending_qty,
+                     "unit": (pending_value / pending_qty).quantize(_4DP) if pending_qty else Decimal("0"),
+                     "value": -pending_value, "return": ret_id, "line": ln_no,
+                     "reason": reason, "actor": principal_user_id},
+                )
+                continue
             # Stock movement: negative qty (decrease on-hand) at original
             # unit_cost_snapshot, per BR-PURCHASE-006.
             await self._uow.execute(
@@ -2060,6 +2336,25 @@ class PurchaseService:
         # Insert reversal movements (positive qty to restore stock).
         lines = await self._repo.list_return_lines(return_id)
         for ln in lines:
+            if ln.get("product_id") is None:
+                orig_pending = await self._uow.first_row(
+                    "SELECT * FROM pending_inventory_movements WHERE reference_type='purchase_return' "
+                    "AND reference_id=:rid AND reference_line_id=:line AND trigger='purchase_return'",
+                    {"rid": return_id, "line": int(ln["line_number"])},
+                )
+                if orig_pending:
+                    await self._uow.execute(
+                        """INSERT INTO pending_inventory_movements(pending_receipt_batch_id,trigger,quantity,
+                               unit_cost_at_movement,total_cost,reference_type,reference_id,reference_line_id,
+                               reversal_of_movement_id,reason,created_by)
+                           VALUES(:batch,'purchase_return_reversal',:qty,:unit,:value,'purchase_return',:return,:line,
+                                  :original,:reason,:actor)""",
+                        {"batch": orig_pending["pending_receipt_batch_id"], "qty": -_quant(orig_pending["quantity"]),
+                         "unit": orig_pending["unit_cost_at_movement"], "value": -_quant(orig_pending["total_cost"]),
+                         "return": return_id, "line": int(ln["line_number"]), "original": orig_pending["id"],
+                         "reason": reason, "actor": principal_user_id},
+                    )
+                continue
             orig = await self._uow.first_row(
                 "SELECT * FROM stock_movements "
                 "WHERE reference_type = 'purchase_return' "

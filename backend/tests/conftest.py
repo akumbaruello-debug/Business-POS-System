@@ -283,7 +283,7 @@ async def db() -> AsyncGenerator[None, None]:
                 "TRUNCATE TABLE "
                 "idempotency_keys, sessions, "
                 "user_capability_overrides, "
-                "categories, units, products, payment_methods, financial_categories, cost_types, contacts, "
+                "categories, units, products, product_attributes, payment_methods, financial_categories, cost_types, contacts, "
                 "stock_movements, sale_lines, sale_payments, sales, "
                 "sales_return_lines, sales_returns, refunds, "
                 "purchase_lines, purchase_payments, purchases, "
