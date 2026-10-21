@@ -429,7 +429,13 @@ function CreatePurchaseDialog({
                         <td style={{ padding: '8px 12px', minWidth: 200 }}>
                           <select
                             value={l.product_id}
-                            onChange={(e) => updateLine(l.key, { product_id: e.target.value })}
+                            onChange={(e) => {
+                              const selected = products.find((pr) => String(pr.id) === e.target.value)
+                              updateLine(l.key, {
+                                product_id: e.target.value,
+                                unit_price: selected ? String(selected.purchase_price_default ?? selected.purchase_price) : l.unit_price,
+                              })
+                            }}
                             style={{ ...fieldStyle, height: 32 }}
                           >
                             <option value="">{t('purchases.selectProduct')}</option>

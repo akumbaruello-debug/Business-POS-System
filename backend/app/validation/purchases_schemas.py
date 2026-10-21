@@ -45,7 +45,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # ----------------------------------------------------------------------------
 # Purchases
@@ -57,9 +57,19 @@ class PurchaseLineInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    product_id: int = Field(..., ge=1)
+    product_id: int | None = Field(default=None, ge=1)
+    receipt_type: str = Field(default="classified", pattern="^(classified|unsorted)$")
+    unit_id: int | None = Field(default=None, ge=1)
     quantity: float = Field(..., gt=0, le=1_000_000_000_000.0)
     unit_price: float = Field(..., ge=0)
+
+    @model_validator(mode="after")
+    def validate_receipt_kind(self) -> "PurchaseLineInput":
+        if self.receipt_type == "classified" and self.product_id is None:
+            raise ValueError("product_id is required for a classified receipt line")
+        if self.receipt_type == "unsorted" and (self.product_id is not None or self.unit_id is None):
+            raise ValueError("unsorted receipt lines require unit_id and must not select a product")
+        return self
 
 
 class PurchaseLinePatch(BaseModel):
@@ -78,7 +88,9 @@ class PurchaseLine(BaseModel):
 
     id: int
     purchase_id: int
-    product_id: int
+    product_id: int | None = None
+    receipt_type: str = "classified"
+    unit_id: int | None = None
     quantity: float
     unit_price: float
     line_subtotal: float
@@ -244,7 +256,7 @@ class PurchaseReturnLine(BaseModel):
     id: int
     purchase_return_id: int
     purchase_line_id: int
-    product_id: int
+    product_id: int | None = None
     quantity: float
     unit_cost_snapshot: float
     line_value: float

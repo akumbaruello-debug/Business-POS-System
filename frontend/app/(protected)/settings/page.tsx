@@ -46,6 +46,7 @@ export default function SettingsPage() {
   ].filter((item) => can(item.capability))
 
   const businessSetup: SettingsLink[] = [
+    { title: t('purchaseCosts.title'), description: t('purchaseCosts.description'), href: '/settings/purchase-costs', capability: 'settings.view', icon: Truck },
     { title: t('costTypes.title'), description: t('settings.costTypesDescription'), href: '/settings/cost-types', capability: 'cost_type.view', icon: Wrench },
     { title: t('settings.financialCategories'), description: t('settings.financialCategoriesDescription'), href: '/settings/financial-categories', capability: 'financial_category.view', icon: Tags },
     { title: t('settings.cashLedger'), description: t('settings.cashLedgerDescription'), href: '/finance/cash', capability: 'finance.view_cash', icon: CircleDollarSign },
