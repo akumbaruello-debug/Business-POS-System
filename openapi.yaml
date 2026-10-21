@@ -7303,6 +7303,8 @@ components:
       - name
       - purchase_price
       - selling_price
+      - purchase_price_default
+      - selling_price_default
       - is_sellable
       - is_purchasable
       - is_producible
@@ -7364,6 +7366,20 @@ components:
           type: number
           minimum: 0
           multipleOf: 0.01
+        purchase_price_per_kg:
+          type: [number, 'null']
+          minimum: 0
+          multipleOf: 0.01
+        selling_price_per_kg:
+          type: [number, 'null']
+          minimum: 0
+          multipleOf: 0.01
+        purchase_price_default:
+          type: number
+          description: Effective default for the product unit; falls back to legacy purchase_price.
+        selling_price_default:
+          type: number
+          description: Effective default for the product unit; falls back to legacy selling_price.
         low_stock_threshold:
           type:
           - number
@@ -7461,6 +7477,14 @@ components:
           type: number
           minimum: 0
           default: 0
+        purchase_price_per_kg:
+          type: [number, 'null']
+          minimum: 0
+          multipleOf: 0.01
+        selling_price_per_kg:
+          type: [number, 'null']
+          minimum: 0
+          multipleOf: 0.01
         low_stock_threshold:
           type:
           - number
@@ -7528,6 +7552,14 @@ components:
         selling_price:
           type: number
           minimum: 0
+        purchase_price_per_kg:
+          type: [number, 'null']
+          minimum: 0
+          multipleOf: 0.01
+        selling_price_per_kg:
+          type: [number, 'null']
+          minimum: 0
+          multipleOf: 0.01
         low_stock_threshold:
           type:
           - number
@@ -7567,6 +7599,14 @@ components:
           type: number
         selling_price:
           type: number
+        purchase_price_per_kg:
+          type: [number, 'null']
+          minimum: 0
+          multipleOf: 0.01
+        selling_price_per_kg:
+          type: [number, 'null']
+          minimum: 0
+          multipleOf: 0.01
         effective_at:
           type: string
           format: date-time

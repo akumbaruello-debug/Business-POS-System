@@ -965,7 +965,15 @@ class SaleRepository:
 
     async def product_selling_price(self, product_id: int) -> Decimal | None:
         row = await self._uow.first_row(
-            "SELECT selling_price FROM products WHERE id = :id",
+            """SELECT CASE
+                    WHEN p.selling_price_override IS NOT NULL THEN p.selling_price_override
+                    WHEN p.selling_price_per_kg IS NOT NULL
+                         AND u.dimension = 'mass' AND u.factor_to_base IS NOT NULL
+                    THEN ROUND(p.selling_price_per_kg * u.factor_to_base, 2)
+                    ELSE p.selling_price
+                END AS selling_price
+                FROM products p LEFT JOIN units u ON u.id = p.unit_id
+                WHERE p.id = :id""",
             {"id": product_id},
         )
         if row is None:

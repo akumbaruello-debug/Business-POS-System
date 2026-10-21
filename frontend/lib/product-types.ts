@@ -62,6 +62,12 @@ export interface Product {
   kualitas_id: number | null
   purchase_price: number
   selling_price: number
+  purchase_price_per_kg: number | null
+  selling_price_per_kg: number | null
+  purchase_price_override: number | null
+  selling_price_override: number | null
+  purchase_price_default: number
+  selling_price_default: number
   low_stock_threshold: number | null
   allow_negative_stock: boolean | null
   notes: string | null
@@ -91,6 +97,10 @@ export interface ProductCreateRequest {
   kualitas_id?: number | null
   purchase_price?: number
   selling_price?: number
+  purchase_price_per_kg?: number | null
+  selling_price_per_kg?: number | null
+  purchase_price_override?: number | null
+  selling_price_override?: number | null
   low_stock_threshold?: number | null
   allow_negative_stock?: boolean | null
   notes?: string | null
