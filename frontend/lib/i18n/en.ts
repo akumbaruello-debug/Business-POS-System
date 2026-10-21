@@ -309,6 +309,8 @@ export const en: Record<string, string> = {
   'products.noProductsFound': 'No products found',
   'products.product': 'Product',
   'products.sellPrice': 'Sell price',
+  'products.sellPricePerKg': 'Selling base price per kg',
+  'products.purchasePricePerKg': 'Purchase base price per kg',
   'products.viewProduct': 'View product',
   'products.editProduct': 'Edit product',
   'products.deactivate': 'Deactivate',

@@ -309,6 +309,8 @@ export const id: Record<string, string> = {
   'products.noProductsFound': 'Tidak ada produk ditemukan',
   'products.product': 'Produk',
   'products.sellPrice': 'Harga jual',
+  'products.sellPricePerKg': 'Harga dasar jual per kg',
+  'products.purchasePricePerKg': 'Harga dasar beli per kg',
   'products.viewProduct': 'Lihat produk',
   'products.editProduct': 'Ubah produk',
   'products.deactivate': 'Nonaktifkan',
