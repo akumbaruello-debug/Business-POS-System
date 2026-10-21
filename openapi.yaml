@@ -9566,7 +9566,7 @@ components:
           type: integer
           format: int64
         product_id:
-          type: [integer, 'null']
+          type: integer
         quantity:
           type: number
           exclusiveMinimum: 0

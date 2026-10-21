@@ -46,6 +46,7 @@ verify_*.py
 # Log files and Windows artifacts
 backend/*.log
 backend/nul
+/nul
 
 # Editor / OS
 .vscode/

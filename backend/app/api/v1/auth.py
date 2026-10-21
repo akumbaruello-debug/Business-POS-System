@@ -228,8 +228,14 @@ async def login(
         # Replay an already-completed login.
         if existing is not None and existing.is_completed:
             await uow.commit()
-            # Set cookies from the cached response body (contains tokens)
-            cached = json.loads(existing.response_body)
+            # Set cookies from the cached response body (contains tokens).
+            # response_body is a JSONB column: asyncpg returns an already
+            # decoded dict/list for rows written by json.dumps(...), so only
+            # string-encoded rows need parsing. Calling json.loads unguarded
+            # raised TypeError -> HTTP 500 on every idempotent replay.
+            cached = existing.response_body
+            if isinstance(cached, (str, bytes, bytearray)):
+                cached = json.loads(cached)
             _set_auth_cookies(
                 response,
                 cached["access_token"],

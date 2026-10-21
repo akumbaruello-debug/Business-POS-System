@@ -22,6 +22,32 @@ from httpx import ASGITransport, AsyncClient
 
 pytestmark = pytest.mark.asyncio
 
+# --- CORS override helpers -------------------------------------------------
+# Several tests below override POS_CORS_ALLOWED_ORIGINS to exercise OriginCheck.
+# They must restore the harness value afterwards: deleting the variable makes
+# pydantic-settings fall back to backend/.env (which configures a real
+# allow-list), poisoning every later test with `403 origin_not_allowed` in an
+# order-dependent cascade.
+_CORS_ENV_KEY = "POS_CORS_ALLOWED_ORIGINS"
+
+
+def _set_origins(value: str) -> str | None:
+    """Override the CORS allow-list, returning the previous value (None if unset)."""
+    previous = os.environ.get(_CORS_ENV_KEY)
+    os.environ[_CORS_ENV_KEY] = value
+    return previous
+
+
+def _restore_origins(previous: str | None) -> None:
+    """Put the previous value back and reload cached settings."""
+    from app.config.env import load_env
+
+    if previous is None:
+        os.environ.pop(_CORS_ENV_KEY, None)
+    else:
+        os.environ[_CORS_ENV_KEY] = previous
+    load_env(force_reload=True)
+
 
 class TestRequestID:
     """Tests for X-Request-ID generation + echo."""
@@ -115,7 +141,7 @@ class TestCORS:
         from app.config.env import load_env
         from app.main import create_app
 
-        os.environ["POS_CORS_ALLOWED_ORIGINS"] = "https://app.example.com"
+        _prev_origins = _set_origins("https://app.example.com")
         try:
             load_env(force_reload=True)
             fresh_app = create_app(get_settings())
@@ -133,8 +159,7 @@ class TestCORS:
                 assert r.status_code == 200
                 assert r.headers.get("access-control-allow-origin") == "https://app.example.com"
         finally:
-            del os.environ["POS_CORS_ALLOWED_ORIGINS"]
-            load_env(force_reload=True)
+            _restore_origins(_prev_origins)
 
     async def test_cors_rejects_unconfigured_origin(self, owner_user: dict[str, Any]) -> None:
         """When a CORS origin is configured, unlisted origins are rejected."""
@@ -142,7 +167,7 @@ class TestCORS:
         from app.config.env import load_env
         from app.main import create_app
 
-        os.environ["POS_CORS_ALLOWED_ORIGINS"] = "https://app.example.com"
+        _prev_origins = _set_origins("https://app.example.com")
         try:
             load_env(force_reload=True)
             fresh_app = create_app(get_settings())
@@ -161,8 +186,7 @@ class TestCORS:
                 allow = r.headers.get("access-control-allow-origin")
                 assert allow != "https://evil.com"
         finally:
-            del os.environ["POS_CORS_ALLOWED_ORIGINS"]
-            load_env(force_reload=True)
+            _restore_origins(_prev_origins)
 
 
 class TestOriginCheck:
@@ -174,7 +198,7 @@ class TestOriginCheck:
         from app.config.env import load_env
         from app.main import create_app
 
-        os.environ["POS_CORS_ALLOWED_ORIGINS"] = "https://app.example.com"
+        _prev_origins = _set_origins("https://app.example.com")
         try:
             load_env(force_reload=True)
             fresh_app = create_app(get_settings())
@@ -190,8 +214,7 @@ class TestOriginCheck:
                 # Should not get 403; auth will fail with 400/401 because credentials are invalid.
                 assert r.status_code != 403
         finally:
-            del os.environ["POS_CORS_ALLOWED_ORIGINS"]
-            load_env(force_reload=True)
+            _restore_origins(_prev_origins)
 
     async def test_origin_check_rejects_unconfigured_origin(self):
         """Unlisted origin -> 403 origin_not_allowed."""
@@ -199,7 +222,7 @@ class TestOriginCheck:
         from app.config.env import load_env
         from app.main import create_app
 
-        os.environ["POS_CORS_ALLOWED_ORIGINS"] = "https://app.example.com"
+        _prev_origins = _set_origins("https://app.example.com")
         try:
             load_env(force_reload=True)
             fresh_app = create_app(get_settings())
@@ -217,8 +240,7 @@ class TestOriginCheck:
                 assert body["error"]["code"] == "origin_not_allowed"
                 assert "request_id" in body["error"]
         finally:
-            del os.environ["POS_CORS_ALLOWED_ORIGINS"]
-            load_env(force_reload=True)
+            _restore_origins(_prev_origins)
 
     async def test_origin_check_rejects_missing_origin(self):
         """No Origin header -> 403 origin_not_allowed."""
@@ -226,7 +248,7 @@ class TestOriginCheck:
         from app.config.env import load_env
         from app.main import create_app
 
-        os.environ["POS_CORS_ALLOWED_ORIGINS"] = "https://app.example.com"
+        _prev_origins = _set_origins("https://app.example.com")
         try:
             load_env(force_reload=True)
             fresh_app = create_app(get_settings())
@@ -242,8 +264,7 @@ class TestOriginCheck:
                 body = r.json()
                 assert body["error"]["code"] == "origin_not_allowed"
         finally:
-            del os.environ["POS_CORS_ALLOWED_ORIGINS"]
-            load_env(force_reload=True)
+            _restore_origins(_prev_origins)
 
     async def test_origin_check_skipped_when_no_cors_configured(self):
         """When cors_origins empty, no origin check; request proceeds."""
@@ -251,21 +272,27 @@ class TestOriginCheck:
         from app.config.env import load_env
         from app.main import create_app
 
-        if "POS_CORS_ALLOWED_ORIGINS" in os.environ:
-            del os.environ["POS_CORS_ALLOWED_ORIGINS"]
-        load_env(force_reload=True)
-        fresh_app = create_app(get_settings())
-        async with AsyncClient(
-            transport=ASGITransport(app=fresh_app),
-            base_url="http://test",
-        ) as client:
-            r = await client.post(
-                "/api/v1/auth/login",
-                json={"username": "owner", "password": "password"},
-                headers={"Origin": "https://evil.com"},
-            )
-            # Should not be 403; likely 400/401 due to invalid creds
-            assert r.status_code != 403
+        # Set (rather than delete) the override: an absent variable would make
+        # pydantic-settings fall back to backend/.env, which configures a real
+        # allow-list — then this "no CORS configured" precondition silently
+        # stops holding and later tests inherit a poisoned environment.
+        _prev_origins = _set_origins("")
+        try:
+            load_env(force_reload=True)
+            fresh_app = create_app(get_settings())
+            async with AsyncClient(
+                transport=ASGITransport(app=fresh_app),
+                base_url="http://test",
+            ) as client:
+                r = await client.post(
+                    "/api/v1/auth/login",
+                    json={"username": "owner", "password": "password"},
+                    headers={"Origin": "https://evil.com"},
+                )
+                # Should not be 403; likely 400/401 due to invalid creds
+                assert r.status_code != 403
+        finally:
+            _restore_origins(_prev_origins)
 
 
 class TestRateLimiting:

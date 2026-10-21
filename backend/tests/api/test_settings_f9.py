@@ -99,8 +99,13 @@ class TestGetSettings:
         body = r.json()
         assert "settings" in body
         settings = body["settings"]
-        # The 10 canonical default rows are seeded by schema.sql
-        # (lines 2384-2394). Verify every one is present.
+        # These canonical rows are seeded by schema.sql (see the
+        # `system_settings` inserts). Verify every one is present and the set
+        # does not silently accept unknown keys.
+        # default_purchase_cost_allocation (seeded as 'line_value', type
+        # 'string'; allowed values line_value|weight|manual per
+        # validation/settings_schemas.py) was added for V3 purchase-cost
+        # allocation and is confirmed by the seed row.
         expected_keys = {
             "costing_method",
             "default_negative_stock_allowed",
@@ -112,8 +117,12 @@ class TestGetSettings:
             "company_name",
             "company_address",
             "adjustment_creates_pnl_entry",
+            "default_purchase_cost_allocation",
         }
         assert set(settings) == expected_keys
+        # Confirm the seeded default/type for the new key specifically (does
+        # not weaken the exact-key-set assertion above).
+        assert settings["default_purchase_cost_allocation"] == "line_value"
 
     async def test_etag_header_present_and_canonical(self, app, owner_user):
         h = await _owner_headers(app, owner_user)

@@ -30,6 +30,16 @@ os.environ.setdefault(
     "POS_DATABASE_URL",
     "postgresql+asyncpg://postgres@127.0.0.1:5433/pos_test",
 )
+# Canonical test-database URL, captured after the override above.
+#
+# Re-asserted before every operation that reads settings for a schema or data
+# mutation. Tests are allowed to mutate os.environ (see test_middleware's CORS
+# overrides); if POS_DATABASE_URL were ever removed, pydantic-settings would
+# fall back to backend/.env -- which points at pos_dev -- and _ensure_schema
+# would run DROP SCHEMA ... CASCADE against a protected database. This guard
+# makes that path unreachable regardless of test order or leaked mutations.
+_TEST_DATABASE_URL = os.environ["POS_DATABASE_URL"]
+_TEST_CORS_ORIGINS = "http://test"
 # Tests must not inherit the .env CORS allow-list (http://localhost:3000):
 # the httpx test client sends no browser Origin, and OriginCheckMiddleware
 # would reject every state-changing request with 403. Set the allow-list to
@@ -92,6 +102,10 @@ def _ensure_schema() -> None:
     PostgreSQL SQL/encoding dialect correctly, whereas parsing 2000-line
     schema files in Python risks edge-cases.
     """
+    # Safety guard: never let a leaked environment mutation point schema
+    # operations at pos_dev / production (see _TEST_DATABASE_URL).
+    os.environ["POS_DATABASE_URL"] = _TEST_DATABASE_URL
+    get_settings.cache_clear()
     settings = get_settings()
     url = settings.database_url
     from urllib.parse import urlparse
@@ -244,6 +258,10 @@ async def db() -> AsyncGenerator[None, None]:
     import os
     import subprocess
 
+    # Safety guard: TRUNCATE below runs against settings.database_url; pin it
+    # to the test database so a leaked env mutation cannot reach pos_dev.
+    os.environ["POS_DATABASE_URL"] = _TEST_DATABASE_URL
+    get_settings.cache_clear()
     settings = get_settings()
     from urllib.parse import urlparse
 
@@ -283,16 +301,19 @@ async def db() -> AsyncGenerator[None, None]:
                 "TRUNCATE TABLE "
                 "idempotency_keys, sessions, "
                 "user_capability_overrides, "
-                "categories, units, products, payment_methods, financial_categories, cost_types, contacts, "
+                "categories, units, products, product_attributes, payment_methods, financial_categories, cost_types, contacts, "
                 "stock_movements, sale_lines, sale_payments, sales, "
                 "sales_return_lines, sales_returns, refunds, "
                 "purchase_lines, purchase_payments, purchases, "
                 "purchase_return_lines, purchase_returns, "
                 "supplier_repayments, purchase_shipping, "
+                "purchase_cost_categories, purchase_costs, purchase_cost_allocations, "
+                "pending_receipt_batches, pending_inventory_movements, "
                 "production_inputs, production_outputs, "
                 "production_cost_lines, production_runs, "
                 "manual_finance_entries, cash_movements, "
-                "product_price_history, notifications "
+                "product_price_history, notifications, "
+                "sorting_events, sorting_event_outputs, sorting_event_reversals "
                 "RESTART IDENTITY CASCADE"
             )
         )
@@ -402,8 +423,13 @@ async def db() -> AsyncGenerator[None, None]:
 
 @pytest.fixture
 async def app(db: None) -> AsyncGenerator[AsyncClient, None]:
-    # Settings are lru_cached; clear so POS_CORS_ALLOWED_ORIGINS override is
-    # picked up (create_app reads it to install OriginCheckMiddleware).
+    # Re-assert harness overrides: individual tests mutate os.environ (e.g.
+    # test_middleware's CORS matrix), and pydantic-settings otherwise falls
+    # back to backend/.env -- which configures a real allow-list and breaks
+    # every later state-changing request with `403 origin_not_allowed`.
+    # Settings are lru_cached, so clear before create_app reads them.
+    os.environ["POS_DATABASE_URL"] = _TEST_DATABASE_URL
+    os.environ["POS_CORS_ALLOWED_ORIGINS"] = _TEST_CORS_ORIGINS
     get_settings.cache_clear()
     fastapi_app = create_app(get_settings())
     async with AsyncClient(
