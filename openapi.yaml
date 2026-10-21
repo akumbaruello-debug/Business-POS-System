@@ -6315,6 +6315,155 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /pending-receipts:
+    get:
+      operationId: listPendingReceipts
+      summary: List available unsorted receipt batches
+      tags: [Inventory sorting]
+      security: [{bearerAuth: []}]
+      x-required-capability: inventory.view
+      responses:
+        '200':
+          description: Available pending receipt balances
+  /sorting-products:
+    get:
+      operationId: listSortingProducts
+      summary: List eligible classified mass products
+      tags: [Inventory sorting]
+      security: [{bearerAuth: []}]
+      x-required-capability: inventory.view
+      responses:
+        '200': {description: Eligible sorting output products}
+  /sorting-expense-categories:
+    get:
+      operationId: listSortingExpenseCategories
+      summary: List eligible expense categories for sorting loss
+      tags: [Inventory sorting]
+      security: [{bearerAuth: []}]
+      x-required-capability: inventory.view
+      responses:
+        '200': {description: Active expense categories}
+  /sorting-events:
+    get:
+      operationId: listSortingEvents
+      summary: List sorting events
+      tags: [Inventory sorting]
+      security: [{bearerAuth: []}]
+      x-required-capability: inventory.view
+      responses:
+        '200': {description: Sorting events and output snapshots}
+    post:
+      operationId: createSortingEvent
+      summary: Create a sorting draft
+      tags: [Inventory sorting]
+      security: [{bearerAuth: []}]
+      x-required-capability: inventory.sort
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SortingEventInput'}
+      responses:
+        '201':
+          description: Sorting draft
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SortingEvent'}
+  /sorting-events/{event_id}:
+    parameters:
+    - name: event_id
+      in: path
+      required: true
+      schema: {type: integer, minimum: 1}
+    get:
+      operationId: getSortingEvent
+      summary: Get sorting event
+      tags: [Inventory sorting]
+      security: [{bearerAuth: []}]
+      x-required-capability: inventory.view
+      responses:
+        '200':
+          description: Sorting event
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SortingEvent'}
+    patch:
+      operationId: updateSortingDraft
+      summary: Update an unposted sorting draft
+      tags: [Inventory sorting]
+      security: [{bearerAuth: []}]
+      x-required-capability: inventory.sort
+      parameters:
+      - $ref: '#/components/parameters/IfMatchRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SortingEventInput'}
+      responses:
+        '200':
+          description: Updated sorting draft
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SortingEvent'}
+  /sorting-events/{event_id}/preview:
+    post:
+      operationId: previewSortingEvent
+      summary: Preview quantity and carrying-value reconciliation
+      tags: [Inventory sorting]
+      security: [{bearerAuth: []}]
+      x-required-capability: inventory.view
+      parameters:
+      - name: event_id
+        in: path
+        required: true
+        schema: {type: integer, minimum: 1}
+      responses:
+        '200': {description: Exact quantity and value allocation preview}
+  /sorting-events/{event_id}/post:
+    post:
+      operationId: postSortingEvent
+      summary: Atomically post a sorting event
+      tags: [Inventory sorting]
+      security: [{bearerAuth: []}]
+      x-required-capability: inventory.sort
+      parameters:
+      - name: event_id
+        in: path
+        required: true
+        schema: {type: integer, minimum: 1}
+      - $ref: '#/components/parameters/IfMatchRequired'
+      - $ref: '#/components/parameters/IdempotencyKeyRequired'
+      responses:
+        '200':
+          description: Posted sorting event
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SortingEvent'}
+  /sorting-events/{event_id}/reverse:
+    post:
+      operationId: reverseSortingEvent
+      summary: Append a permitted sorting reversal
+      tags: [Inventory sorting]
+      security: [{bearerAuth: []}]
+      x-required-capability: inventory.sort
+      parameters:
+      - name: event_id
+        in: path
+        required: true
+        schema: {type: integer, minimum: 1}
+      - $ref: '#/components/parameters/IfMatchRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SortingEventReverseRequest'}
+      responses:
+        '200':
+          description: Sorting event with linked reversal
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SortingEvent'}
 components:
   securitySchemes:
     bearerAuth:
@@ -6498,6 +6647,68 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
   schemas:
+    SortingEventInput:
+      type: object
+      additionalProperties: false
+      required: [pending_receipt_batch_id, input_quantity, reason, outputs]
+      properties:
+        pending_receipt_batch_id: {type: integer, minimum: 1, description: One source receipt batch only.}
+        input_quantity: {type: number, exclusiveMinimum: 0, description: Base mass units.}
+        loss_quantity: {type: number, minimum: 0, default: 0, description: Base mass units.}
+        remaining_quantity: {type: number, minimum: 0, default: 0, description: Base mass units.}
+        financial_category_id: {type: [integer, 'null'], minimum: 1}
+        reason: {type: string, minLength: 1, maxLength: 1000}
+        outputs:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [product_id, quantity]
+            properties:
+              product_id: {type: integer, minimum: 1}
+              quantity: {type: number, exclusiveMinimum: 0, description: Product unit quantity; converted to base mass.}
+    SortingEventReverseRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: {type: string, minLength: 1, maxLength: 1000}
+    SortingEvent:
+      type: object
+      required: [id, pending_receipt_batch_id, input_quantity, loss_quantity, remaining_quantity, reason, created_at, created_by, version, outputs]
+      properties:
+        id: {type: integer}
+        pending_receipt_batch_id: {type: integer}
+        input_quantity: {type: number}
+        loss_quantity: {type: number}
+        remaining_quantity: {type: number}
+        source_value_snapshot: {type: [number, 'null']}
+        loss_value_snapshot: {type: [number, 'null']}
+        financial_category_id: {type: [integer, 'null']}
+        reason: {type: string}
+        created_at: {type: string, format: date-time}
+        created_by: {type: integer}
+        posted_at: {type: [string, 'null'], format: date-time}
+        posted_by: {type: [integer, 'null']}
+        version: {type: integer}
+        reversed: {type: boolean}
+        outputs:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {type: integer}
+              product_id: {type: integer}
+              product_name: {type: [string, 'null']}
+              quantity: {type: number}
+              unit_id: {type: integer}
+              unit_code_snapshot: {type: string}
+              factor_to_base_snapshot: {type: number}
+              base_quantity: {type: number}
+              value_snapshot: {type: number}
+              line_number: {type: integer}
+              stock_movement_id: {type: [integer, 'null']}
     ErrorEnvelope:
       type: object
       required:

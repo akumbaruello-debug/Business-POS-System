@@ -32,6 +32,7 @@ from app.api.v1 import (
     roles,
     sales,
     settings,
+    sorting,
     stock_movements,
     supplier_repayments,
     units,
@@ -68,6 +69,7 @@ router.include_router(production_runs.router)
 router.include_router(production_inputs.router)
 router.include_router(production_cost_lines.router)
 router.include_router(inventory.router)
+router.include_router(sorting.router)
 router.include_router(refunds.router)
 router.include_router(supplier_repayments.router)
 # E.7 — stock-movements read endpoints

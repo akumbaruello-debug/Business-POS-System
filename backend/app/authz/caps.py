@@ -125,6 +125,7 @@ _CANONICAL: Final[OrderedDict[str, tuple[CapabilityCategory, str]]] = OrderedDic
             CapabilityCategory.INVENTORY,
             "Manually adjust stock (positive or negative).",
         ),
+        "inventory.sort": (CapabilityCategory.INVENTORY, "Create, post, and reverse sorting events."),
         "inventory.transfer": (
             CapabilityCategory.INVENTORY,
             "Transfer stock between locations (V2).",
