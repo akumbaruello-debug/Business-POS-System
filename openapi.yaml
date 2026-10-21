@@ -3755,6 +3755,157 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /purchase-cost-categories:
+    get:
+      operationId: listPurchaseCostCategories
+      summary: List purchase cost categories.
+      tags: [Purchase Costs]
+      security: [{bearerAuth: []}]
+      x-required-capability: purchase.view
+      responses:
+        '200':
+          description: Purchase cost categories.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: {$ref: '#/components/schemas/PurchaseCostCategory'}
+                  default_allocation:
+                    type: string
+                    enum: [line_value, weight, manual]
+                    default: line_value
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    post:
+      operationId: createPurchaseCostCategory
+      summary: Create an owner-managed purchase cost category and capitalization policy.
+      tags: [Purchase Costs]
+      security: [{bearerAuth: []}]
+      x-required-capability: settings.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PurchaseCostCategoryRequest'}
+      responses:
+        '201':
+          description: Created purchase cost category.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PurchaseCostCategory'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /purchase-cost-categories/{category_id}:
+    patch:
+      operationId: updatePurchaseCostCategory
+      summary: Update a purchase cost category for future purchase costs.
+      tags: [Purchase Costs]
+      security: [{bearerAuth: []}]
+      x-required-capability: settings.manage
+      parameters:
+      - name: category_id
+        in: path
+        required: true
+        schema: {type: integer}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PurchaseCostCategoryRequest'}
+      responses:
+        '200':
+          description: Updated category.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PurchaseCostCategory'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /purchases/{id}/costs:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Purchase id
+      schema: {type: integer, format: int64}
+    get:
+      operationId: listPurchaseCosts
+      summary: List additional costs for a purchase.
+      tags: [Purchase Costs]
+      security: [{bearerAuth: []}]
+      x-required-capability: purchase.view
+      responses:
+        '200':
+          description: Purchase costs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: {$ref: '#/components/schemas/PurchaseCost'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    post:
+      operationId: addPurchaseCost
+      summary: Add a cost to a draft purchase using the configured default or an allowed allocation override.
+      tags: [Purchase Costs]
+      security: [{bearerAuth: []}]
+      x-required-capability: purchase.edit_own_draft
+      parameters:
+      - {$ref: '#/components/parameters/IdempotencyKeyRequired'}
+      - {$ref: '#/components/parameters/IfMatchRequired'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PurchaseCostRequest'}
+      responses:
+        '201':
+          description: Added purchase cost.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PurchaseCost'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '412': {$ref: '#/components/responses/PreconditionFailed'}
+  /purchases/{id}/costs/{cost_id}:
+    delete:
+      operationId: deletePurchaseCost
+      summary: Delete a cost from a draft purchase.
+      tags: [Purchase Costs]
+      security: [{bearerAuth: []}]
+      x-required-capability: purchase.edit_own_draft
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: integer, format: int64}
+      - name: cost_id
+        in: path
+        required: true
+        schema: {type: integer, format: int64}
+      - {$ref: '#/components/parameters/IdempotencyKeyRequired'}
+      - {$ref: '#/components/parameters/IfMatchRequired'}
+      responses:
+        '204': {description: No Content}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '412': {$ref: '#/components/responses/PreconditionFailed'}
   /purchases/{id}/shipping:
     parameters:
     - name: id
@@ -8448,12 +8599,18 @@ components:
     PurchaseLineInput:
       type: object
       required:
-      - product_id
       - quantity
       - unit_price
       properties:
         product_id:
-          type: integer
+          type: [integer, 'null']
+          minimum: 1
+        receipt_type:
+          type: string
+          enum: [classified, unsorted]
+          default: classified
+        unit_id:
+          type: [integer, 'null']
           minimum: 1
         quantity:
           type: number
@@ -8467,11 +8624,12 @@ components:
       required:
       - id
       - purchase_id
-      - product_id
       - quantity
       - unit_price
       - line_subtotal
       - allocated_shipping
+      - allocated_capitalizable_cost
+      - allocated_operating_cost
       - line_total
       - line_number
       properties:
@@ -8482,7 +8640,12 @@ components:
           type: integer
           format: int64
         product_id:
-          type: integer
+          type: [integer, 'null']
+        receipt_type:
+          type: string
+          enum: [classified, unsorted]
+        unit_id:
+          type: [integer, 'null']
         quantity:
           type: number
           exclusiveMinimum: 0
@@ -8495,6 +8658,14 @@ components:
         allocated_shipping:
           type: number
           minimum: 0
+        allocated_capitalizable_cost:
+          type: number
+          minimum: 0
+          description: Allocated capitalizable additional purchase costs included in inventory value.
+        allocated_operating_cost:
+          type: number
+          minimum: 0
+          description: Allocated operating costs included in purchase AP total but excluded from inventory value.
         line_total:
           type: number
           minimum: 0
@@ -8511,6 +8682,55 @@ components:
         unit_price:
           type: number
           minimum: 0
+    PurchaseCostCategory:
+      type: object
+      required: [id, name, capitalizable, financial_category_id, is_active]
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        capitalizable: {type: boolean}
+        financial_category_id: {type: [integer, 'null']}
+        is_active: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    PurchaseCostCategoryRequest:
+      type: object
+      required: [name, capitalizable]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 100}
+        capitalizable: {type: boolean}
+        financial_category_id: {type: [integer, 'null'], minimum: 1}
+        is_active: {type: boolean, default: true}
+    PurchaseCost:
+      type: object
+      required: [id, purchase_id, category_id, category_name, capitalizable, amount, allocation_method]
+      properties:
+        id: {type: integer, format: int64}
+        purchase_id: {type: integer, format: int64}
+        category_id: {type: integer}
+        category_name: {type: string}
+        capitalizable: {type: boolean}
+        financial_category_id: {type: [integer, 'null']}
+        amount: {type: number, minimum: 0}
+        allocation_method: {type: string, enum: [line_value, weight, manual]}
+        description: {type: [string, 'null']}
+        posted_at: {type: [string, 'null'], format: date-time}
+    PurchaseCostRequest:
+      type: object
+      required: [category_id, amount]
+      properties:
+        category_id: {type: integer, minimum: 1}
+        amount: {type: number, minimum: 0}
+        allocation_method: {type: [string, 'null'], enum: [line_value, weight, manual, null]}
+        description: {type: [string, 'null'], maxLength: 500}
+        allocations:
+          type: array
+          items:
+            type: object
+            required: [purchase_line_id, amount]
+            properties:
+              purchase_line_id: {type: integer, minimum: 1}
+              amount: {type: number, minimum: 0}
     PurchaseShipping:
       type: object
       required:
@@ -8736,7 +8956,6 @@ components:
       - id
       - purchase_return_id
       - purchase_line_id
-      - product_id
       - quantity
       - unit_cost_snapshot
       - line_value
@@ -8752,7 +8971,7 @@ components:
           type: integer
           format: int64
         product_id:
-          type: integer
+          type: [integer, 'null']
         quantity:
           type: number
           exclusiveMinimum: 0
@@ -9136,7 +9355,7 @@ components:
           type: integer
           format: int64
         product_id:
-          type: integer
+          type: [integer, 'null']
         quantity:
           type: number
           exclusiveMinimum: 0
@@ -9453,7 +9672,7 @@ components:
           format: date-time
     SettingsMap:
       type: object
-      description: Map of system setting key → value. `costing_method` is read-only in V1 (returns 400 on PATCH).
+      description: Map of system setting key → value. `costing_method` is read-only in V1. `default_purchase_cost_allocation` accepts line_value, weight, or manual and defaults to line_value.
       additionalProperties:
         oneOf:
         - type: string
@@ -9464,6 +9683,7 @@ components:
       example:
         costing_method: moving_average
         default_negative_stock_allowed: false
+        default_purchase_cost_allocation: line_value
     SettingsPatch:
       type: object
       description: Partial update. Each key is validated against the known set.
@@ -9474,6 +9694,10 @@ components:
         - type: boolean
         - type: object
           additionalProperties: true
+      properties:
+        default_purchase_cost_allocation:
+          type: string
+          enum: [line_value, weight, manual]
     HealthResponse:
       type: object
       required:

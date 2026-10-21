@@ -205,6 +205,12 @@ class SettingsService:
                     f"Setting '{key}' is read-only and cannot be modified.",
                     errors=[{"field": key, "code": "setting_read_only"}],
                 )
+        allocation_mode = patch.get("default_purchase_cost_allocation")
+        if allocation_mode is not None and allocation_mode not in {"line_value", "weight", "manual"}:
+            raise ValidationFailed(
+                "Default purchase cost allocation must be line_value, weight, or manual.",
+                errors=[{"field": "default_purchase_cost_allocation", "code": "invalid_allocation_method"}],
+            )
         # ``is_initialized`` one-way gate (DB trigger
         # ``fn_system_settings_readonly_keys``). We pre-check so the
         # envelope stays a clean 400 instead of a 23514 / 500.
