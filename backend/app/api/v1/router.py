@@ -17,6 +17,7 @@ from app.api.v1 import (
     manual_entries,
     notifications,
     payment_methods,
+    product_attributes,
     production_cost_lines,
     production_inputs,
     production_runs,
@@ -50,6 +51,7 @@ router.include_router(payment_methods.router)
 router.include_router(financial_categories.router)
 router.include_router(units.router)
 router.include_router(categories.router)
+router.include_router(product_attributes.router)
 router.include_router(contacts_routes.router)
 router.include_router(cost_types.router)
 router.include_router(products.router)

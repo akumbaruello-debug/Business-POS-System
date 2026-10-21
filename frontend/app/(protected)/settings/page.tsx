@@ -8,6 +8,7 @@ import {
   CreditCard,
   Languages,
   Package,
+  Shapes,
   Ruler,
   ScrollText,
   ShieldCheck,
@@ -40,6 +41,7 @@ export default function SettingsPage() {
     { title: t('settings.suppliers'), description: t('settings.suppliersDescription'), href: '/suppliers', capability: 'contact.view', icon: Truck },
     { title: t('settings.inventory'), description: t('settings.inventoryDescription'), href: '/inventory', capability: 'inventory.view', icon: Boxes },
     { title: t('settings.units'), description: t('settings.unitsDescription'), href: '/settings/units', capability: 'unit.view', icon: Ruler },
+    { title: t('settings.productAttributes'), description: t('settings.productAttributesDescription'), href: '/settings/product-attributes', capability: 'product_attribute.view', icon: Shapes },
     { title: t('settings.paymentMethods'), description: t('settings.paymentMethodsDescription'), href: '/settings/payment-methods', capability: 'payment_method.view', icon: CreditCard },
   ].filter((item) => can(item.capability))
 

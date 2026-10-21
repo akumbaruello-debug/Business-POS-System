@@ -57,6 +57,9 @@ export interface Product {
   code: string | null
   category_id: number | null
   unit_id: number | null
+  jenis_id: number | null
+  size_id: number | null
+  kualitas_id: number | null
   purchase_price: number
   selling_price: number
   low_stock_threshold: number | null
@@ -83,6 +86,9 @@ export interface ProductCreateRequest {
   code?: string | null
   category_id?: number | null
   unit_id?: number | null
+  jenis_id?: number | null
+  size_id?: number | null
+  kualitas_id?: number | null
   purchase_price?: number
   selling_price?: number
   low_stock_threshold?: number | null
