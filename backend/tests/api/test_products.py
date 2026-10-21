@@ -1153,6 +1153,120 @@ class TestPatchTransactionBoundary:
             ).scalar()
         assert history_final == history_before + 1
 
+    async def test_price_resolution_failure_rolls_back_every_write(
+        self, app: AsyncClient, owner_user: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A failing price-resolution read must abort the PATCH before commit.
+
+        ``purchase_price_default`` / ``selling_price_default`` are part of the
+        successful response contract, so their resolution happens inside the
+        mutation's transaction. If it ran after the commit, a failure would
+        leave the product, its price-history row, and its audit row written
+        while the client saw a 500.
+        """
+        headers = await _owner_headers(app, owner_user)
+        r = await app.post(
+            "/api/v1/products",
+            json=_valid_product(
+                name=f"txp_{uuid.uuid4().hex[:6]}",
+                purchase_price=1000,
+                selling_price=1500,
+            ),
+            headers={**headers, "Idempotency-Key": _idem()},
+        )
+        assert r.status_code == 201, r.text
+        pid = r.json()["id"]
+        updated_at = r.json()["updated_at"]
+
+        factory = get_session_factory()
+        async with factory() as session:
+            history_before = (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) FROM product_price_history "
+                        "WHERE product_id = :pid"
+                    ),
+                    {"pid": pid},
+                )
+            ).scalar()
+            audit_before = (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) FROM audit_log "
+                        "WHERE entity_type = 'product' AND entity_id = :pid"
+                    ),
+                    {"pid": pid},
+                )
+            ).scalar()
+
+        calls = {"n": 0}
+        real = ProductService.default_prices
+
+        async def flaky(self: ProductService, row: dict[str, Any]) -> dict[str, float]:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("injected price-resolution failure")
+            return await real(self, row)
+
+        monkeypatch.setattr(ProductService, "default_prices", flaky)
+
+        test_app = create_app(get_settings())
+        transport = httpx.ASGITransport(app=test_app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            headers={"Origin": "http://test"},
+        ) as strict_client:
+            r2 = await strict_client.patch(
+                f"/api/v1/products/{pid}",
+                json={"name": "tx_price_should_not_persist", "selling_price": 9999},
+                headers={**headers, "If-Match": f'"{updated_at}"'},
+            )
+        assert r2.status_code == 500, r2.text
+        assert r2.json()["error"]["code"] == ErrorCode.INTERNAL_ERROR.value
+        assert calls["n"] == 1
+
+        async with factory() as session:
+            row = (
+                await session.execute(
+                    text("SELECT name, selling_price FROM products WHERE id = :pid"),
+                    {"pid": pid},
+                )
+            ).mappings().first()
+            history_after = (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) FROM product_price_history "
+                        "WHERE product_id = :pid"
+                    ),
+                    {"pid": pid},
+                )
+            ).scalar()
+            audit_after = (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) FROM audit_log "
+                        "WHERE entity_type = 'product' AND entity_id = :pid"
+                    ),
+                    {"pid": pid},
+                )
+            ).scalar()
+        assert row is not None
+        assert row["name"] != "tx_price_should_not_persist"
+        assert float(row["selling_price"]) == 1500.0
+        assert history_after == history_before
+        assert audit_after == audit_before
+
+        # The rollback left the original ETag current: a retry succeeds once.
+        r3 = await app.patch(
+            f"/api/v1/products/{pid}",
+            json={"name": "tx_price_retry_ok", "selling_price": 1750},
+            headers={**headers, "If-Match": f'"{updated_at}"'},
+        )
+        assert r3.status_code == 200, r3.text
+        assert r3.json()["name"] == "tx_price_retry_ok"
+        assert r3.json()["selling_price_default"] == 1750.0
+
     async def test_retry_after_commit_with_stale_etag_writes_nothing(
         self, app: AsyncClient, owner_user: dict[str, Any]
     ) -> None:

@@ -26,6 +26,36 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * User-facing message for a request that produced NO response at all —
+ * a network failure, DNS error, offline state, or a response the browser
+ * refused to expose (e.g. CORS). In those cases the thrown value is the
+ * browser's opaque ``TypeError: Failed to fetch``, which is meaningless
+ * to a user.
+ *
+ * Only genuine network-level exceptions are rewritten: any HTTP response,
+ * including structured 4xx/5xx envelopes, is handled above and keeps its
+ * server-provided message (see ``rawClient``).
+ *
+ * Text mirrors the canonical ``error.network`` key in
+ * ``lib/i18n/en.ts`` / ``lib/i18n/id.ts``. It is kept inline rather than
+ * imported so the (large) translation dictionaries are not pulled into
+ * every bundle that merely uses the API client. If you reword one, reword
+ * both — ``error.network`` is the canonical key.
+ */
+const NETWORK_MESSAGE: Record<string, string> = {
+  en: 'Cannot reach the server. Check your connection.',
+  id: 'Tidak dapat menghubungi server. Periksa koneksi Anda.',
+}
+
+function networkErrorMessage(): string {
+  const lang =
+    typeof window !== 'undefined'
+      ? window.localStorage.getItem('pos-language')
+      : null
+  return NETWORK_MESSAGE[lang ?? ''] ?? NETWORK_MESSAGE.en
+}
+
 export function isApiError(err: unknown): err is ApiError {
   return err instanceof ApiError
 }
@@ -161,7 +191,14 @@ async function rawClient<T = any>(
     config.body = JSON.stringify(body)
   }
 
-  const response = await fetch(url.toString(), config)
+  let response: Response
+  try {
+    response = await fetch(url.toString(), config)
+  } catch (err) {
+    // Preserve an intentional abort and any non-network error verbatim.
+    if (err instanceof Error && err.name === 'AbortError') throw err
+    throw new ApiError(0, networkErrorMessage(), { code: 'network_error' })
+  }
 
   if (response.status === 401) {
     // Access tokens are short-lived (15 min). On expiry, rotate via the

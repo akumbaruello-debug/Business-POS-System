@@ -426,10 +426,11 @@ class ProductService:
         is_active: bool | None = None,
         if_match: str | None = None,
         ctx: AuditContext | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, float]]:
         """Update a product. If-Match is REQUIRED (OpenAPI IfMatchRequired).
 
-        Returns ``(row, enrichment)``. ``enrichment`` is computed by
+        Returns ``(row, enrichment, resolved_prices)``. ``enrichment`` and
+        ``resolved_prices`` are computed by
         :meth:`build_enrichment` *before* the commit, because it is part of
         the successful response contract.
 
@@ -547,9 +548,13 @@ class ProductService:
         # committed server-side but reported to the client as failed. The
         # reads run inside this transaction, so they see the new values.
         enrichment = await self.build_enrichment(row)
+        # Price resolution is equally part of the response contract: resolve
+        # per-kg/override defaults from the post-update row while the mutation
+        # is still uncommitted, so a failure here also rolls back.
+        resolved_prices = await self.default_prices(row)
 
         await self._uow.commit()
-        return row, enrichment
+        return row, enrichment, resolved_prices
 
     async def _write_price_history(
         self,

@@ -168,6 +168,10 @@ async def _compose_response(
     reads before its commit (see ``ProductService.build_enrichment``). When
     omitted, the reads happen here — correct for read-only routes, which have
     no mutation to roll back.
+
+    ``resolved_prices`` is likewise computed pre-commit by the PATCH route:
+    per-kg/override resolution is part of the successful response contract, so
+    it must not be able to fail after the mutation is committed.
     """
     row = {**row, **(resolved_prices or await svc.default_prices(row))}
     if enrichment is None:
@@ -347,7 +351,7 @@ async def update_product(
     payload = ProductPatch(**body)
 
     svc = ProductService(uow)
-    row, enrichment = await svc.update(
+    row, enrichment, resolved_prices = await svc.update(
         id,
         name=payload.name,
         category_id=payload.category_id,
@@ -377,7 +381,12 @@ async def update_product(
     )
     resp_etag, version = _etag_from_row(row)
     return await _compose_response(
-        svc, row, resp_etag, version, enrichment=enrichment
+        svc,
+        row,
+        resp_etag,
+        version,
+        enrichment=enrichment,
+        resolved_prices=resolved_prices,
     )
 
 

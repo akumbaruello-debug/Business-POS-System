@@ -88,13 +88,12 @@ export default function PosPage() {
   const [payTendered, setPayTendered] = useState('')
   const [payReference, setPayReference] = useState('')
   const [busy, setBusy] = useState(false)
-  const [notice, setNotice] = useState<string | null>(null)
-  // Ref in-flight guard: `busy` is React state, so two click handlers in the
-  // same tick can both read false before the re-render lands. A ref closes
-  // that window so a fast double-click on "Record payment" can't fire two
-  // POSTs (each gets a fresh UUID idempotency key → two payments on the
-  // backend).
+  // In-flight guard: `busy` is React state, so two click handlers in the same
+  // tick can both read false before the re-render lands. A ref closes that
+  // window so a fast double-click on "Record payment" can't fire two POSTs
+  // (each gets a fresh UUID idempotency key → two payments on the backend).
   const paymentInFlight = useRef(false)
+  const [notice, setNotice] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -398,11 +397,13 @@ export default function PosPage() {
         ...(cashTender ? { tendered_amount: tenderedNum } : {}),
         reference: payReference.trim() || null,
       }
-      // POST /payments returns the enriched SALE with payments embedded
-      // (backend add_payment → _enrich_sale(include={"payments"}) then
-      // resp["payments"] = [payment_dict]). The UUID idempotency key is
-      // fresh per call, so replays (same key) never occur here; the Map
-      // dedupe only guards against the sale object itself being re-inserted.
+      // POST /payments returns the enriched SALE with an embedded `payments`
+      // array (backend add_payment → _enrich_sale(include={"payments"}) then
+      // resp["payments"] = [payment_dict]). Read that array instead of
+      // appending the whole Sale object to the tender history, which would
+      // render `p.amount` as undefined. The UUID idempotency key is fresh per
+      // call, so replays (same key) never occur here; the Map dedupe only
+      // guards against the sale object itself being re-inserted.
       const res = await api.headers.post<Sale>(
         `/sales/${sale.id}/payments`,
         body,
