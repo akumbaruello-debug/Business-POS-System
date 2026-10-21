@@ -32,6 +32,20 @@ export interface Unit {
   code: string
   name: string
   is_active: boolean
+  dimension?: 'mass' | 'count' | null
+  base_unit_id?: number | null
+  factor_to_base?: number | null
+  version: number
+  created_at: string
+  updated_at: string
+}
+
+export type ProductAttributeKind = 'jenis' | 'size' | 'kualitas'
+export interface ProductAttribute {
+  id: number
+  kind: ProductAttributeKind
+  name: string
+  is_active: boolean
   version: number
   created_at: string
   updated_at: string

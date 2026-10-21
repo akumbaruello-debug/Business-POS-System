@@ -6805,6 +6805,17 @@ components:
           minLength: 1
           maxLength: 20
           pattern: ^[A-Za-z0-9_-]+$
+        dimension:
+          type: string
+          nullable: true
+          enum: [mass, count]
+        base_unit_id:
+          type: integer
+          nullable: true
+        factor_to_base:
+          type: number
+          nullable: true
+          exclusiveMinimum: 0
     UnitRequest:
       type: object
       required:
@@ -6823,6 +6834,17 @@ components:
           minLength: 1
           maxLength: 20
           pattern: ^[A-Za-z0-9_-]+$
+        dimension:
+          type: string
+          nullable: true
+          enum: [mass, count]
+        base_unit_id:
+          type: integer
+          nullable: true
+        factor_to_base:
+          type: number
+          nullable: true
+          exclusiveMinimum: 0
     UnitPatch:
       type: object
       properties:
@@ -6832,6 +6854,17 @@ components:
           maxLength: 50
         is_active:
           type: boolean
+        dimension:
+          type: string
+          nullable: true
+          enum: [mass, count]
+        base_unit_id:
+          type: integer
+          nullable: true
+        factor_to_base:
+          type: number
+          nullable: true
+          exclusiveMinimum: 0
     PaymentMethod:
       type: object
       required:
