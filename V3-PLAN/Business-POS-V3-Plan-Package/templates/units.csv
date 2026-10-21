@@ -1,0 +1,5 @@
+code,name,dimension,base_unit_code,factor_to_base,active,example_only,notes
+kg,Kilogram,mass,kg,1,true,false,Canonical base unit for mass/weight stock
+kuintal,Kuintal,mass,kg,100,true,false,1 kuintal = 100 kg
+ton,Ton,mass,kg,1000,true,false,1 ton = 1000 kg
+buah,Buah,count,buah,1,true,true,Count dimension only; never convert implicitly to kg

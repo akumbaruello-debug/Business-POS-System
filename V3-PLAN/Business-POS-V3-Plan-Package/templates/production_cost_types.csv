@@ -1,0 +1,7 @@
+code,name,scope,active,example_only,notes
+production_labor,Tenaga Kerja Produksi,production,true,true,Starter label; map to existing Cost Types only after checking current records
+production_electricity,Listrik Produksi,production,true,true,Production overhead; capitalization treatment must follow approved rules
+production_packaging,Kemasan Produksi,production,true,true,Use only when this cost type exists in the workflow
+production_ice,Es dan Pendingin Produksi,production,true,true,Example for temperature/cooling cost
+production_overhead,Overhead Produksi Lainnya,production,true,true,General production overhead
+production_other,Biaya Produksi Lainnya,production,true,true,Editable catch-all starter; review before importing

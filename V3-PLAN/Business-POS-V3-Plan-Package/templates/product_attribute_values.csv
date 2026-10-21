@@ -1,0 +1,7 @@
+attribute,value,active,example_only,owner_reviewed,notes
+Jenis,Layang,true,true,false,Example from prior product discussions; not an exhaustive list
+Size,Kecil,true,true,false,Example size value; edit according to real inventory
+Size,Sedang,true,true,false,Optional example; remove if not used
+Size,Besar,true,true,false,Optional example; remove if not used
+Kualitas,PP,true,true,false,Tester abbreviation described as Pecah Perut; confirm label used by the business
+Kualitas,Mco,true,true,false,Tester abbreviation described as Kurang Bagus; confirm label used by the business

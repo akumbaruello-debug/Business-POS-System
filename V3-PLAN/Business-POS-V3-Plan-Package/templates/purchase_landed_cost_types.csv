@@ -1,0 +1,8 @@
+code,name,scope,active,default_capitalize_to_inventory,default_allocation_method,example_only,notes
+container_cost,Biaya Kontainer,purchase,true,true,weight,true,Direct acquisition cost example; owner/accounting must confirm
+transport,Ongkir dan Transportasi,purchase,true,true,weight,true,Direct acquisition cost example; preserve existing V1 behavior until policy is approved
+loading_unloading,Bongkar Muat,purchase,true,true,weight,true,Review whether directly attributable to this purchase
+ice_cooling,Es dan Pendingin Pembelian,purchase,true,true,weight,true,Review accounting treatment based on actual purpose
+port_handling,Retribusi dan Handling Pelabuhan,purchase,true,true,weight,true,Example only; confirm local accounting treatment
+sorting_handling,Biaya Sortir dan Handling,purchase,true,false,manual,true,Keep separate until owner confirms whether this is inventory cost or operating expense
+other_purchase_cost,Biaya Pembelian Lainnya,purchase,true,false,manual,true,Do not capitalize automatically without review
