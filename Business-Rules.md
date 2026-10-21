@@ -659,6 +659,18 @@
 
 **Source:** §14, §18.4, §10
 
+### BR-STOCK-013 — Pending Mixed Receipts and Sorting
+
+**Rule:** Unsorted received goods remain valued pending inventory and are not available under a classified product SKU until an authorized sorting event is posted.
+
+**Behavior:** Each event consumes one receipt batch and records classified outputs, physical loss, and any remaining unsorted quantity. Reconcile exactly at NUMERIC(15,4) precision; no variance tolerance or silent correction applies. Mass conversions and carrying-value allocations are snapshotted.
+
+**Valuation:** Transfer the source carrying value proportionally by base weight across outputs, loss, and remainder. Largest-remainder cent allocation ensures the total equals the source value. Loss reduces inventory and is recognized once in operating expenses; it is not a cash/manual-finance entry.
+
+**History:** Posted events and movements are immutable. Eligible reversals append linked movements; loss events and outputs with later stock activity cannot be reversed. Purchase returns use only available pending balance, and cancellation is blocked when sorting history prevents safe reversal.
+
+**Source:** V3 Plan Phase 4; approved Phase 4 decisions; V1.9 Accounting Event Matrix §3.6
+
 ---
 
 ### BR-STOCK-012 — Stock Movement Audit
