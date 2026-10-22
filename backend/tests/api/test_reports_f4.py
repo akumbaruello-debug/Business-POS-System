@@ -305,6 +305,45 @@ async def _insert_refund(
     )
 
 
+async def _category_id(code: str) -> int:
+    """Resolve a financial category id by code (ids differ across DBs)."""
+    factory = get_session_factory()
+    async with factory() as session:
+        row = (
+            await session.execute(
+                text("SELECT id FROM financial_categories WHERE code = :c"),
+                {"c": code},
+            )
+        ).scalar_one()
+    return int(row)
+
+
+async def _create_manual_entry(
+    app: AsyncClient,
+    headers: dict[str, str],
+    *,
+    category_id: int,
+    entry_type: str,
+    amount: Decimal,
+    entry_date: datetime,
+) -> dict[str, Any]:
+    """Create a posted manual entry through the real API (also writes
+    the paired ``cash_movements`` row)."""
+    r = await app.post(
+        "/api/v1/manual-entries",
+        json={
+            "category_id": category_id,
+            "entry_type": entry_type,
+            "amount": float(amount),
+            "payment_method_id": 1,
+            "entry_date": _iso(entry_date),
+        },
+        headers={**headers, "Idempotency-Key": _idem()},
+    )
+    assert r.status_code == 201, r.text
+    return dict(r.json())
+
+
 async def _insert_manual_entry(
     eid: int,
     *,
@@ -469,8 +508,11 @@ class TestProfitAndLossReport:
             ON CONFLICT (id) DO UPDATE SET cogs_total_snapshot = 60.00
             """
         )
-        # Manual income 50 (cat 1 = income)
-        await _insert_manual_entry(1, entry_date=d, category_id=1, amount=Decimal("50.00"))
+        # Manual income 50 (genuine non-operating income)
+        other_income_id = await _category_id("other_income")
+        await _insert_manual_entry(
+            1, entry_date=d, category_id=other_income_id, amount=Decimal("50.00")
+        )
         # Manual expense 30 (cat 4 = rent)
         await _insert_manual_entry(2, entry_date=d, category_id=4, amount=Decimal("30.00"))
 
@@ -497,9 +539,16 @@ class TestProfitAndLossReport:
         in the P&L aggregate (their reversing cash_movement lives in
         the cash-flow report)."""
         d = datetime(2026, 9, 15, 10, 0, 0, tzinfo=UTC)
-        await _insert_manual_entry(1, entry_date=d, category_id=1, amount=Decimal("100.00"))
+        other_income_id = await _category_id("other_income")
         await _insert_manual_entry(
-            2, entry_date=d, category_id=1, amount=Decimal("50.00"), cancelled=True
+            1, entry_date=d, category_id=other_income_id, amount=Decimal("100.00")
+        )
+        await _insert_manual_entry(
+            2,
+            entry_date=d,
+            category_id=other_income_id,
+            amount=Decimal("50.00"),
+            cancelled=True,
         )
         h = await _owner_headers(app, owner_user)
         r = await app.get(
@@ -511,6 +560,142 @@ class TestProfitAndLossReport:
         d_ = r.json()["data"]
         # Only the posted entry counts (100.00); cancelled excluded
         assert Decimal(str(d_["other_income"])) == Decimal("100.00")
+
+    @pytest.mark.asyncio
+    async def test_capital_injection_excluded_from_pnl(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        """Capital injection is equity, not income: cash + equity rise,
+        but ``other_income`` and ``net_profit`` stay 0."""
+        d = datetime(2026, 9, 15, 10, 0, 0, tzinfo=UTC)
+        h = await _owner_headers(app, owner_user)
+        await _create_manual_entry(
+            app,
+            h,
+            category_id=await _category_id("capital_injection"),
+            entry_type="income",
+            amount=Decimal("1000000.00"),
+            entry_date=d,
+        )
+        r = await app.get(
+            "/api/v1/reports/p-and-l",
+            headers=h,
+            params={"from": _iso(d), "to": _iso(d)},
+        )
+        assert r.status_code == 200, r.text
+        d_ = r.json()["data"]
+        assert Decimal(str(d_["revenue"])) == 0
+        assert Decimal(str(d_["cogs"])) == 0
+        assert Decimal(str(d_["gross_profit"])) == 0
+        assert Decimal(str(d_["other_income"])) == 0
+        assert Decimal(str(d_["net_profit"])) == 0
+
+    @pytest.mark.asyncio
+    async def test_genuine_other_income_counts_in_pnl(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        """``other_income`` is genuine non-operating income -> counts."""
+        d = datetime(2026, 9, 15, 10, 0, 0, tzinfo=UTC)
+        h = await _owner_headers(app, owner_user)
+        await _create_manual_entry(
+            app,
+            h,
+            category_id=await _category_id("other_income"),
+            entry_type="income",
+            amount=Decimal("1000000.00"),
+            entry_date=d,
+        )
+        r = await app.get(
+            "/api/v1/reports/p-and-l",
+            headers=h,
+            params={"from": _iso(d), "to": _iso(d)},
+        )
+        assert r.status_code == 200, r.text
+        d_ = r.json()["data"]
+        assert Decimal(str(d_["other_income"])) == Decimal("1000000.00")
+        assert Decimal(str(d_["net_profit"])) == Decimal("1000000.00")
+
+    @pytest.mark.asyncio
+    async def test_capital_injection_still_in_cash_flow(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        """Excluding capital injection from P&L must not hide it from
+        cash/finance reporting.
+
+        The service stamps the paired ``cash_movements.movement_date``
+        with server NOW(), so the window is anchored on the current
+        time (the P&L window in the other tests is entry_date-based).
+        """
+        from datetime import timedelta
+
+        d = datetime.now(tz=UTC)
+        lo = d - timedelta(minutes=5)
+        hi = d + timedelta(minutes=5)
+        h = await _owner_headers(app, owner_user)
+        entry = await _create_manual_entry(
+            app,
+            h,
+            category_id=await _category_id("capital_injection"),
+            entry_type="income",
+            amount=Decimal("1000000.00"),
+            entry_date=d,
+        )
+        r = await app.get(
+            "/api/v1/reports/cash-flow",
+            headers=h,
+            params={"from": _iso(lo), "to": _iso(hi)},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["pagination"]["total"] == 1
+        row = body["data"][0]
+        assert row["reference_type"] == "manual_entry"
+        assert row["reference_id"] == entry["id"]
+        assert row["direction"] == "in"
+        assert Decimal(str(row["amount"])) == Decimal("1000000.00")
+
+    @pytest.mark.asyncio
+    async def test_mixed_capital_and_real_income(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        """No over-correction: capital 1,000,000 excluded, genuine
+        other_income 250,000 kept, expense 100,000 deducted."""
+        d = datetime(2026, 9, 15, 10, 0, 0, tzinfo=UTC)
+        h = await _owner_headers(app, owner_user)
+        await _create_manual_entry(
+            app,
+            h,
+            category_id=await _category_id("capital_injection"),
+            entry_type="income",
+            amount=Decimal("1000000.00"),
+            entry_date=d,
+        )
+        await _create_manual_entry(
+            app,
+            h,
+            category_id=await _category_id("other_income"),
+            entry_type="income",
+            amount=Decimal("250000.00"),
+            entry_date=d,
+        )
+        await _create_manual_entry(
+            app,
+            h,
+            category_id=await _category_id("rent"),
+            entry_type="expense",
+            amount=Decimal("100000.00"),
+            entry_date=d,
+        )
+        r = await app.get(
+            "/api/v1/reports/p-and-l",
+            headers=h,
+            params={"from": _iso(d), "to": _iso(d)},
+        )
+        assert r.status_code == 200, r.text
+        d_ = r.json()["data"]
+        assert Decimal(str(d_["other_income"])) == Decimal("250000.00")
+        assert Decimal(str(d_["operating_expenses"])) == Decimal("100000.00")
+        assert Decimal(str(d_["net_profit"])) == Decimal("150000.00")
 
     @pytest.mark.asyncio
     async def test_cancelled_sale_excluded_from_pnl(

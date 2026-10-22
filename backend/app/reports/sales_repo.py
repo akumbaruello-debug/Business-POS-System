@@ -1650,10 +1650,14 @@ returns AS (
       AND s.sale_date <= :to_iso
 ),
 manual_income AS (
+    -- Capital injection is owner's equity, not P&L income: it raises cash
+    -- and equity but must not inflate other_income / net_profit. It stays
+    -- visible in cash-flow / manual-income reporting.
     SELECT COALESCE(SUM(mfe.amount), 0) AS total
     FROM manual_finance_entries mfe
     JOIN financial_categories fc ON fc.id = mfe.category_id
     WHERE fc.entry_type = 'income'
+      AND fc.code <> 'capital_injection'
       AND mfe.lifecycle_status = 'posted'
       AND mfe.entry_date >= :from_iso
       AND mfe.entry_date <= :to_iso
