@@ -2584,6 +2584,10 @@ CREATE TRIGGER trg_system_settings_touch_updated
 BEFORE UPDATE ON system_settings
 FOR EACH ROW EXECUTE FUNCTION fn_touch_updated_at();
 
+CREATE TRIGGER trg_purchase_cost_categories_touch_updated
+BEFORE UPDATE ON purchase_cost_categories
+FOR EACH ROW EXECUTE FUNCTION fn_touch_updated_at();
+
 
 -- =============================================================================
 -- 19. SEED DATA
