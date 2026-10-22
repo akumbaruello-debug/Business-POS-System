@@ -66,11 +66,7 @@ export default function PurchasesPage() {
               to: to || undefined,
             },
           })
-          .then((r) => ({ data: r.data, pagination: r.pagination }))
-          .catch((err: unknown) => {
-            if (err instanceof Error && (err as ApiError).status === 401) throw err
-            return { data: [] as Purchase[], pagination: DEFAULT_PAGINATION }
-          }),
+          .then((r) => ({ data: r.data, pagination: r.pagination })),
         api
           .get<ContactListResponse>('/contacts', {
             params: { 'filter[type]': 'supplier', per_page: '500' },
