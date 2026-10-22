@@ -34,6 +34,8 @@ interface Props {
   initialPagination: Pagination
   initialSuppliers: Contact[]
   initialProducts: Product[]
+  /** Called when the URL is already at the reset state and a fresh fetch is needed. */
+  onRefresh?: () => void
 }
 
 const DEFAULT_PAGINATION: Pagination = {
@@ -612,6 +614,7 @@ export default function PurchasesDataTable({
   initialPagination,
   initialSuppliers,
   initialProducts,
+  onRefresh,
 }: Props) {
   const { t } = useLanguage()
   const router = useRouter()
@@ -690,7 +693,11 @@ export default function PurchasesDataTable({
   }
 
   const resetUrl = () => {
-    router.replace('/purchases', { scroll: false })
+    if (window.location.pathname + window.location.search === '/purchases') {
+      onRefresh?.()
+    } else {
+      router.replace('/purchases', { scroll: false })
+    }
   }
 
   const clearFilters = () => {

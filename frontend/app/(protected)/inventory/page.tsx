@@ -1,91 +1,120 @@
-import { Suspense } from 'react'
-import { redirect } from 'next/navigation'
-import { serverApi, isUnauthorizedError } from '@/lib/server-api-client'
+'use client'
+
+// Release candidate (Option C2): client-side data fetching for the inventory
+// list. Endpoints/params mirror the previous SSR implementation exactly
+// (GET /inventory with pagination, sort, q, is_active/stock_status filters).
+// InventoryTable syncs from `initial*` props; URL changes and the refresh
+// callback drive refetches.
+
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { api } from '@/lib/api-client'
+import type { ApiError } from '@/lib/api-client'
 import type { InventorySummary, InventorySummaryStats } from '@/lib/inventory-types'
 import { InventoryTable } from './inventory-table-client'
 
-export const revalidate = 0
-export const dynamic = 'force-dynamic'
-
-interface Props {
-  searchParams: Promise<{
-    page?: string
-    per_page?: string
-    q?: string
-    sort?: string
-    dir?: string
-    'filter[is_active]'?: string
-    'filter[stock_status]'?: string
-  }>
+interface InventoryPagination {
+  page: number
+  per_page: number
+  total: number
+  total_pages: number
+  has_next: boolean
+  has_prev: boolean
 }
 
-export default function InventoryPage({ searchParams }: Props) {
-  return (
-    <Suspense fallback={<InventorySkeleton />}>
-      <InventoryDataTable searchParams={searchParams} />
-    </Suspense>
-  )
+const FALLBACK_PAGINATION: InventoryPagination = {
+  page: 1,
+  per_page: 25,
+  total: 0,
+  total_pages: 1,
+  has_next: false,
+  has_prev: false,
 }
 
-async function InventoryDataTable({ searchParams }: Props) {
-  const params = await searchParams
-  try {
-    const response = await serverApi.get<{
-    data: InventorySummary[]
-    pagination: { page: number; per_page: number; total: number; total_pages: number; has_next: boolean; has_prev: boolean }
-    summary: InventorySummaryStats
-  }>('/inventory', {
-    params: {
-      page: params.page || '1',
-      per_page: params.per_page || '25',
-      sort: params.dir === 'desc' && params.sort ? `-${params.sort}` : params.sort || 'product_id',
-      q: params.q || '',
-      'filter[is_active]': params['filter[is_active]'] || undefined,
-      'filter[stock_status]': params['filter[stock_status]'] || undefined,
-    },
-  })
+export default function InventoryPage() {
+  const searchParams = useSearchParams()
+  const [rows, setRows] = useState<InventorySummary[]>([])
+  const [pagination, setPagination] = useState<InventoryPagination>(FALLBACK_PAGINATION)
+  const [summary, setSummary] = useState<InventorySummaryStats | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const page = searchParams.get('page') || '1'
+  const perPage = searchParams.get('per_page') || '25'
+  const q = searchParams.get('q') || ''
+  const sort = searchParams.get('sort') || ''
+  const dir = searchParams.get('dir') || ''
+  const filterIsActive = searchParams.get('filter[is_active]') || ''
+  const filterStockStatus = searchParams.get('filter[stock_status]') || ''
+
+  const requestSeq = useRef(0)
+
+  const fetchInventory = useCallback(async () => {
+    const seq = ++requestSeq.current
+    setError(null)
+    try {
+      const response = await api.get<{
+        data: InventorySummary[]
+        pagination: InventoryPagination
+        summary: InventorySummaryStats
+      }>('/inventory', {
+        params: {
+          page: page || '1',
+          per_page: perPage || '25',
+          sort: dir === 'desc' && sort ? `-${sort}` : sort || 'product_id',
+          q: q || '',
+          'filter[is_active]': filterIsActive || undefined,
+          'filter[stock_status]': filterStockStatus || undefined,
+        },
+      })
+      if (seq !== requestSeq.current) return
+      setRows(response.data)
+      setPagination(response.pagination)
+      setSummary(response.summary)
+    } catch (err) {
+      if (seq !== requestSeq.current) return
+      if (err instanceof Error && (err as ApiError).status === 401) {
+        window.location.href = '/login'
+        return
+      }
+      setError(err instanceof Error ? err.message : 'Failed to load inventory')
+    }
+  }, [page, perPage, q, sort, dir, filterIsActive, filterStockStatus])
+
+  useEffect(() => {
+    fetchInventory()
+  }, [fetchInventory])
+
+  if (error) {
+    return (
+      <div className="page">
+        <div className="notice error">{error}</div>
+      </div>
+    )
+  }
+
+  // Initial load only: keep the table (and its search input) mounted during
+  // subsequent query-triggered fetches so typing does not lose focus.
+  if (!summary) {
+    return (
+      <div className="content">
+        <div className="page-heading">
+          <div>
+            <div className="eyebrow">Inventory</div>
+            <h1>Inventory</h1>
+            <p>Loading…</p>
+          </div>
+          <div className="heading-actions" />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <InventoryTable
-      initialRows={response.data}
-      initialPagination={response.pagination}
-      initialSummary={response.summary}
+      initialRows={rows}
+      initialPagination={pagination}
+      initialSummary={summary}
+      onRefresh={fetchInventory}
     />
-  )
-  } catch (error) {
-    if (isUnauthorizedError(error)) redirect('/login')
-    throw error
-  }
-}
-
-function InventorySkeleton() {
-  return (
-    <div className="content">
-      <div className="page-heading">
-        <div>
-          <div className="eyebrow">Inventory</div>
-          <h1>Inventory</h1>
-          <p>Track stock levels and product availability</p>
-        </div>
-        <div className="heading-actions" />
-      </div>
-      <section className="metrics">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <article key={i} className="metric-card">
-            <div className="metric-value">—</div>
-          </article>
-        ))}
-      </section>
-      <section className="panel">
-        <div className="panel-header">
-          <div style={{ height: 36, borderRadius: 6, background: '#f0f4f9' }} />
-        </div>
-        <div style={{ padding: 20 }}>
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} style={{ height: 44, borderRadius: 6, background: '#f0f4f9', marginBottom: 8 }} />
-          ))}
-        </div>
-      </section>
-    </div>
   )
 }

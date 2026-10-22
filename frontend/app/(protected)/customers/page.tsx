@@ -1,86 +1,91 @@
-import { Suspense } from 'react'
-import { redirect } from 'next/navigation'
-import { serverApi, isUnauthorizedError } from '@/lib/server-api-client'
+'use client'
+
+// Release candidate (Option C2): client-side data fetching for the customers
+// list. The table client (CustomersTable) keeps its SSR-era props contract:
+// it syncs local state from `initial*` props via useEffect and drives URL
+// changes through router.replace; this page refetches whenever the query
+// string changes (and via onRefresh when a mutation resets to the base URL).
+// Endpoints/params mirror the previous SSR implementation exactly
+// (GET /contacts with type=customer filter).
+
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { api } from '@/lib/api-client'
+import type { ApiError } from '@/lib/api-client'
 import type { Contact, ContactListResponse, Pagination } from '@/lib/contact-types'
 import { CustomersTable } from './customers-table-client'
 
-export const revalidate = 0
-export const dynamic = 'force-dynamic'
-
-interface Props {
-  searchParams: Promise<{ page?: string; q?: string; status?: string; sort?: string; dir?: string }>
+const FALLBACK_PAGINATION: Pagination = {
+  page: 1,
+  per_page: 25,
+  total: 0,
+  total_pages: 1,
+  has_next: false,
+  has_prev: false,
 }
 
-export default function CustomersPage({ searchParams }: Props) {
-  // Page renders shell immediately, data fetch suspends in the Suspense boundary
-  return (
-    <Suspense fallback={<CustomersSkeleton />}>
-      <CustomersDataTable searchParams={searchParams} />
-    </Suspense>
-  )
-}
+export default function CustomersPage() {
+  const searchParams = useSearchParams()
+  const [customers, setCustomers] = useState<Contact[]>([])
+  const [pagination, setPagination] = useState<Pagination>(FALLBACK_PAGINATION)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-async function CustomersDataTable({ searchParams }: Props) {
-  const params = await searchParams
-  try {
-    const response = await serverApi.get<ContactListResponse>('/contacts', {
-    params: {
-      page: params.page || '1',
-      per_page: '25',
-      sort: (params.sort && (params.dir === 'desc' ? `-${params.sort}` : params.sort)) || 'name',
-      'filter[type]': 'customer',
-      q: params.q || '',
-      'filter[is_active]': params.status === 'active' ? 'true' : params.status === 'inactive' ? 'false' : undefined,
+  const page = searchParams.get('page') || '1'
+  const q = searchParams.get('q') || ''
+  const status = searchParams.get('status') || ''
+  const sort = searchParams.get('sort') || ''
+  const dir = searchParams.get('dir') || ''
+
+  const requestSeq = useRef(0)
+
+  const fetchCustomers = useCallback(async () => {
+    const seq = ++requestSeq.current
+    setLoading(true)
+    setError(null)
+    try {
+      const response = await api.get<ContactListResponse>('/contacts', {
+        params: {
+          page: page || '1',
+          per_page: '25',
+          sort: (sort && (dir === 'desc' ? `-${sort}` : sort)) || 'name',
+          'filter[type]': 'customer',
+          q: q || '',
+          'filter[is_active]': status === 'active' ? 'true' : status === 'inactive' ? 'false' : undefined,
+        },
+      })
+      if (seq !== requestSeq.current) return
+      setCustomers(response.data || [])
+      setPagination(response.pagination as Pagination)
+    } catch (err) {
+      if (seq !== requestSeq.current) return
+      if (err instanceof Error && (err as ApiError).status === 401) {
+        window.location.href = '/login'
+        return
+      }
+      setError(err instanceof Error ? err.message : 'Failed to load customers')
+    } finally {
+      if (seq === requestSeq.current) setLoading(false)
     }
-  })
+  }, [page, q, status, sort, dir])
 
-  const customers = response.data || []
-  const pagination = response.pagination as Pagination
+  useEffect(() => {
+    fetchCustomers()
+  }, [fetchCustomers])
+
+  if (error) {
+    return (
+      <div className="page">
+        <div className="notice error">{error}</div>
+      </div>
+    )
+  }
 
   return (
     <CustomersTable
       initialCustomers={customers}
       initialPagination={pagination}
+      onRefresh={fetchCustomers}
     />
   )
-  } catch (error) {
-    if (isUnauthorizedError(error)) redirect('/login')
-    throw error
-  }
 }
-
-function CustomersSkeleton() {
-  return (
-    <div className="content">
-      <div className="page-heading">
-        <div>
-          <div className="eyebrow">Customers</div>
-          <h1>Customers</h1>
-          <p>Manage your customer relationships</p>
-        </div>
-        <div className="heading-actions" />
-      </div>
-      <section className="metrics">
-        <article className="metric-card"><div className="metric-value">—</div></article>
-        <article className="metric-card"><div className="metric-value">—</div></article>
-        <article className="metric-card"><div className="metric-value">—</div></article>
-      </section>
-      <section className="panel">
-        <div className="panel-header" style={{ flexDirection: 'column', gap: 12 }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', width: '100%' }}>
-            <div style={{ position: 'relative', minWidth: 220, flex: 1, maxWidth: 360 }}>
-              <div style={{ height: 36, borderRadius: 6, background: '#f0f4f9' }} />
-            </div>
-          </div>
-        </div>
-        <div style={{ padding: 20 }}>
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} style={{ height: 44, borderRadius: 6, background: '#f0f4f9', marginBottom: 8 }} />
-          ))}
-        </div>
-      </section>
-    </div>
-  )
-}
-
-export type { Contact, ContactListResponse, Pagination }

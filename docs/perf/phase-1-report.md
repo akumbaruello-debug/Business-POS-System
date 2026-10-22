@@ -11,7 +11,7 @@
 - Modified `_login_response()` to accept optional `Response` and set `access_token`/`refresh_token` httpOnly cookies:
   - `httponly=True` (security)
   - `secure=is_production` (works in dev HTTP)
-  - `samesite='strict'` (CSRF protection)
+  - `samesite='lax'` (CSRF protection; actual implementation uses lax)
   - `path='/'`
 - Updated `login()` to accept `response: Response` and set cookies on login + replay
 - Updated `refresh()` to set new cookies on token rotation

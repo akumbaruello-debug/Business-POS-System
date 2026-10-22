@@ -56,9 +56,11 @@ interface Props {
   initialSales: Sale[]
   initialPagination: Pagination
   initialCustomers: Contact[]
+  /** Called when the URL is already at the reset state and a fresh fetch is needed. */
+  onRefresh?: () => void
 }
 
-export function SalesTable({ initialSales, initialPagination, initialCustomers }: Props) {
+export function SalesTable({ initialSales, initialPagination, initialCustomers, onRefresh }: Props) {
   const { t } = useLanguage()
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -133,7 +135,11 @@ export function SalesTable({ initialSales, initialPagination, initialCustomers }
   }
 
   const resetUrl = () => {
-    router.replace('/sales', { scroll: false })
+    if (window.location.pathname + window.location.search === '/sales') {
+      onRefresh?.()
+    } else {
+      router.replace('/sales', { scroll: false })
+    }
   }
 
   const clearFilters = () => {

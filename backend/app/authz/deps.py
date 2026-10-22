@@ -71,8 +71,9 @@ async def current_principal(
     session, resolves the effective capabilities (role union user
     overrides), and returns a populated ``Principal``.
 
-    Also supports reading the access_token from an httpOnly cookie
-    (used by server components that can't read the token JS-wise).
+    Release candidate: the httpOnly-cookie fallback was removed —
+    httpOnly cookies (still emitted by /auth/login for future SSR use)
+    no longer authenticate requests. Bearer tokens only.
 
     Raises:
         Unauthenticated (401): missing token, no matching session,
@@ -82,10 +83,6 @@ async def current_principal(
     """
     auth_header = request.headers.get("authorization")
     token = extract_bearer_token(auth_header)
-    # Fall back to httpOnly cookie if no Authorization header present
-    # (server components read cookies; client-side reads Bearer header)
-    if not token:
-        token = request.cookies.get("access_token")
     if not token:
         raise Unauthenticated()
 

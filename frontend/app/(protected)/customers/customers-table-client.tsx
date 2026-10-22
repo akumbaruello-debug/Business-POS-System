@@ -14,6 +14,8 @@ import { CustomersTableInner } from './customers-table-inner'
 interface CustomersTableProps {
   initialCustomers: Contact[]
   initialPagination: Pagination
+  /** Called when the URL is already at the reset state and a fresh fetch is needed. */
+  onRefresh?: () => void
 }
 
 type CustomerSummary = {
@@ -29,6 +31,7 @@ function fmtDate(iso: string): string {
 export function CustomersTable({
   initialCustomers,
   initialPagination,
+  onRefresh,
 }: CustomersTableProps) {
   const { t } = useLanguage()
   const router = useRouter()
@@ -85,7 +88,11 @@ export function CustomersTable({
   }
 
   const resetUrl = () => {
-    router.replace('/customers', { scroll: false })
+    if (window.location.pathname + window.location.search === '/customers') {
+      onRefresh?.()
+    } else {
+      router.replace('/customers', { scroll: false })
+    }
   }
 
   // Reset selection on pagination/page change

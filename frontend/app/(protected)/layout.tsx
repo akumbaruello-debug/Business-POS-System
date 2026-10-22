@@ -1,34 +1,61 @@
-import { redirect } from 'next/navigation'
-import { cookies } from 'next/headers'
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { AppShell } from '@/components/layout/app-shell'
-import { serverApi, isUnauthorizedError } from '@/lib/server-api-client'
-import type { SessionUser } from '@/lib/auth'
+import { isAuthenticated, getCurrentUser, type SessionUser } from '@/lib/auth'
+import { SessionContext } from '@/lib/session'
+import { ApiError } from '@/lib/api-client'
 
-/**
- * Server component that validates auth via httpOnly cookie.
- *
- * Reads the access_token cookie and validates it via /auth/me.
- * If not authenticated, redirects to /login.
- * If authenticated, renders the AppShell with children.
- *
- * The AppShell remains a client component for UI state (sidebar, mobile drawer).
- * SessionContext is provided by AppShell (or a nested client component).
- */
-export default async function ProtectedLayout({ children }: { children: React.ReactNode }) {
-  const cookieStore = await cookies()
-  const token = cookieStore.get('access_token')?.value
+export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
+  const router = useRouter()
+  const [loading, setLoading] = useState(true)
+  const [user, setUser] = useState<SessionUser | null>(null)
 
-  if (!token) {
-    redirect('/login')
+  useEffect(() => {
+    const checkAuth = async () => {
+      if (!isAuthenticated()) {
+        router.replace('/login')
+        return
+      }
+      try {
+        const u = await getCurrentUser()
+        if (!u) {
+          router.replace('/login')
+          return
+        }
+        setUser(u)
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) {
+          router.replace('/login')
+          return
+        }
+        if (err instanceof ApiError && err.status >= 500) {
+          setLoading(false)
+          return
+        }
+        router.replace('/login')
+        return
+      } finally {
+        setLoading(false)
+      }
+    }
+    checkAuth()
+  }, [router])
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="text-muted-foreground">Loading...</p>
+      </div>
+    )
   }
 
-  // Validate token server-side
-  try {
-    const user = await serverApi.get<SessionUser>('/auth/me')
-    // AppShell (client component) wraps children and provides SessionContext
-    return <AppShell user={user}>{children}</AppShell>
-  } catch (error) {
-    if (isUnauthorizedError(error)) redirect('/login')
-    throw error
-  }
+  if (!user) return null
+
+  return (
+    <SessionContext.Provider value={{ user }}>
+      <AppShell>{children}</AppShell>
+    </SessionContext.Provider>
+  )
 }

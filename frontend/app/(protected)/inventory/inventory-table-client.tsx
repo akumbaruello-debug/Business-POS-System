@@ -56,9 +56,11 @@ interface Props {
   initialRows: InventorySummary[]
   initialPagination: Pagination
   initialSummary: InventorySummaryStats
+  /** Called when the URL is already at the reset state and a fresh fetch is needed. */
+  onRefresh?: () => void
 }
 
-export function InventoryTable({ initialRows, initialPagination, initialSummary }: Props) {
+export function InventoryTable({ initialRows, initialPagination, initialSummary, onRefresh }: Props) {
   const { t } = useLanguage()
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -93,7 +95,11 @@ export function InventoryTable({ initialRows, initialPagination, initialSummary 
   }
 
   const resetUrl = () => {
-    router.replace('/inventory', { scroll: false })
+    if (window.location.pathname + window.location.search === '/inventory') {
+      onRefresh?.()
+    } else {
+      router.replace('/inventory', { scroll: false })
+    }
   }
 
   const [selected, setSelected] = useState<Set<number>>(new Set())

@@ -1,14 +1,20 @@
-import { Suspense } from 'react'
-import { redirect } from 'next/navigation'
-import { serverApi, isUnauthorizedError } from '@/lib/server-api-client'
+'use client'
+
+// Release candidate (Option C2): client-side data fetching for the purchases
+// list. Mirrors the previous SSR implementation exactly: parallel
+// GET /purchases + supplier/product enrichment, same params and defaults
+// (sort -purchase_date), same graceful per-request degradation, same 401
+// handling. PurchasesDataTable syncs from `initial*` props; URL changes and
+// onRefresh drive refetches.
+
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { api } from '@/lib/api-client'
+import type { ApiError } from '@/lib/api-client'
 import type { Pagination, Purchase, PurchaseListResponse } from '@/lib/purchase-types'
-import type { ContactListResponse } from '@/lib/contact-types'
+import type { ContactListResponse, Contact } from '@/lib/contact-types'
 import type { Product } from '@/lib/product-types'
 import PurchasesDataTable from './purchases-table-client'
-import PurchasesSkeleton from './purchases-skeleton'
-
-export const revalidate = 0
-export const dynamic = 'force-dynamic'
 
 const DEFAULT_PAGINATION: Pagination = {
   page: 1,
@@ -19,85 +25,108 @@ const DEFAULT_PAGINATION: Pagination = {
   has_prev: false,
 }
 
-// Server component: parallel fetch purchases + supplier/product enrichment.
-// Cache key is URL-scoped (route + searchParams) — RSC never shares responses across routes.
-async function fetchPurchasesData(search: string) {
-  const url = new URLSearchParams(search)
+export default function PurchasesPage() {
+  const searchParams = useSearchParams()
+  const [purchases, setPurchases] = useState<Purchase[]>([])
+  const [pagination, setPagination] = useState<Pagination>(DEFAULT_PAGINATION)
+  const [suppliers, setSuppliers] = useState<Contact[]>([])
+  const [products, setProducts] = useState<Product[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  const params: Record<string, string> = {
-    page: url.get('page') || '1',
-    per_page: url.get('per_page') || '25',
-    sort: url.get('sort') || '-purchase_date',
-  }
-  if (url.get('q')) params.q = url.get('q')!
-  if (url.get('filter[lifecycle_status]')) params['filter[lifecycle_status]'] = url.get('filter[lifecycle_status]')!
-  if (url.get('filter[payment_state]')) params['filter[payment_state]'] = url.get('filter[payment_state]')!
-  if (url.get('filter[supplier_id]')) params['filter[supplier_id]'] = url.get('filter[supplier_id]')!
-  if (url.get('from')) params.from = url.get('from')!
-  if (url.get('to')) params.to = url.get('to')!
+  const page = searchParams.get('page') || '1'
+  const perPage = searchParams.get('per_page') || '25'
+  const sort = searchParams.get('sort') || '-purchase_date'
+  const q = searchParams.get('q') || ''
+  const filterLifecycleStatus = searchParams.get('filter[lifecycle_status]') || ''
+  const filterPaymentState = searchParams.get('filter[payment_state]') || ''
+  const filterSupplierId = searchParams.get('filter[supplier_id]') || ''
+  const from = searchParams.get('from') || ''
+  const to = searchParams.get('to') || ''
 
-  const [purchasesRes, suppliersRes, productsRes] = await Promise.all([
-    serverApi
-      .get<PurchaseListResponse>('/purchases', { params })
-      .then((r) => ({ data: r.data, pagination: r.pagination }))
-      .catch((error) => {
-        if (isUnauthorizedError(error)) throw error
-        return { data: [] as Purchase[], pagination: DEFAULT_PAGINATION }
-      }),
-    serverApi
-      .get<ContactListResponse>('/contacts', {
-        params: { 'filter[type]': 'supplier', per_page: '500' },
-      })
-      .then((r) => r.data)
-            .catch((error) => {
-              if (isUnauthorizedError(error)) throw error
-              return [] as ContactListResponse['data']
-            }),
-    serverApi
-      .get<{ data: Product[] }>('/products', {
-        params: { 'filter[is_purchasable]': 'true', per_page: '500' },
-      })
-      .then((r) => r.data)
-            .catch((error) => {
-              if (isUnauthorizedError(error)) throw error
-              return [] as Product[]
-            }),
-  ])
+  const requestSeq = useRef(0)
 
-  return {
-    purchases: purchasesRes.data,
-    pagination: purchasesRes.pagination,
-    suppliers: suppliersRes,
-    products: productsRes,
-  }
-}
+  const fetchPurchases = useCallback(async () => {
+    const seq = ++requestSeq.current
+    setLoading(true)
+    setError(null)
+    try {
+      const [purchasesRes, suppliersRes, productsRes] = await Promise.all([
+        api
+          .get<PurchaseListResponse>('/purchases', {
+            params: {
+              page: page || '1',
+              per_page: perPage || '25',
+              sort,
+              q: q || undefined,
+              'filter[lifecycle_status]': filterLifecycleStatus || undefined,
+              'filter[payment_state]': filterPaymentState || undefined,
+              'filter[supplier_id]': filterSupplierId || undefined,
+              from: from || undefined,
+              to: to || undefined,
+            },
+          })
+          .then((r) => ({ data: r.data, pagination: r.pagination }))
+          .catch((err: unknown) => {
+            if (err instanceof Error && (err as ApiError).status === 401) throw err
+            return { data: [] as Purchase[], pagination: DEFAULT_PAGINATION }
+          }),
+        api
+          .get<ContactListResponse>('/contacts', {
+            params: { 'filter[type]': 'supplier', per_page: '500' },
+          })
+          .then((r) => r.data)
+          .catch((err: unknown) => {
+            if (err instanceof Error && (err as ApiError).status === 401) throw err
+            return [] as ContactListResponse['data']
+          }),
+        api
+          .get<{ data: Product[] }>('/products', {
+            params: { 'filter[is_purchasable]': 'true', per_page: '500' },
+          })
+          .then((r) => r.data)
+          .catch((err: unknown) => {
+            if (err instanceof Error && (err as ApiError).status === 401) throw err
+            return [] as Product[]
+          }),
+      ])
 
-export default async function PurchasesPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }>
-}) {
-  const sp = await searchParams
-  const search = Object.entries(sp)
-    .filter(([, v]) => v !== undefined && v !== null && v !== '')
-    .map(([k, v]) => `${k}=${encodeURIComponent(typeof v === 'string' ? v : v![0])}`)
-    .join('&')
+      if (seq !== requestSeq.current) return
+      setPurchases(purchasesRes.data)
+      setPagination(purchasesRes.pagination)
+      setSuppliers(suppliersRes)
+      setProducts(productsRes)
+    } catch (err) {
+      if (seq !== requestSeq.current) return
+      if (err instanceof Error && (err as ApiError).status === 401) {
+        window.location.href = '/login'
+        return
+      }
+      setError(err instanceof Error ? err.message : 'Failed to load purchases')
+    } finally {
+      if (seq === requestSeq.current) setLoading(false)
+    }
+  }, [page, perPage, sort, q, filterLifecycleStatus, filterPaymentState, filterSupplierId, from, to])
 
-  try {
-    const data = await fetchPurchasesData(search)
+  useEffect(() => {
+    fetchPurchases()
+  }, [fetchPurchases])
 
+  if (error) {
     return (
-      <Suspense fallback={<PurchasesSkeleton />}>
-        <PurchasesDataTable
-          initialPurchases={data.purchases}
-          initialPagination={data.pagination}
-          initialSuppliers={data.suppliers}
-          initialProducts={data.products}
-        />
-      </Suspense>
+      <div className="page">
+        <div className="notice error">{error}</div>
+      </div>
     )
-  } catch (error) {
-    if (isUnauthorizedError(error)) redirect('/login')
-    throw error
   }
+
+  return (
+    <PurchasesDataTable
+      initialPurchases={purchases}
+      initialPagination={pagination}
+      initialSuppliers={suppliers}
+      initialProducts={products}
+      onRefresh={fetchPurchases}
+    />
+  )
 }

@@ -1,81 +1,118 @@
-import { Suspense } from 'react'
-import { redirect } from 'next/navigation'
-import { serverApi, isUnauthorizedError } from '@/lib/server-api-client'
+'use client'
+
+// Release candidate (Option C2): client-side data fetching for the sales list.
+// Mirrors the previous SSR implementation exactly: parallel GET /sales and
+// GET /contacts (customer filter), same params, same 401 handling. The table
+// client syncs from `initial*` props; URL changes and onRefresh drive refetches.
+
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { api } from '@/lib/api-client'
+import type { ApiError } from '@/lib/api-client'
 import type { Contact, ContactListResponse } from '@/lib/contact-types'
 import type { Sale, SaleListResponse } from '@/lib/sale-types'
 import { SalesTable } from './sales-table-client'
 
-export const revalidate = 0
-export const dynamic = 'force-dynamic'
-
-interface Props {
-  searchParams: Promise<{
-    page?: string
-    per_page?: string
-    q?: string
-    sort?: string
-    dir?: string
-    lifecycle_status?: string
-    customer_id?: string
-    payment_state?: string
-    from_iso?: string
-    to_iso?: string
-  }>
+const FALLBACK_PAGINATION = {
+  page: 1,
+  per_page: 25,
+  total: 0,
+  total_pages: 1,
+  has_next: false,
+  has_prev: false,
 }
 
-export default function SalesPage({ searchParams }: Props) {
-  return (
-    <Suspense fallback={<SalesSkeleton />}>
-      <SalesDataTable searchParams={searchParams} />
-    </Suspense>
-  )
-}
+export default function SalesPage() {
+  const searchParams = useSearchParams()
+  const [sales, setSales] = useState<Sale[]>([])
+  const [pagination, setPagination] = useState(FALLBACK_PAGINATION)
+  const [customers, setCustomers] = useState<Contact[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-async function SalesDataTable({ searchParams }: Props) {
-  const params = await searchParams
-  try {
-    const [salesRes, contactsRes] = await Promise.allSettled([
-      serverApi.get<SaleListResponse>('/sales', {
-        params: {
-          page: params.page || '1',
-          per_page: params.per_page || '25',
-          sort: params.sort || 'id',
-          'filter[lifecycle_status]': params.lifecycle_status || undefined,
-          'filter[customer_id]': params.customer_id || undefined,
-          'filter[payment_state]': params.payment_state || undefined,
-          from_iso: params.from_iso || undefined,
-          to_iso: params.to_iso || undefined,
-          q: params.q || '',
-        },
-      }),
-      serverApi.get<ContactListResponse>('/contacts', {
-        params: { 'filter[type]': 'customer', per_page: '500', sort: 'name' },
-      }),
-    ])
+  const page = searchParams.get('page') || '1'
+  const perPage = searchParams.get('per_page') || '25'
+  const lifecycleStatus = searchParams.get('lifecycle_status') || ''
+  const customerId = searchParams.get('customer_id') || ''
+  const paymentState = searchParams.get('payment_state') || ''
+  const fromIso = searchParams.get('from_iso') || ''
+  const toIso = searchParams.get('to_iso') || ''
+  const q = searchParams.get('q') || ''
 
-    const sales: Sale[] = salesRes.status === 'fulfilled' ? (salesRes.value.data || []) : []
-    const pagination = salesRes.status === 'fulfilled' ? salesRes.value.pagination : {
-      page: 1, per_page: 25, total: 0, total_pages: 1, has_next: false, has_prev: false,
+  const requestSeq = useRef(0)
+
+  const fetchSales = useCallback(async () => {
+    const seq = ++requestSeq.current
+    setLoading(true)
+    setError(null)
+    try {
+      const [salesRes, contactsRes] = await Promise.allSettled([
+        api.get<SaleListResponse>('/sales', {
+          params: {
+            page: page || '1',
+            per_page: perPage || '25',
+            sort: searchParams.get('sort') || 'id',
+            'filter[lifecycle_status]': lifecycleStatus || undefined,
+            'filter[customer_id]': customerId || undefined,
+            'filter[payment_state]': paymentState || undefined,
+            from_iso: fromIso || undefined,
+            to_iso: toIso || undefined,
+            q: q || '',
+          },
+        }),
+        api.get<ContactListResponse>('/contacts', {
+          params: { 'filter[type]': 'customer', per_page: '500', sort: 'name' },
+        }),
+      ])
+
+      if (seq !== requestSeq.current) return
+
+      const s = salesRes.status === 'fulfilled' ? salesRes.value : null
+      setSales(s ? s.data || [] : [])
+      setPagination(s ? s.pagination : FALLBACK_PAGINATION)
+      setCustomers(contactsRes.status === 'fulfilled' ? contactsRes.value.data || [] : [])
+
+      if (salesRes.status === 'rejected') {
+        const reason = salesRes.reason
+        if (reason instanceof Error && (reason as ApiError).status === 401) {
+          window.location.href = '/login'
+          return
+        }
+        setError(reason instanceof Error ? reason.message : 'Failed to load sales')
+        return
+      }
+
+      // A rejected contacts request must not degrade into an empty customer
+      // dropdown: match the previous unauthorized-redirect contract.
+      if (contactsRes.status === 'rejected') {
+        const reason = contactsRes.reason
+        if (reason instanceof Error && (reason as ApiError).status === 401) {
+          window.location.href = '/login'
+        }
+      }
+    } finally {
+      if (seq === requestSeq.current) setLoading(false)
     }
-    const customers: Contact[] = contactsRes.status === 'fulfilled' ? (contactsRes.value.data || []) : []
+  }, [page, perPage, lifecycleStatus, customerId, paymentState, fromIso, toIso, q, searchParams])
 
-    if (salesRes.status === 'rejected' && isUnauthorizedError(salesRes.reason)) redirect('/login')
-    if (contactsRes.status === 'rejected' && isUnauthorizedError(contactsRes.reason)) redirect('/login')
+  useEffect(() => {
+    fetchSales()
+  }, [fetchSales])
 
-    return <SalesTable initialSales={sales} initialPagination={pagination} initialCustomers={customers} />
-  } catch (error) {
-    if (isUnauthorizedError(error)) redirect('/login')
-    throw error
+  if (error) {
+    return (
+      <div className="page">
+        <div className="notice error">{error}</div>
+      </div>
+    )
   }
-}
 
-function SalesSkeleton() {
   return (
-    <div className="content">
-      <div className="page-heading"><div><div className="eyebrow">Sales</div><h1>Sales</h1><p>Record and track all sales transactions</p></div><div className="heading-actions" /></div>
-      <section className="metrics">{Array.from({ length: 4 }).map((_, i) => <article key={i} className="metric-card"><div className="metric-value">—</div></article>)}</section>
-      <div className="sales-toolbar"><div className="sales-toolbar-row"><div className="sales-toolbar-fields"><div className="sales-field"><div style={{ height: 20, borderRadius: 4, background: '#f0f4f9', width: 80 }} /><div style={{ height: 36, borderRadius: 6, background: '#f0f4f9', marginTop: 4 }} /></div></div></div></div>
-      <section className="sales-card"><div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>{Array.from({ length: 6 }).map((_, i) => <div key={i} style={{ height: 46, borderRadius: 6, background: '#f0f4f9' }} />)}</div></section>
-    </div>
+    <SalesTable
+      initialSales={sales}
+      initialPagination={pagination}
+      initialCustomers={customers}
+      onRefresh={fetchSales}
+    />
   )
 }

@@ -71,7 +71,7 @@ async def test_purchase_cost_posting_inventory_ap_and_pnl_once(
         json={"product_id": 1, "quantity": "2", "unit_price": "500"},
     )
     assert line_response.status_code == 201, line_response.text
-    purchase_response = await app.get(f"/api/v1/purchases/{purchase_id}?include=lines,shipping")
+    purchase_response = await app.get(f"/api/v1/purchases/{purchase_id}?include=lines,shipping", headers=headers)
     etag = purchase_response.headers["ETag"]
 
     ship_response = await app.post(
@@ -80,7 +80,7 @@ async def test_purchase_cost_posting_inventory_ap_and_pnl_once(
         json={"amount": "100", "paid_in_cash": False},
     )
     assert ship_response.status_code == 200, ship_response.text
-    purchase_response = await app.get(f"/api/v1/purchases/{purchase_id}?include=lines,shipping")
+    purchase_response = await app.get(f"/api/v1/purchases/{purchase_id}?include=lines,shipping", headers=headers)
     etag = purchase_response.headers["ETag"]
 
     cap_cost = await app.post(
@@ -89,7 +89,7 @@ async def test_purchase_cost_posting_inventory_ap_and_pnl_once(
         json={"category_id": cap_response.json()["id"], "amount": "20.00", "allocation_method": "line_value"},
     )
     assert cap_cost.status_code == 201, cap_cost.text
-    purchase_response = await app.get(f"/api/v1/purchases/{purchase_id}?include=lines,shipping")
+    purchase_response = await app.get(f"/api/v1/purchases/{purchase_id}?include=lines,shipping", headers=headers)
     etag = purchase_response.headers["ETag"]
     op_cost = await app.post(
         f"/api/v1/purchases/{purchase_id}/costs",
@@ -98,7 +98,7 @@ async def test_purchase_cost_posting_inventory_ap_and_pnl_once(
     )
     assert op_cost.status_code == 201, op_cost.text
     assert op_cost.json()["allocation_method"] == "line_value"
-    purchase_response = await app.get(f"/api/v1/purchases/{purchase_id}?include=lines,shipping")
+    purchase_response = await app.get(f"/api/v1/purchases/{purchase_id}?include=lines,shipping", headers=headers)
     manual_cost = await app.post(
         f"/api/v1/purchases/{purchase_id}/costs",
         headers={**headers, "Idempotency-Key": _idem(), "If-Match": purchase_response.headers["ETag"]},
@@ -107,7 +107,7 @@ async def test_purchase_cost_posting_inventory_ap_and_pnl_once(
     )
     assert manual_cost.status_code == 201, manual_cost.text
     assert manual_cost.json()["allocation_method"] == "manual"
-    purchase_response = await app.get(f"/api/v1/purchases/{purchase_id}?include=lines,shipping")
+    purchase_response = await app.get(f"/api/v1/purchases/{purchase_id}?include=lines,shipping", headers=headers)
     assert Decimal(str(purchase_response.json()["total_amount"])) == Decimal("1200.0")
     etag = purchase_response.headers["ETag"]
 
@@ -140,7 +140,7 @@ async def test_purchase_cost_posting_inventory_ap_and_pnl_once(
         non_cash_id = (await session.execute(text(
             "SELECT id FROM payment_methods WHERE is_cash=FALSE AND is_active ORDER BY id LIMIT 1"
         ))).scalar_one()
-    current = await app.get(f"/api/v1/purchases/{purchase_id}")
+    current = await app.get(f"/api/v1/purchases/{purchase_id}", headers=headers)
     paid = await app.post(
         f"/api/v1/purchases/{purchase_id}/payments",
         headers={**headers, "Idempotency-Key": _idem(), "If-Match": current.headers["ETag"]},
@@ -157,7 +157,7 @@ async def test_purchase_cost_posting_inventory_ap_and_pnl_once(
     assert pnl_after_payment.status_code == 200, pnl_after_payment.text
     assert Decimal(str(pnl_after_payment.json()["data"]["operating_expenses"])) == Decimal("50.0")
 
-    current = await app.get(f"/api/v1/purchases/{purchase_id}?include=lines")
+    current = await app.get(f"/api/v1/purchases/{purchase_id}?include=lines", headers=headers)
     returned = await app.post(
         f"/api/v1/purchases/{purchase_id}/returns",
         headers={**headers, "Idempotency-Key": _idem(), "If-Match": current.headers["ETag"]},
@@ -175,7 +175,7 @@ async def test_purchase_cost_posting_inventory_ap_and_pnl_once(
     assert pnl_after_return.status_code == 200, pnl_after_return.text
     assert Decimal(str(pnl_after_return.json()["data"]["operating_expenses"])) == Decimal("25.0")
 
-    current = await app.get(f"/api/v1/purchases/{purchase_id}")
+    current = await app.get(f"/api/v1/purchases/{purchase_id}", headers=headers)
     delete_posted_cost = await app.delete(
         f"/api/v1/purchases/{purchase_id}/costs/{op_cost.json()['id']}",
         headers={**headers, "If-Match": current.headers["ETag"], "Idempotency-Key": _idem()},
@@ -239,14 +239,14 @@ async def test_cancelled_purchase_reverses_posted_operating_cost_in_cancellation
         json={"product_id": 1, "quantity": "1", "unit_price": "100"},
     )
     assert line_response.status_code == 201, line_response.text
-    current = await app.get(f"/api/v1/purchases/{purchase_id}")
+    current = await app.get(f"/api/v1/purchases/{purchase_id}", headers=headers)
     added = await app.post(
         f"/api/v1/purchases/{purchase_id}/costs",
         headers={**headers, "Idempotency-Key": _idem(), "If-Match": current.headers["ETag"]},
         json={"category_id": category_response.json()["id"], "amount": "20"},
     )
     assert added.status_code == 201, added.text
-    current = await app.get(f"/api/v1/purchases/{purchase_id}")
+    current = await app.get(f"/api/v1/purchases/{purchase_id}", headers=headers)
     posted = await app.post(
         f"/api/v1/purchases/{purchase_id}/post",
         headers={**headers, "Idempotency-Key": _idem(), "If-Match": current.headers["ETag"]}, json={},
