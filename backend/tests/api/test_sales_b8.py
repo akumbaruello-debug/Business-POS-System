@@ -1152,6 +1152,67 @@ async def _ensure_product_one(app: AsyncClient) -> AsyncGenerator[None, None]:
     """
     await _seed_stock()
     yield
+
+
+# ---------------------------------------------------------------------------
+# List filtering (canonical `filter[...]` query contract)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_filter_by_lifecycle_status_alias(
+    app: AsyncClient, owner_user: dict[str, Any]
+) -> None:
+    """`filter[lifecycle_status]` narrows the list; total matches, IDs isolated.
+
+    Regression for the route accepting only the bare `lifecycle_status` key
+    while the API architecture and OpenAPI document the `filter[...]` form.
+    """
+    h = await _owner_headers(app, owner_user)
+
+    r_draft = await app.post(
+        "/api/v1/sales", headers={**h, "Idempotency-Key": _idem()}, json={}
+    )
+    assert r_draft.status_code == 201, r_draft.text
+    draft_id = r_draft.json()["id"]
+
+    r_posted = await app.post(
+        "/api/v1/sales",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"lines": [{"product_id": 1, "quantity": 1}]},
+    )
+    assert r_posted.status_code == 201, r_posted.text
+    posted_id = r_posted.json()["id"]
+    r_p = await app.post(
+        f"/api/v1/sales/{posted_id}/post",
+        headers={**h, "Idempotency-Key": _idem(), "If-Match": _etag(r_posted)},
+        json={},
+    )
+    assert r_p.status_code == 200, r_p.text
+
+    r_filtered = await app.get(
+        "/api/v1/sales?filter[lifecycle_status]=posted&per_page=50", headers=h
+    )
+    assert r_filtered.status_code == 200, r_filtered.text
+    body = r_filtered.json()
+    assert [s["id"] for s in body["data"]] == [posted_id]
+    assert all(s["lifecycle_status"] == "posted" for s in body["data"])
+    assert body["pagination"]["total"] == 1
+
+    r_drafts = await app.get(
+        "/api/v1/sales?filter[lifecycle_status]=draft&per_page=50", headers=h
+    )
+    assert r_drafts.status_code == 200, r_drafts.text
+    draft_body = r_drafts.json()
+    assert [s["id"] for s in draft_body["data"]] == [draft_id]
+    assert all(s["lifecycle_status"] == "draft" for s in draft_body["data"])
+    assert draft_body["pagination"]["total"] == 1
+
+    # Union of both filters equals the unfiltered total (no rows dropped).
+    r_all = await app.get("/api/v1/sales?per_page=50", headers=h)
+    assert r_all.status_code == 200, r_all.text
+    assert r_all.json()["pagination"]["total"] == 2
+
 # Dedicated price_override audit event (API §3.3)
 # ---------------------------------------------------------------------------
 

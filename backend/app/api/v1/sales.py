@@ -140,11 +140,14 @@ async def list_sales(
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=500),
     q: str | None = Query(default=None),
-    lifecycle_status: str | None = Query(default=None),
+    lifecycle_status: str | None = Query(default=None, alias="filter[lifecycle_status]"),
     customer_id: int | None = Query(default=None),
     payment_state: str | None = Query(default=None),
 ) -> MetaEnvelope[dict[str, Any]]:
     """List sales."""
+    # Backward-compat: also accept the bare key (legacy contract).
+    if lifecycle_status is None:
+        lifecycle_status = request.query_params.get("lifecycle_status")
     async with UnitOfWork() as uow:
         svc = SaleService(uow)
         rows, total = await svc.list_sales(
