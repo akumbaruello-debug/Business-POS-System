@@ -1,6 +1,14 @@
 # Business-POS-System — STATUS
-**Last updated:** 2026-10-22
-**HEAD:** `f0d9871` (`release/candidate-1`). V3 work committed through Phase C; F1 fixed by migration commit. F2 fix pending uncommitted.
+**Last updated:** 2026-10-25
+**Verification baseline:** commit `533f5a9` (`release/candidate-1`). Bearer-only auth cleanup committed as `f2ec7c4`; verified against this baseline. Full backend suite: **1,316 passed / 0 failed** (see Phase A gate result).
+
+## Open security decisions (RC1)
+
+| # | Decision | Status |
+|---|---|---|
+| S1 | **Refresh-token reuse policy.** `Backend-Architecture-V1.0.md` §6.4 step 3 requires that presenting an already-revoked refresh token revokes **all** sessions for that user plus an audit entry. `backend/app/auth/service.py` only raises `SessionRevoked` (401) and leaves other sessions intact. | **UNRESOLVED.** Not fixed, not claimed as fixed. Needs a product/security decision before go-live. |
+| S2 | **Frontend CSP.** No `Content-Security-Policy` is emitted for the UI (`frontend/next.config.mjs` has no `headers()`; the API deliberately delegates CSP to the reverse proxy per `Backend-Architecture-V1.0.md` §23.2). With tokens in `localStorage`, CSP is the primary XSS mitigation. | **BLOCKER before go-live.** Out of scope for the auth cleanup. |
+| S3 | **CORS `allow_credentials=True`** (`backend/app/middleware/security.py`) is now inert — the frontend no longer sends `credentials: 'include'`. | Deferred; deliberately unchanged. |
 
 ## Current objective
 Ship the in-flight V3 implementation as **10 coherent commits** on `main`. The implementation modifies 43 files + adds 33 new files (product attributes, units/conversions, purchase-cost policy, sorting/mixed-receiving). Phase C is not yet started; this file describes Phase A/B progress and the Phase C plan.
@@ -21,7 +29,7 @@ The 8 remaining failures are **all baseline / pre-existing**, none are new V3 re
 
 | Failing test | Why it's pre-existing |
 |---|---|
-| `test_production_cancel`, `test_production_cost_lines`, `test_production_inputs`, `test_purchases`, `test_refunds`, `test_sales_b8`, `test_supplier_repayments` (7) | Login (`_login`) sets session cookies on the shared ASGI `app` client, so the "unauthenticated" follow-up request is actually authenticated → 200 (sales variant hits the Idempotency-Key check first → 400). **Reproduced identically at pristine HEAD `9b43f86`**. |
+| `test_production_cancel`, `test_production_cost_lines`, `test_production_inputs`, `test_purchases`, `test_refunds`, `test_sales_b8`, `test_supplier_repayments` (7) | Login (`_login`) sets session cookies on the shared ASGI `app` client, so the "unauthenticated" follow-up request is actually authenticated → 200 (sales variant hits the Idempotency-Key check first → 400). **Reproduced identically at pristine HEAD `9b43f86`**. *(Root cause removed later: `d401c87` dropped the cookie-auth fallback in `deps.py`, and the Bearer-only cleanup stopped emitting auth cookies entirely — `/auth/login`, idempotent replay and `/auth/refresh` no longer set them and logout no longer clears them. These 7 PASS on `release/candidate-1`.)* **Targeted evidence:** `tests/api/test_auth.py` 28 passed; the seven modules above 136 passed. **Full backend suite rerun 2026-10-24 against the isolated cluster `127.0.0.1:55448` / DB `pos_test_rcgate`: 1,316 passed / 0 failed / 0 skipped in 34:07.** JUnit: `C:\Users\ratus\AppData\Local\Temp\opencode\rc1-postcleanup\rc1-postcleanup.xml`. Prior baseline: **1,305 passed / 0 failed** at `9a806e8` (`rcgate_94057d98922841c5ad14f85f54cd25e4/backend-full.txt`). Delta: **+11 tests** (10 Bearer-only auth + 1 CORS preflight regression), 0 removed, no failures vs baseline. |
 | `test_manual_entries.py::test_cancel_ok` | `audit_log` is append-only (a trigger blocks TRUNCATE), and `manual_finance_entries` uses `RESTART IDENTITY`, so an entity ID is reused and a stale `cancel` audit row collides → `assert 2 == 1`. **Passes in isolation and as a full file; only fails in the full-suite ordering context.** |
 
 - 1 V3 failure found at A4 → **fixed** (approved Option 1): `test_settings_f9` now expects the new `default_purchase_cost_allocation` key (seeded in `schema.sql` as `'line_value'` / string). Passes.

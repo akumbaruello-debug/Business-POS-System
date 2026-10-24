@@ -1,5 +1,12 @@
 # Phase 1 Report — Navigation Foundation
 
+> **SUPERSEDED (RC1).** The auth-cookie/SSR migration described below (Phase 1.5)
+> was abandoned. RC1 is **Bearer-only**: `localStorage` tokens plus
+> `Authorization: Bearer` headers, refresh via request body, no auth cookies set
+> or read by the backend, and no `server-api-client.ts` / `server-auth.ts`. This
+> document is kept as historical record; do not follow it as an implementation
+> guide.
+
 ## What was changed:
 - Converted all 55 sidebar navigation `<a>` tags to `<Link>` from `next/link` in `components/layout/sidebar.tsx`
 - Added `import Link from 'next/link'` to the sidebar file

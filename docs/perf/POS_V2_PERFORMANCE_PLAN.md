@@ -237,7 +237,7 @@ Measure and record for the main pages (POS, Sales, Customers, Inventory, Purchas
 
 **Status:** ✅ COMPLETE (auth infrastructure) ⏸️ PAUSED (page conversion strategy needed)
 
-**Completed:**
+**Completed (SUPERSEDED — see note below):**
 - ✅ Backend: `auth.py` sets httpOnly cookies on login/refresh (`secure=is_production`)
 - ✅ Backend: `logout` and `logout_all` clear cookies on server response
 - ✅ Backend: `deps.py` `current_principal` reads both Bearer header AND cookie
@@ -245,14 +245,21 @@ Measure and record for the main pages (POS, Sales, Customers, Inventory, Purchas
 - ✅ Frontend: `server-api-client.ts` forwards cookies via `next/headers`
 - ✅ Frontend: `AppShell` provides `SessionContext` from server-resolved user
 
-**Implementation approach (verified):**
+> **Superseded (RC1):** the cookie/SSR auth described above was abandoned. RC1 is
+> **Bearer-only**: tokens live in `localStorage`, every request sends
+> `Authorization: Bearer <access_token>`, refresh uses the request-body flow, and
+> the backend neither sets nor reads auth cookies. `deps.py` no longer has a cookie
+> fallback; `server-api-client.ts` no longer exists; `ProtectedLayout` is a client
+> component. The bullets below are retained as historical record only.
+
+**Implementation approach (verified, historical):**
 1. ProtectedLayout (server component) reads `access_token` cookie via `next/headers`
 2. Server API client forwards cookie to `/auth/me`
 3. On success, passes `user` prop to client `AppShell`
 4. `AppShell` wraps children in `SessionContext.Provider`
 5. Page components continue using `useSession()` hook (from client-side localStorage)
 
-**Security:** httpOnly cookies prevent XSS token theft. Client components still read localStorage for backwards compatibility with existing code.
+**Security (historical):** httpOnly cookies were intended to prevent XSS token theft. RC1 instead accepts the documented localStorage XSS exposure; a frontend CSP is still required before go-live.
 
 **Page conversion analysis (22 page.tsx files):**
 - **POS page**: Keep as client component - complex checkout workflow with real-time state transitions (build → tender → done)
