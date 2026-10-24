@@ -165,3 +165,95 @@ test('successful requests are unchanged', async () => {
   const body = await api.get('/purchases/7')
   assert.deepEqual(body, { id: 7 })
 })
+
+// --- Bearer-only session handling -------------------------------------------
+
+test('requests authenticate with Authorization and no cookie credentials', async () => {
+  store.set('access_token', 'tok-1')
+  let seen: any
+  fetchImpl = async (_url, init) => {
+    seen = init
+    return jsonResponse(200, { ok: true })
+  }
+  await api.get('/purchases')
+  assert.equal(seen.headers.Authorization, 'Bearer tok-1')
+  assert.equal(seen.credentials, undefined)
+})
+
+test('401 refreshes via the request body, then retries with the new Bearer', async () => {
+  store.set('access_token', 'old-access')
+  store.set('refresh_token', 'old-refresh')
+  const calls: Array<{ url: string; init: any }> = []
+  fetchImpl = async (url, init) => {
+    calls.push({ url, init })
+    if (url.endsWith('/auth/refresh')) {
+      return jsonResponse(200, {
+        access_token: 'new-access',
+        refresh_token: 'new-refresh',
+      })
+    }
+    return init?.headers?.Authorization === 'Bearer new-access'
+      ? jsonResponse(200, { id: 1 })
+      : jsonResponse(401, { error: { code: 'unauthorized' } })
+  }
+
+  const body = await api.get('/purchases')
+  assert.deepEqual(body, { id: 1 })
+  assert.equal(calls.length, 3, 'original, refresh, retry')
+
+  const refresh = calls[1]
+  assert.match(refresh.url, /\/auth\/refresh$/)
+  assert.equal(refresh.init.method, 'POST')
+  assert.equal(refresh.init.headers.Authorization, undefined)
+  assert.deepEqual(JSON.parse(refresh.init.body), { refresh_token: 'old-refresh' })
+
+  assert.equal(store.get('access_token'), 'new-access')
+  assert.equal(store.get('refresh_token'), 'new-refresh')
+  assert.equal(calls[2].init.headers.Authorization, 'Bearer new-access')
+})
+
+test('refresh failure clears the session and does not retry', async () => {
+  store.set('access_token', 'dead-access')
+  store.set('refresh_token', 'dead-refresh')
+  let calls = 0
+  fetchImpl = async (url) => {
+    calls += 1
+    if (url.endsWith('/auth/refresh')) {
+      return jsonResponse(401, { error: { code: 'session_revoked' } })
+    }
+    return jsonResponse(401, { error: { code: 'unauthorized' } })
+  }
+
+  await assert.rejects(api.get('/purchases'), (err: any) => {
+    assert.equal(err.status, 401)
+    assert.equal(err.code, 'unauthorized')
+    return true
+  })
+  assert.equal(store.has('access_token'), false)
+  assert.equal(store.has('refresh_token'), false)
+  assert.equal(calls, 2, 'no retry after a failed refresh')
+})
+
+test('concurrent 401s share a single refresh call', async () => {
+  store.set('access_token', 'old-access')
+  store.set('refresh_token', 'old-refresh')
+  let refreshes = 0
+  fetchImpl = async (url, init) => {
+    if (url.endsWith('/auth/refresh')) {
+      refreshes += 1
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      return jsonResponse(200, {
+        access_token: 'new-access',
+        refresh_token: 'new-refresh',
+      })
+    }
+    return init?.headers?.Authorization === 'Bearer new-access'
+      ? jsonResponse(200, { ok: true })
+      : jsonResponse(401, { error: { code: 'unauthorized' } })
+  }
+
+  const [a, b] = await Promise.all([api.get('/a'), api.get('/b')])
+  assert.deepEqual(a, { ok: true })
+  assert.deepEqual(b, { ok: true })
+  assert.equal(refreshes, 1)
+})

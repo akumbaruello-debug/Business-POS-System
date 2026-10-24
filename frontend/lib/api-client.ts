@@ -184,7 +184,6 @@ async function rawClient<T = any>(
   const config: RequestInit = {
     ...rest,
     headers,
-    credentials: 'include',
   }
 
   if (body !== undefined) {

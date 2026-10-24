@@ -71,9 +71,9 @@ async def current_principal(
     session, resolves the effective capabilities (role union user
     overrides), and returns a populated ``Principal``.
 
-    Release candidate: the httpOnly-cookie fallback was removed —
-    httpOnly cookies (still emitted by /auth/login for future SSR use)
-    no longer authenticate requests. Bearer tokens only.
+    Bearer-only: no cookie is read or accepted. ``/auth/login`` and
+    ``/auth/refresh`` return tokens in the response body and set no
+    cookies.
 
     Raises:
         Unauthenticated (401): missing token, no matching session,

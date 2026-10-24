@@ -188,6 +188,38 @@ class TestCORS:
         finally:
             _restore_origins(_prev_origins)
 
+    async def test_cors_preflight_allows_authorization_header(self) -> None:
+        """Preflight must echo the allow-listed origin and permit Authorization."""
+        from app.config import get_settings
+        from app.config.env import load_env
+        from app.main import create_app
+
+        _prev_origins = _set_origins("https://app.example.com")
+        try:
+            load_env(force_reload=True)
+            fresh_app = create_app(get_settings())
+            async with AsyncClient(
+                transport=ASGITransport(app=fresh_app),
+                base_url="http://test",
+            ) as client:
+                r = await client.options(
+                    "/api/v1/purchases",
+                    headers={
+                        "Origin": "https://app.example.com",
+                        "Access-Control-Request-Method": "GET",
+                        "Access-Control-Request-Headers": "authorization,if-none-match",
+                    },
+                )
+                assert r.status_code == 200
+                assert (
+                    r.headers.get("access-control-allow-origin")
+                    == "https://app.example.com"
+                )
+                allow_headers = r.headers.get("access-control-allow-headers", "").lower()
+                assert "authorization" in allow_headers
+        finally:
+            _restore_origins(_prev_origins)
+
 
 class TestOriginCheck:
     """Tests for OriginCheckMiddleware: rejects missing/unlisted origins on state-changing requests."""

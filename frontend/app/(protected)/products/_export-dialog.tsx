@@ -182,7 +182,6 @@ export default function ExportProductsDialog({
         : `${API_BASE_URL}${job.download_url}`
       const res = await fetch(url, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        credentials: 'include',
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const blob = await res.blob()

@@ -14,16 +14,29 @@ so every test starts with a clean DB state.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from httpx import AsyncClient
 
+from app.config import get_settings
+from app.core.clock import reset_clock, set_clock
 from app.errors.codes import ErrorCode
 
 
 def _make_uuid() -> str:
     """Generate a fresh UUID string for Idempotency-Key."""
     return str(uuid.uuid4())
+
+
+class _FrozenClock:
+    """Minimal ``Clock`` pinned to a single instant (see ``app.core.clock``)."""
+
+    def __init__(self, now: datetime) -> None:
+        self._now = now
+
+    def now(self) -> datetime:
+        return self._now
 
 
 class TestLogin:
@@ -394,3 +407,182 @@ class TestMe:
         assert body["username"] == "staff"
         assert "user.manage" not in body["capabilities"]
         assert "sale.create" in body["capabilities"]
+
+
+# ---------------------------------------------------------------------------
+# Bearer-only contract
+# ---------------------------------------------------------------------------
+
+
+async def _login_tokens(
+    app: AsyncClient,
+    password: str,
+    username: str = "owner",
+    key: str | None = None,
+) -> dict[str, Any]:
+    r = await app.post(
+        "/api/v1/auth/login",
+        json={"username": username, "password": password},
+        headers={"Idempotency-Key": key or _make_uuid()},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+class TestNoAuthCookies:
+    """RC1 is Bearer-only: no auth cookie is ever set or cleared."""
+
+    async def test_login_sets_no_cookie(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        r = await app.post(
+            "/api/v1/auth/login",
+            json={"username": "owner", "password": owner_user["password"]},
+            headers={"Idempotency-Key": _make_uuid()},
+        )
+        assert r.status_code == 200, r.text
+        assert "set-cookie" not in r.headers
+
+    async def test_login_replay_sets_no_cookie(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        key = _make_uuid()
+        first = await _login_tokens(app, owner_user["password"], key=key)
+        second = await app.post(
+            "/api/v1/auth/login",
+            json={"username": "owner", "password": owner_user["password"]},
+            headers={"Idempotency-Key": key},
+        )
+        assert second.status_code == 200, second.text
+        assert "set-cookie" not in second.headers
+        assert second.json()["access_token"] == first["access_token"]
+
+    async def test_refresh_sets_no_cookie(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        tokens = await _login_tokens(app, owner_user["password"])
+        r = await app.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": tokens["refresh_token"]},
+        )
+        assert r.status_code == 200, r.text
+        assert "set-cookie" not in r.headers
+
+    async def test_logout_sets_no_cookie(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        tokens = await _login_tokens(app, owner_user["password"])
+        r = await app.post(
+            "/api/v1/auth/logout",
+            headers={"Authorization": f"Bearer {tokens['access_token']}"},
+        )
+        assert r.status_code == 204, r.text
+        assert "set-cookie" not in r.headers
+
+    async def test_logout_all_sets_no_cookie(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        tokens = await _login_tokens(app, owner_user["password"])
+        r = await app.post(
+            "/api/v1/auth/logout-all",
+            headers={"Authorization": f"Bearer {tokens['access_token']}"},
+        )
+        assert r.status_code == 204, r.text
+        assert "set-cookie" not in r.headers
+
+    async def test_cookie_without_bearer_cannot_authenticate(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        """A valid token in a Cookie header must NOT authenticate."""
+        tokens = await _login_tokens(app, owner_user["password"])
+        r = await app.get(
+            "/api/v1/auth/me",
+            headers={"Cookie": f"access_token={tokens['access_token']}"},
+        )
+        assert r.status_code == 401, r.text
+        assert r.json()["error"]["code"] == ErrorCode.UNAUTHENTICATED.value
+
+
+class TestTokenExpiry:
+    """Expired / revoked tokens are rejected."""
+
+    async def test_expired_access_token_rejected(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        t0 = datetime.now(tz=UTC)
+        set_clock(_FrozenClock(t0))
+        try:
+            tokens = await _login_tokens(app, owner_user["password"])
+            set_clock(
+                _FrozenClock(
+                    t0 + timedelta(seconds=get_settings().access_token_ttl_seconds + 1)
+                )
+            )
+            r = await app.get(
+                "/api/v1/auth/me",
+                headers={"Authorization": f"Bearer {tokens['access_token']}"},
+            )
+        finally:
+            reset_clock()
+        assert r.status_code == 401, r.text
+        assert r.json()["error"]["code"] == ErrorCode.SESSION_EXPIRED.value
+
+    async def test_expired_refresh_token_rejected(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        t0 = datetime.now(tz=UTC)
+        set_clock(_FrozenClock(t0))
+        try:
+            tokens = await _login_tokens(app, owner_user["password"])
+            set_clock(
+                _FrozenClock(
+                    t0 + timedelta(seconds=get_settings().refresh_token_ttl_seconds + 1)
+                )
+            )
+            r = await app.post(
+                "/api/v1/auth/refresh",
+                json={"refresh_token": tokens["refresh_token"]},
+            )
+        finally:
+            reset_clock()
+        assert r.status_code == 401, r.text
+        assert r.json()["error"]["code"] == ErrorCode.SESSION_EXPIRED.value
+
+    async def test_revoked_refresh_token_rejected(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        tokens = await _login_tokens(app, owner_user["password"])
+        logout = await app.post(
+            "/api/v1/auth/logout",
+            headers={"Authorization": f"Bearer {tokens['access_token']}"},
+        )
+        assert logout.status_code == 204
+
+        r = await app.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": tokens["refresh_token"]},
+        )
+        assert r.status_code == 401, r.text
+        assert r.json()["error"]["code"] == ErrorCode.SESSION_REVOKED.value
+
+    async def test_rotation_invalidates_previous_access_token(
+        self, app: AsyncClient, owner_user: dict[str, Any]
+    ) -> None:
+        tokens = await _login_tokens(app, owner_user["password"])
+        rotated = await app.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": tokens["refresh_token"]},
+        )
+        assert rotated.status_code == 200, rotated.text
+
+        r = await app.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {tokens['access_token']}"},
+        )
+        assert r.status_code == 401, r.text
+
+        ok = await app.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {rotated.json()['access_token']}"},
+        )
+        assert ok.status_code == 200, ok.text

@@ -32,7 +32,6 @@ from app.db import UnitOfWork
 from app.errors import AppError, IdempotencyViolation
 from app.logging import get_logger
 from app.middleware.rate_limit import check_limit
-from app.config import get_settings
 from app.services.idempotency import (
     IdempotencyStore,
     IdempotencyViolationConflict,
@@ -88,60 +87,19 @@ def _ua(request: Request) -> str | None:
     return None
 
 
-def _set_auth_cookies(
-    response: Response,
-    access_token: str,
-    refresh_token: str,
-    expires_in: int,
-    refresh_expires_in: int,
-) -> None:
-    """Set httpOnly cookies for access and refresh tokens."""
-    # secure=True prevents cookies over plain HTTP (local dev / proxies).
-    # Only enable in production (HTTPS).
-    _secure = get_settings().is_production
-    response.set_cookie(
-        key="access_token",
-        value=access_token,
-        max_age=int(expires_in),
-        httponly=True,
-        secure=_secure,
-        samesite="lax",
-        path="/",
-    )
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh_token,
-        max_age=int(refresh_expires_in),
-        httponly=True,
-        secure=_secure,
-        samesite="lax",
-        path="/",
-    )
-
-
-def _login_response(result: Any, response: Response | None = None) -> dict[str, Any]:
+def _login_response(result: Any) -> dict[str, Any]:
     """Render an AuthService LoginResult as the OpenAPI LoginResponse shape.
 
-    If a Response is provided, also sets httpOnly cookies for access_token and
-    refresh_token. This enables server-side auth (server components can read
-    the cookie without JavaScript).
+    Tokens are returned in the response body only (Bearer-only auth). No
+    cookies are set — see ``app.authz.deps.current_principal``.
     """
-    body = {
+    return {
         "access_token": result.access_token,
         "refresh_token": result.refresh_token,
         "expires_in": result.expires_in,
         "refresh_expires_in": result.refresh_expires_in,
         "user": result.principal.to_session_user(),
     }
-    if response is not None:
-        _set_auth_cookies(
-            response,
-            result.access_token,
-            result.refresh_token,
-            int(result.expires_in),
-            int(result.refresh_expires_in),
-        )
-    return body
 
 
 def _idem_conflict(details: dict[str, Any]) -> AppError:
@@ -178,7 +136,6 @@ def _idem_in_flight() -> AppError:
 )
 async def login(
     request: Request,
-    response: Response,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict[str, Any]:
     """Authenticate and issue tokens.
@@ -228,7 +185,6 @@ async def login(
         # Replay an already-completed login.
         if existing is not None and existing.is_completed:
             await uow.commit()
-            # Set cookies from the cached response body (contains tokens).
             # response_body is a JSONB column: asyncpg returns an already
             # decoded dict/list for rows written by json.dumps(...), so only
             # string-encoded rows need parsing. Calling json.loads unguarded
@@ -236,13 +192,6 @@ async def login(
             cached = existing.response_body
             if isinstance(cached, (str, bytes, bytearray)):
                 cached = json.loads(cached)
-            _set_auth_cookies(
-                response,
-                cached["access_token"],
-                cached["refresh_token"],
-                cached["expires_in"],
-                cached["refresh_expires_in"],
-            )
             return cached  # type: ignore[return-value]
 
         # A duplicate request is still in flight — reject so the client
@@ -266,7 +215,7 @@ async def login(
             await uow.rollback()
             raise
 
-        response_body = _login_response(result, response)
+        response_body = _login_response(result)
         user_id = int(result.principal.user_id)
 
         # 3. Persist the response under the idempotency key (now with
@@ -296,7 +245,7 @@ async def login(
     summary="Rotate access and refresh tokens. Old refresh is invalidated.",
     status_code=status.HTTP_200_OK,
 )
-async def refresh(request: Request, response: Response) -> dict[str, Any]:
+async def refresh(request: Request) -> dict[str, Any]:
     """Rotate the (access, refresh) token pair."""
     body_dict = await request.json()
     parsed = RefreshRequest.model_validate(body_dict)
@@ -311,7 +260,7 @@ async def refresh(request: Request, response: Response) -> dict[str, Any]:
         # Refresh rate limit: 60 per hour per user
         await check_limit("60/hour", f"user:{result.principal.user_id}", request)
         await uow.commit()
-    return _login_response(result, response)
+    return _login_response(result)
 
 
 # ---------------------------------------------------------------------------
@@ -338,11 +287,7 @@ async def logout(
             uow=uow,
         )
         await uow.commit()
-    # Clear auth cookies
-    response = Response(status_code=status.HTTP_204_NO_CONTENT)
-    response.delete_cookie(key="access_token", path="/")
-    response.delete_cookie(key="refresh_token", path="/")
-    return response
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ---------------------------------------------------------------------------
@@ -373,11 +318,7 @@ async def logout_all(
             uow=uow,
         )
         await uow.commit()
-    # Clear auth cookies
-    response = Response(status_code=status.HTTP_204_NO_CONTENT)
-    response.delete_cookie(key="access_token", path="/")
-    response.delete_cookie(key="refresh_token", path="/")
-    return response
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ---------------------------------------------------------------------------

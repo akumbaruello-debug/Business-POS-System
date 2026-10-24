@@ -25,8 +25,8 @@ export async function login(username: string, password: string): Promise<Session
   const res = await api.post<LoginResponse>('/auth/login', { username, password }, {
     idempotencyKey: true,
   })
-  // Store tokens in localStorage for client components.
-  // (Backend also sets httpOnly cookies for server components.)
+  // Store tokens in localStorage; requests authenticate with
+  // `Authorization: Bearer <access_token>`.
   localStorage.setItem('access_token', res.access_token)
   localStorage.setItem('refresh_token', res.refresh_token)
   return res.user
@@ -39,10 +39,10 @@ export async function logout(): Promise<void> {
   } catch {
     // Session may already be expired/revoked — still sign out locally.
   } finally {
-    // Clear localStorage tokens (client components still use these)
+    // Clear localStorage tokens — the only credential store used.
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
-    // Redirect to login (cookies cleared server-side by /auth/logout)
+    // Redirect to login.
     window.location.href = '/login'
   }
 }

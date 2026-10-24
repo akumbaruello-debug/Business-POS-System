@@ -50,7 +50,6 @@ async function fetchSettings(token: string | null): Promise<{
         Authorization: `Bearer ${token}`,
         Accept: 'application/json',
       },
-      credentials: 'include',
     })
     if (!res.ok) {
       if (process.env.NODE_ENV !== 'production') {
@@ -83,7 +82,6 @@ async function patchLanguage(
         'Idempotency-Key': idempotencyKey,
         ...(etag ? { 'If-Match': etag } : {}),
       },
-      credentials: 'include',
       body: JSON.stringify({ language: lang }),
     })
     if (!res.ok) return null
