@@ -30,6 +30,27 @@ os.environ.setdefault(
     "POS_DATABASE_URL",
     "postgresql+asyncpg://postgres@127.0.0.1:5433/pos_test",
 )
+
+
+def _assert_isolated_test_database(url: str) -> None:
+    """Fail closed unless ``url`` points at an isolated ``*_test`` database.
+
+    The fixtures below DROP SCHEMA and TRUNCATE, so a database name is the
+    only thing standing between a leaked ``POS_DATABASE_URL`` override and
+    ``pos_dev`` / production. ``setdefault`` cannot prevent that override,
+    so validate whatever value was actually resolved.
+    """
+    from urllib.parse import urlparse
+
+    name = urlparse(url).path.lstrip("/")
+    if not name.endswith("_test"):
+        raise RuntimeError(
+            f"Refusing to run DB fixtures against {name or '<no database>'!r}: "
+            "POS_DATABASE_URL must name an isolated *_test database "
+            "(expected pos_test)."
+        )
+
+
 # Canonical test-database URL, captured after the override above.
 #
 # Re-asserted before every operation that reads settings for a schema or data
@@ -39,6 +60,8 @@ os.environ.setdefault(
 # would run DROP SCHEMA ... CASCADE against a protected database. This guard
 # makes that path unreachable regardless of test order or leaked mutations.
 _TEST_DATABASE_URL = os.environ["POS_DATABASE_URL"]
+# Fail before any fixture runs, so a misconfigured run never reaches DROP SCHEMA.
+_assert_isolated_test_database(_TEST_DATABASE_URL)
 _TEST_CORS_ORIGINS = "http://test"
 # Tests must not inherit the .env CORS allow-list (http://localhost:3000):
 # the httpx test client sends no browser Origin, and OriginCheckMiddleware
@@ -108,6 +131,8 @@ def _ensure_schema() -> None:
     get_settings.cache_clear()
     settings = get_settings()
     url = settings.database_url
+    # Second gate, immediately before the destructive psql command.
+    _assert_isolated_test_database(url)
     from urllib.parse import urlparse
 
     parsed = urlparse(url)

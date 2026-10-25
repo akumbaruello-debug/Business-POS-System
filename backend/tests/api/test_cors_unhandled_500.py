@@ -19,7 +19,8 @@ These tests pin:
 from __future__ import annotations
 
 import os
-from typing import Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
