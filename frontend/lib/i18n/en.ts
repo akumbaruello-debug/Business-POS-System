@@ -262,6 +262,7 @@ export const en: Record<string, string> = {
   'dashboard.greeting.morning': 'Good morning',
   'dashboard.greeting.afternoon': 'Good afternoon',
   'dashboard.greeting.evening': 'Good evening',
+  'dashboard.greeting.hello': 'Hello',
   'dashboard.businessUpdate': "Here's what's happening with your business.",
   'dashboard.totalRevenue': 'Total Revenue',
   'dashboard.totalPurchases': 'Total Purchases',

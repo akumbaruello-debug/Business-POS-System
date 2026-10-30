@@ -262,6 +262,7 @@ export const id: Record<string, string> = {
   'dashboard.greeting.morning': 'Selamat pagi',
   'dashboard.greeting.afternoon': 'Selamat siang',
   'dashboard.greeting.evening': 'Selamat malam',
+  'dashboard.greeting.hello': 'Halo',
   'dashboard.businessUpdate': 'Berikut yang terjadi dengan bisnis Anda.',
   'dashboard.totalRevenue': 'Total Pendapatan',
   'dashboard.totalPurchases': 'Total Pembelian',

@@ -1,0 +1,7 @@
+npm warn Unknown user config "allow-scripts". This will stop working in the next major version of npm.
+
+> bpos-frontend@0.1.0 dev
+> next dev
+
+'next' is not recognized as an internal or external command,
+operable program or batch file.

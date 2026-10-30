@@ -846,7 +846,7 @@ export default function DashboardPage() {
         <div>
           <div className="eyebrow">{fmtLongDate(now)}</div>
           <h1>
-            {t(greetingForHour(now.getHours()))}, {user.full_name || user.username}
+            {t('dashboard.greeting.hello')}, {t(greeting)}, {user.full_name || user.username}
           </h1>
           <p>{t('dashboard.businessUpdate')}</p>
         </div>
