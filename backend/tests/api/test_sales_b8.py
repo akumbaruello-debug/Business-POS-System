@@ -596,10 +596,15 @@ async def test_add_payment_response_contract(
     ``res.data.payments[].amount`` / ``.change_amount`` for display, so if the
     endpoint ever returned a different shape the amounts would render as
     undefined.
+
+    The replay half guards the B.8 idempotency contract (same key + same
+    body -> HTTP 200 + original row, no duplicate). It is NOT a model of
+    double-click protection: the frontend mints a fresh UUID key per click
+    (frontend/lib/api-client.ts), so two clicks carry two keys; the in-flight
+    guard in frontend/lib/pos-payment-guard.js is what rejects the second
+    submission client-side.
     """
     h = await _owner_headers(app, owner_user)
-
-    await _seed_stock()
 
     r = await app.post("/api/v1/sales", headers={**h, "Idempotency-Key": _idem()}, json={})
     sale_id = r.json()["id"]
@@ -615,9 +620,10 @@ async def test_add_payment_response_contract(
     )
     assert r_post.status_code == 200, r_post.text
 
+    idk = _idem()
     r_pay = await app.post(
         f"/api/v1/sales/{sale_id}/payments",
-        headers={**h, "Idempotency-Key": _idem()},
+        headers={**h, "Idempotency-Key": idk},
         json={"payment_method_id": 1, "amount": "50.00", "tendered_amount": "100.00"},
     )
     assert r_pay.status_code == 201, r_pay.text
@@ -628,29 +634,73 @@ async def test_add_payment_response_contract(
     assert data["id"] == sale_id
     assert data["lifecycle_status"] == "completed"
     assert data["payment_state"] == "paid"
-    assert Decimal(str(data["outstanding"])) == 0
+    assert Decimal(str(data["outstanding"])) == Decimal("0")
 
     assert isinstance(data["payments"], list) and len(data["payments"]) == 1
     p = data["payments"][0]
     assert p["sale_id"] == sale_id
-    assert p["amount"] == 50.00
-    assert p["change_amount"] == 50.00  # server-computed over-tender change
+    assert Decimal(str(p["amount"])) == Decimal("50.00")
+    assert Decimal(str(p["change_amount"])) == Decimal("50.00")  # server-computed over-tender
+    assert Decimal(str(p["tendered_amount"])) == Decimal("100.00")
     assert p["payment_method_id"] == 1
     assert set(p) >= {"id", "tendered_amount", "payment_date", "created_by"}
 
-    # Replaying the same Idempotency-Key returns the exact same payment
-    # (no duplicate row). This is what protects the POS from double-click
-    # double-submissions at the API layer. The replay is acknowledged with
-    # HTTP 200 (the first submission was 201).
+    # Replaying the same Idempotency-Key with the same body returns the exact
+    # same payment (no duplicate row), acknowledged with HTTP 200 (the first
+    # submission was 201).
     r_replay = await app.post(
         f"/api/v1/sales/{sale_id}/payments",
-        headers={**h, "Idempotency-Key": f"{r_pay.request.headers['Idempotency-Key']}"},
+        headers={**h, "Idempotency-Key": idk},
         json={"payment_method_id": 1, "amount": "50.00", "tendered_amount": "100.00"},
     )
     assert r_replay.status_code == 200, r_replay.text
     assert r_replay.json()["id"] == sale_id
     assert len(r_replay.json()["payments"]) == 1
     assert r_replay.json()["payments"][0]["id"] == p["id"]
+
+
+@pytest.mark.asyncio
+async def test_partial_payment_response_contract(
+    app: AsyncClient, owner_user: dict[str, Any]
+) -> None:
+    """Partial payment: POST /sales/{id}/payments still returns the enriched
+    SALE (not a bare SalePayment) with ``payment_state == "partial"``, the
+    remaining outstanding balance, and no server-computed change for exact
+    tender without a tendered_amount."""
+    h = await _owner_headers(app, owner_user)
+
+    r = await app.post("/api/v1/sales", headers={**h, "Idempotency-Key": _idem()}, json={})
+    sale_id = r.json()["id"]
+    await app.post(
+        f"/api/v1/sales/{sale_id}/lines",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"product_id": 1, "quantity": "1.000", "unit_price": "100.00"},
+    )
+    r_post = await app.post(
+        f"/api/v1/sales/{sale_id}/post",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={},
+    )
+    assert r_post.status_code == 200, r_post.text
+
+    r_pay = await app.post(
+        f"/api/v1/sales/{sale_id}/payments",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"payment_method_id": 1, "amount": "60.00"},
+    )
+    assert r_pay.status_code == 201, r_pay.text
+    data = r_pay.json()
+
+    assert data["id"] == sale_id
+    assert data["payment_state"] == "partial"
+    assert Decimal(str(data["outstanding"])) == Decimal("40.00")
+
+    assert isinstance(data["payments"], list) and len(data["payments"]) == 1
+    p = data["payments"][0]
+    assert Decimal(str(p["amount"])) == Decimal("60.00")
+    assert p["change_amount"] is None  # exact tender, no change
+    assert p["tendered_amount"] is None
+    assert p["payment_method_id"] == 1
 
 
 @pytest.mark.asyncio
