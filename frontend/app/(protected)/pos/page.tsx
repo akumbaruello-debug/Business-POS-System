@@ -25,6 +25,7 @@ import type {
 } from '@/lib/sale-types'
 import { formatIDR } from '@/lib/format'
 import { num, sanitizeEtag } from '@/lib/sale-ui'
+import { createInFlightGuard, dedupeRecordedPayments } from '@/lib/pos-payment-guard'
 import { Button } from '@/components/ui/button'
 import { useSession } from '@/lib/session'
 import { useLanguage } from '@/lib/i18n'
@@ -93,8 +94,9 @@ export default function PosPage() {
   // same tick can both read false before the re-render lands. A ref closes
   // that window so a fast double-click on "Record payment" can't fire two
   // POSTs (each gets a fresh UUID idempotency key → two payments on the
-  // backend).
-  const paymentInFlight = useRef(false)
+  // backend). The guard atom lives in lib/pos-payment-guard.js and is
+  // exercised by scripts/verify-pos-guard.mjs.
+  const paymentInFlight = useRef(createInFlightGuard())
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -372,8 +374,7 @@ export default function PosPage() {
       : 0
 
   const handlePayment = async () => {
-    if (!sale || payMethod === '' || busy || paymentInFlight.current) return
-    paymentInFlight.current = true
+    if (!sale || payMethod === '' || busy || !paymentInFlight.current.enter()) return
     setBusy(true)
     setNotice(null)
     try {
@@ -409,12 +410,9 @@ export default function PosPage() {
         { idempotencyKey: true, ifMatch: etag || undefined },
       )
       const newPayment = res.data.payments?.find((p) => p.sale_id === sale.id)
-      setRecorded((prev) => {
-        if (!newPayment) return prev
-        const map = new Map(prev.map((p) => [p.id, p]))
-        map.set(newPayment.id, newPayment)
-        return Array.from(map.values())
-      })
+      setRecorded((prev) =>
+        newPayment ? dedupeRecordedPayments(prev, newPayment) : prev,
+      )
       const fresh = await refreshSale(sale.id)
       setPayAmount(String(num(fresh.outstanding)))
       setPayTendered('')
@@ -428,7 +426,7 @@ export default function PosPage() {
       setNotice(isApiError(e) ? e.message : t('pos.paymentFailed'))
     } finally {
       setBusy(false)
-      paymentInFlight.current = false
+      paymentInFlight.current.exit()
     }
   }
 
