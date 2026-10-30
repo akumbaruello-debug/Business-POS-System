@@ -586,6 +586,74 @@ async def test_line_below_cost_warning(
 
 
 @pytest.mark.asyncio
+async def test_add_payment_response_contract(
+    app: AsyncClient, owner_user: dict[str, Any]
+) -> None:
+    """POST /sales/{id}/payments returns an enriched SALE with an embedded
+    ``payments`` array (not a bare SalePayment object).
+
+    Regression guard for the POS tender-history bug: the frontend reads
+    ``res.data.payments[].amount`` / ``.change_amount`` for display, so if the
+    endpoint ever returned a different shape the amounts would render as
+    undefined.
+    """
+    h = await _owner_headers(app, owner_user)
+
+    await _seed_stock()
+
+    r = await app.post("/api/v1/sales", headers={**h, "Idempotency-Key": _idem()}, json={})
+    sale_id = r.json()["id"]
+    await app.post(
+        f"/api/v1/sales/{sale_id}/lines",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"product_id": 1, "quantity": "1.000", "unit_price": "50.00"},
+    )
+    r_post = await app.post(
+        f"/api/v1/sales/{sale_id}/post",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={},
+    )
+    assert r_post.status_code == 200, r_post.text
+
+    r_pay = await app.post(
+        f"/api/v1/sales/{sale_id}/payments",
+        headers={**h, "Idempotency-Key": _idem()},
+        json={"payment_method_id": 1, "amount": "50.00", "tendered_amount": "100.00"},
+    )
+    assert r_pay.status_code == 201, r_pay.text
+    data = r_pay.json()
+
+    # The response is the enriched SALE (top-level sale fields),
+    # with the newly-created payment under `payments`.
+    assert data["id"] == sale_id
+    assert data["lifecycle_status"] == "completed"
+    assert data["payment_state"] == "paid"
+    assert Decimal(str(data["outstanding"])) == 0
+
+    assert isinstance(data["payments"], list) and len(data["payments"]) == 1
+    p = data["payments"][0]
+    assert p["sale_id"] == sale_id
+    assert p["amount"] == 50.00
+    assert p["change_amount"] == 50.00  # server-computed over-tender change
+    assert p["payment_method_id"] == 1
+    assert set(p) >= {"id", "tendered_amount", "payment_date", "created_by"}
+
+    # Replaying the same Idempotency-Key returns the exact same payment
+    # (no duplicate row). This is what protects the POS from double-click
+    # double-submissions at the API layer. The replay is acknowledged with
+    # HTTP 200 (the first submission was 201).
+    r_replay = await app.post(
+        f"/api/v1/sales/{sale_id}/payments",
+        headers={**h, "Idempotency-Key": f"{r_pay.request.headers['Idempotency-Key']}"},
+        json={"payment_method_id": 1, "amount": "50.00", "tendered_amount": "100.00"},
+    )
+    assert r_replay.status_code == 200, r_replay.text
+    assert r_replay.json()["id"] == sale_id
+    assert len(r_replay.json()["payments"]) == 1
+    assert r_replay.json()["payments"][0]["id"] == p["id"]
+
+
+@pytest.mark.asyncio
 async def test_cash_over_tender_server_change(app: AsyncClient, owner_user: dict[str, Any]) -> None:
     """Cash over-tender: server computes change_amount; sale auto-completes."""
     h = await _owner_headers(app, owner_user)
